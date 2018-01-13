@@ -1,0 +1,6 @@
+# General
+*.DS_Store
+Get-IgniteSession.cache
+youtube-dl.exe
+youtube-dl.old
+
