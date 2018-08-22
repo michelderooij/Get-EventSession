@@ -19,7 +19,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.8, August 22nd, 2018
+    Version 2.7, August 22nd, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
