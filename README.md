@@ -20,17 +20,17 @@ To prevent retrieving session information for every run, the script will cache s
 
 Download all available contents of sessions containing the word 'Exchange' in the title to D:\Ignite:
 ```
-.\Get-IgniteSession.ps1 -DownloadFolder D:\Ignite -Format 18 -Keyword 'Exchange'
+.\Get-EventSession.ps1 -DownloadFolder D:\Ignite -Format 18 -Keyword 'Exchange'
 ```
 
 Get information of all sessions, and output only location and time information for sessions (co-)presented by Tony Redmond:
 ```
-.\Get-IgniteSession.ps1 -InfoOnly | Where {$_.Speakers -contains 'Tony Redmond'} | Select Title, location, startDateTime
+.\Get-EventSession.ps1 -InfoOnly | Where {$_.Speakers -contains 'Tony Redmond'} | Select Title, location, startDateTime
 ```
 
 Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite
 ```
-.\Get-IgniteSession.ps1 -DownloadFolder D:\Ignite -ScheduleCode BRK3248,BRK3186
+.\Get-EventSession.ps1 -DownloadFolder D:\Ignite -ScheduleCode BRK3248,BRK3186
 ```
 
 ## Credits
