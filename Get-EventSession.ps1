@@ -76,8 +76,7 @@
     Item number to start crawling with - useful for restarts
 
     .PARAMETER Event
-    Specify what event to download sessions for. Valid values are Ignite (Default), 
-    Inspire.
+    Specify what event to download sessions for. Valid values are Ignite (Default), and Inspire.
 
     .PARAMETER InfoOnly
     Tells the script to return session information only.

@@ -2,14 +2,14 @@
 
 ## Getting Started
 
-This script can download all the Microsoft Ignite slidedecks and videos that are
-available from the Ignite portal. Video downloads will leverage a utility which can be downloaded
-from https://yt-dl.org/latest/youtube-dl.exe, and needs to reside in the same folder
+Script to assist in downloading Microsoft Ignite or Inspire contents or return 
+session information for easier digesting. Video downloads will leverage a utility which can 
+be downloaded from https://yt-dl.org/latest/youtube-dl.exe, and needs to reside in the same folder
 as the script. The script itself will try to download the utility when the utility is not present.
 
 When you are interested in retrieving session information only, you can use the InfoOnly switch.
 
-To prevent retrieving session information for every run, the script will cache session information
+To prevent retrieving session information for every run, the script will cache session information.
 
 ### Prerequisites
 
