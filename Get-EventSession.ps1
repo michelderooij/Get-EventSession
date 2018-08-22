@@ -1,11 +1,15 @@
 ﻿<#
     .SYNOPSIS
     Script to assist in downloading Microsoft Ignite or Inspire contents or return 
-    session information for easier digesting. Be advised that downloading videos will 
-    make the video non-interactive, by removing options provided by Stream such as
-    subtitles, transcripts, etc.
+    session information for easier digesting. 
+
+    Video downloads will leverage a utility which can be downloaded
+    from https://yt-dl.org/latest/youtube-dl.exe, and needs to reside in the same folder
+    as the script. The script itself will try to download the utility when the utility is not present.
 
     Note that for Inspire, it currently only downloads available presentations.
+
+    To prevent retrieving session information for every run, the script will cache session information.
 
     .AUTHOR
     Michel de Rooij 	http://eightwone.com
