@@ -5,6 +5,8 @@
     make the video non-interactive, by removing options provided by Stream such as
     subtitles, transcripts, etc.
 
+    Note that for Inspire, it currently only downloads available presentations.
+
     .AUTHOR
     Michel de Rooij 	http://eightwone.com
 
@@ -17,7 +19,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.7, July 23rd, 2018
+    Version 2.8, August 22nd, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
