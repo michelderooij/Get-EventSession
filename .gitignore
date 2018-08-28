@@ -3,4 +3,5 @@
 *.cache
 youtube-dl.exe
 youtube-dl.old
+ffmpeg.exe
 

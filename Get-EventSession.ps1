@@ -1,43 +1,44 @@
 ﻿<#
     .SYNOPSIS
     Script to assist in downloading Microsoft Ignite or Inspire contents or return 
-    session information for easier digesting. 
+    session information for easier digesting. Video downloads will leverage external utilities, 
+    depending on the used video format. To prevent retrieving session information for every run,
+    the script will cache session information.
 
-    Video downloads will leverage a utility which can be downloaded
-    from https://yt-dl.org/latest/youtube-dl.exe, and needs to reside in the same folder
-    as the script. The script itself will try to download the utility when the utility is not present.
-
-    Note that for Inspire, it currently only downloads available presentations.
-
-    To prevent retrieving session information for every run, the script will cache session information.
+    Be advised that downloading of OnDemand contents from Azure Media Services is throttled to real-time
+    speed. To lessen the pain, the script performs simultaneous downloads of multiple videos streams. Those
+    downloads will each open in their own (minimized) window so you can track progress. Finally, CTRL-C
+    is catched by the script because we need to stop download jobs when aborting the script.
 
     .AUTHOR
     Michel de Rooij 	http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	    http://deploywindows.info
-    Scott Ladewig 	    http://ladewig.com
+    Mattias Fors 	http://deploywindows.info
+    Scott Ladewig 	http://ladewig.com
     Tim Pringle         http://www.powershell.amsterdam
     Andy Race           https://github.com/AndyRace
 
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.7, August 22nd, 2018
+    Version 2.8, August 24th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
     slidedecks and videos using MyIgnite/MyInspire portal.
 
-    Video downloads will leverage a utility which can be downloaded from
-    https://yt-dl.org/latest/youtube-dl.exe, and needs to reside in the same folder
-    as the script. The script will try to download the utility when it is not present.
+    Video downloads will leverage one or more utilities:
+    - YouTube-dl, which can be downloaded from https://yt-dl.org/latest/youtube-dl.exe. This utility
+      needs to reside in the same folder as the script. The script itself will try to download this 
+      utility when the utility is not present.
+    - ffmpeg, which can be downloaded from https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip. 
+      This utility needs to reside in the same folder as the script, or you need to specify its location using -FFMPEG. 
+      The utility is used to bind the seperate video and audio streams of Azure Media Services files 
+      in single files.
 
     When you are interested in retrieving session information only, you can use
     the InfoOnly switch.
-
-    To prevent retrieving session information for every run, the script will cache
-    session information
 
     .REQUIREMENTS
     The youtube-dl.exe utility requires Visual C++ 2010 redist package
@@ -47,10 +48,11 @@
     Specifies location to download sessions to. When omitted, will use 'systemdrive'\'Event'.
 
     .PARAMETER Format
-    Specify mp4 video format to download using youtube-dl.exe. This only works
-    for videos retrieved from YouTube; direct downloads are in the format provided.
+    Specify mp4 video format to download using youtube-dl.exe. Direct downloads are in the format provided.
+    Default, the best available video and audio format will be tried (best). Note that lower resolution downloads
+    may result in less readable slides that are presented, and not all formats may be present for all streams.
 
-    Possible values:
+    Sample values:
     160          mp4        256x144    DASH video  108k , avc1.4d400b, 30fps, video only
     133          mp4        426x240    DASH video  242k , avc1.4d400c, 30fps, video only
     134          mp4        640x360    DASH video  305k , avc1.4d401e, 30fps, video only
@@ -58,8 +60,15 @@
     136          mp4        1280x720   DASH video 2310k , avc1.4d4016, 30fps, video only
     137          mp4        1920x1080  DASH video 2495k , avc1.640028, 30fps, video only
     18           mp4        640x360    medium , avc1.42001E,  mp4a.40.2@ 96k
-    22           mp4        1280x720   hd720 , avc1.64001F,  mp4a.40.2@192k (best, default)
+    22           mp4        1280x720   hd720 , avc1.64001F,  mp4a.40.2@192k
+    115          mp4(AMS)   320x180    115k , H264, video only
+    225          mp4(AMS)   480x270    225k , H264, video only
+    333          mp4(AMS)   640x360    333k , H264, video only
+    612          mp4(AMS)   960x540    612k , H264, video only
+    909          mp4(AMS)   1280x720   909k , H264, video only
 
+    For more advanced filtering options, see See https://github.com/rg3/youtube-dl/blob/master/README.md#format-selection-examples
+    
     .PARAMETER Keyword
     Only retrieve sessions with this keyword in their session description.
 
@@ -76,10 +85,20 @@
     Only retrieve sessions with this session code. You can use one or more codes.
 
     .PARAMETER NoVideos
-    Switch to indicate you only want to download the slidedecks
+    Switch to indicate you don't want to download videos.
+
+    .PARAMETER NoSlidedecks
+    Switch to indicate you don't want to download slidedecks.
+
+    .PARAMETER FFMPEG
+    Specifies full location of ffmpeg.exe utility. When omitted, it is searched for and
+    when required extracted to the current folder.
+
+    .PARAMETER MaxDownloadJobs
+    Specifies the maximum number of concurrent downloads.
 
     .PARAMETER Start
-    Item number to start crawling with - useful for restarts
+    Item number to start crawling with - useful for restarts.
 
     .PARAMETER Event
     Specify what event to download sessions for. Valid values are Ignite (Default), and Inspire.
@@ -141,6 +160,9 @@
          Removed obsolete URL parameter
          Added code to download slidedecks in PDF (Inspire)
          Cleanup of script synopsis/description/etc.
+    2.8  Added downloading of Azure Media Services hosted streaming media
+         Added simultaneous downloading of AMS hosted OnDemand streams
+         Added NoSlidedecks switch
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -164,8 +186,7 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [ValidateSet(160, 133, 134, 135, 136, 137, 18, 22)]
-    [int]$Format = 22,
+    [string]$Format= 'worstvideo+bestaudio/best',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
@@ -193,6 +214,19 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [switch]$NoSlidedecks,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [string]$FFMPEG,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [ValidateRange(1,128)] 
+    [int]$MaxDownloadJobs=4,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [ValidateSet('Ignite', 'Inspire')]
     [string]$Event='Ignite',
@@ -204,7 +238,16 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [switch]$Overwrite
 )
-begin {
+
+    # Max age for cache, older than this # days will force info refresh
+    $MaxCacheAge = 1
+
+    $YouTubeDL = Join-Path $PSScriptRoot 'youtube-dl.exe'
+    $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
+    $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $Event)
+
+    $YTlink = 'https://github.com/rg3/youtube-dl/releases/download/2016.09.27/youtube-dl.exe'
+    $FFMPEGlink = 'https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip'
 
     Function Fix-FileName ($title) {
         return ((((($title -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace "'","").Trim()
@@ -230,15 +273,69 @@ begin {
         }
     }
 
-}
+    Function Get-RunningDownloadJobs {
+        $Temp= @()
+        ForEach( $job in $script:DownloadJob) {
+            if(! $job.process.HasExited ) {
+                $Temp+= $job
+            }
+            Else {
+                # Job finished, add to total
+		If( Test-Path $job.description ) {
+                    Write-Host ('Downloaded {0}' -f $job.description)
+                    $VideoInfo[ $InfoDownload]++
+                }
+                Else {
+                    Write-Warning ('Problem downloading {0}' -f $job.description)
 
-process {
+                }
+            }
+        }
+        $script:DownloadJob= $Temp
+        return ($script:DownloadJob).Count
+    }
 
-    # Max age for cache, older than this # days will force info refresh
-    $MaxCacheAge = 1
+    Function Stop-RunningDownloadJobs {
+        While ($script:DownloadJob | Where-Object { ! $_.process.HasExited })  {
+            $script:DownloadJob | ForEach-Object { Stop-Process -Id $_.process.Id -Force }
+        }
+    }
 
-    $YouTubeDL = Join-Path $PSScriptRoot 'youtube-dl.exe'
-    $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $Event)
+    Function Add-DownloadJob {
+        param( 
+            $FilePath,
+            $ArgumentList,
+            $Description
+        )
+        If( Get-Variable -Name DownloadJob -Scope Script -ErrorAction SilentlyContinue) {
+            $JobsRunning= Get-RunningDownloadJobs
+            If ( $JobsRunning -ge $MaxDownloadJobs) {
+                Write-Verbose ('Download queue full ({0} jobs), waiting for job to finish ..' -f $JobsRunning, $MaxDownloadJobs)
+                While ( $JobsRunning -ge $MaxDownloadJobs) {
+                    if ([system.console]::KeyAvailable) { 
+                        Start-Sleep 1
+                        $key = [system.console]::readkey($true)
+                        if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
+                            Write-Host "TERMINATING" 
+                            Stop-RunningDownloadJobs
+                            Exit -1
+                        }
+                    }
+                    Start-Sleep 5
+                    $JobsRunning= Get-RunningDownloadJobs
+                }
+            }
+        }
+        Else {
+            $script:DownloadJob= @()
+        }
+        $process= Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Passthru -Wait:$false -WindowStyle Minimized
+	$object= New-Object -TypeName PSObject -Property @{
+                process= $process
+                description= $Description
+        }
+        $script:DownloadJob+= $object
+    }
 
     $ProxyURL = Get-IEProxy
     If ( $ProxyURL) {
@@ -284,7 +381,6 @@ process {
         }
         Else {
             If (-not( Test-Path $YouTubeDL)) {
-                $YTlink = 'https://github.com/rg3/youtube-dl/releases/download/2016.09.27/youtube-dl.exe'
                 Write-Host ('youtube-dl.exe not found, will try to download from {0}' -f $YTLink)
                 Invoke-WebRequest -Uri $YTLink -OutFile $YouTubeDL -Proxy $ProxyURL
             }
@@ -321,8 +417,43 @@ process {
                 $DownloadVideos = $true
             }
             Else {
-                Write-Host 'Unable to locate or download youtube-dl.exe, will skip downloading YouTube videos'
+                Write-Warning 'Unable to locate or download youtube-dl.exe, will skip downloading YouTube videos'
                 $DownloadVideos = $false
+            }
+
+            If (-not( Test-Path $FFMPEG)) {
+
+                Write-Host ('ffmpeg.exe not found, will try to download from {0}' -f $FFMPEGlink)
+                $TempFile= Join-Path $PSScriptRoot 'ffmpeg-latest-win32-static.zip'
+                Invoke-WebRequest -Uri $FFMPEGlink -OutFile $TempFile -Proxy $ProxyURL
+
+                If( Test-Path $TempFile) {
+                    Add-Type -AssemblyName System.IO.Compression.FileSystem
+                    Write-Host ('{0} downloaded, trying to extract ffmpeg.exe' -f $TempFile)
+                    $FFMPEGZip= [System.IO.Compression.ZipFile]::OpenRead( $TempFile)
+                    $FFMPEGEntry= $FFMPEGZip.Entries | Where-Object {$_.FullName -like '*/ffmpeg.exe'}
+                    If( $FFMPEGEntry) {
+                        Try {
+                            [System.IO.Compression.ZipFileExtensions]::ExtractToFile( $FFMPEGEntry, $FFMPEG)
+                            $FFMPEGZip.Dispose()
+                            Remove-Item -Path $TempFile -Force
+                        }
+                        Catch {
+                            Write-Warning ('Problem extracting ffmpeg.exe from {0}' -f $FFMPEGZip)
+                        }
+                    }
+                    Else {
+                        Write-Warning 'ffmpeg.exe missing in downloaded archive'
+                    }
+                }
+            }
+            If ( Test-Path $FFMPEG) {
+                Write-Host ('ffmpeg.exe found at {0}' -f $FFMPEG)
+                $DownloadAMSVideos= $true
+            }
+            Else {
+                Write-Warning 'Unable to locate or download ffmpeg.exe, will skip downloading Azure Media Services videos'
+                $DownloadAMSVideos = $false
             }
         }
     }
@@ -414,7 +545,7 @@ process {
 
     If ($Product) {
         Write-Verbose ('Product specified: {0}' -f $Product)
-        $SessionsToGet = $SessionsToGet | Where-Object { $Product -in $_.products }
+        $SessionsToGet = $SessionsToGet | Where-Object { $Product -in $_.product }
     }
 
     If ($Title) {
@@ -440,6 +571,8 @@ process {
         $InfoPlaceholder = 1
         $InfoExist = 2
 
+        [console]::TreatControlCAsInput = $true
+
         $SessionsSelected = ($SessionsToGet | Measure-Object).Count
         Write-Host ('There are {0} sessions matching your criteria.' -f $SessionsSelected)
         Foreach ($SessionToGet in $SessionsToGet) {
@@ -449,98 +582,140 @@ process {
 
             Write-Host ('Inspecting contents for session {0}' -f $FileName)
 
-            If ( $DownloadVideos -and ($SessionToGet.onDemand -or $SessionToGet.downloadVideoLink) ) {
-                Write-Verbose 'Video is available.'
-                $vidfileName = ("$FileName.mp4")
-                $vidFullFile = Join-Path $DownloadFolder $vidfileName
-                if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
-                    Write-Host "Video file exists, skipping. $($vidfileName)" -ForegroundColor Yellow
-                    $VideoInfo[ $InfoExist]++
-                }
-                else {
-                    If ( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink) ) {
-                        $downloadLink = $SessionToGet.onDemand
+            If( ! $NoVideos) {
+                If ( ($DownloadVideos -and -not ([string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink))) -or ($DownloadAMSVideos -and -not ([string]::IsNullOrEmpty( $SessionToGet.onDemand))) ) {
+                    $vidfileName = ("$FileName.mp4")
+                    $vidFullFile = Join-Path $DownloadFolder $vidfileName
+                    if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
+                        Write-Host "Video file exists, skipping. $($vidfileName)"
+                        $VideoInfo[ $InfoExist]++
                     }
-                    Else {
-                        $downloadLink = $SessionToGet.downloadVideoLink
-                    }
-                    If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
-                        Write-Verbose ('Video hosted on Azure Media Services, extracting link from {0}' -f $downloadLink)
-                        $OnDemandPage= (Invoke-WebRequest -Uri $downloadLink).RawContent 
-                        
-                        If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
-                            Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
+                    else {
+                        If ( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink) ) {
+                            $downloadLink = $SessionToGet.onDemand
+                            Write-Verbose ('On-Demand video available at {0}' -f $downloadLink)
                         }
-                        #<video id="azuremediaplayer" class="azuremediaplayer amp-default-skin fullscreen-bg-video amp-big-play-centered" data-id="https://mediusprod.streaming.mediaservices.windows.net/a7835ea2-3e9d-436b-81bb-4c4c2e3d1d15/3f417748-0329-4f26-90cf-2e817fbb.ism/manifest"></video>
+                        Else {
+                            $downloadLink = $SessionToGet.downloadVideoLink
+                            Write-Verbose ('Video available at {0}' -f $downloadLink)
+                        }
+                        If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
+                            Write-Verbose ('Video hosted on Azure Media Services, extracting link from {0}' -f $downloadLink)
+                            $OnDemandPage= (Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL).RawContent 
+
+                            # Get the AMS URL from the page:
+                            If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
+                                Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
+                                $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
+                                #$Manifest= ([xml](Invoke-WebRequest -Uri $Endpoint -Proxy $ProxyURL)).MPD
+                                $Arg = "-o ""$vidFullFile""", $Endpoint
+                                If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
+                                If ( $Format) { $Arg += ('--format {0}' -f $Format) }
+                                Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
+                                Add-DownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile
+                            }
+                            Else {
+                                Write-Warning "Skipping: Problem extracting Azure Media Service URL"
+                            }                        
+                        }
+                        Else {
+                            $Arg = "-o ""$vidFullFile""", $downloadLink, "--no-check-certificate"
+                            If ( $ProxyURL) { $Arg += "--proxy $ProxyURL" }
+                            If ( $Format) { $Arg += ('--format {0}' -f $Format) }
+                            Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
+                            Add-DownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile 
+                        }
+                        If ( Test-Path $vidFullFile) {
+                            Write-Host "Downloaded $vidFullFile"
+                            $VideoInfo[ $InfoDownload]++
+                        }
                     }
-                    Else {
-                        Write-Verbose ('Running: youtube-dl.exe -o "{0}" {1}' -f $vidFullFile, $downloadLink)
-                        $Arg = "-o ""$vidFullFile""", $downloadLink, "--no-check-certificate"
-                        If ( $ProxyURL) { $Arg += "--proxy $ProxyURL" }
-                        Start-Process -FilePath $YouTubeDL -ArgumentList $Arg -NoNewWindow -Wait
-                    }
-                    If ( Test-Path $vidFullFile) {
-                        Write-Host "Downloaded $vidFullFile" -ForegroundColor Green
-                        $VideoInfo[ $InfoDownload]++
-                    }
-                    Else {
-                        Write-Host "Problem downloading $vidFullFile from $downloadLink" -ForegroundColor Red
-                    }
+                }
+                Else {
+                    Write-Host ('Skipping video for {0}' -f ($SessionToGet.Title))
                 }
             }
-            Else {
-                Write-Host "Skip downloading video: $($SessionToGet.Title)"
-            }
 
-            If ($SessionToGet.slideDeck -match "view.officeapps.live.com.*PPTX" -or $SessionToGet.slidedeck -match 'downloaddocument' ) {
-                Write-Verbose 'Slide deck is available for download.'
-                $slidedeckFile = '{0}.pptx' -f $FileName
-                $DeckType= 0
-                If( $SessionToGet.slidedeck -match 'downloaddocument') {
-                    # Slidedeck offered is PDF format
-                    $slidedeckFile = '{0}.pdf' -f $FileName
-                    $DeckType= 1
-                }
-                 $slidedeckFullFile = Join-Path $DownloadFolder $slidedeckFile
-                if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
-                    Write-Host "Slide deck file exists, skipping. $($slidedeckFile)" -ForegroundColor Yellow
-                    $DeckInfo[ $InfoExist]++
-                }
-                else {
-                    If( $DeckType= 0) {
-                        $encodedURL = ($sessionToGet.slideDeck -split 'src=')[1]
+            If(! $NoSlidedecks) {
+                If ($SessionToGet.slideDeck -match "view.officeapps.live.com.*PPTX" -or $SessionToGet.slidedeck -match 'downloaddocument' ) {
+                    Write-Verbose 'Slide deck is available for download.'
+                    $slidedeckFile = '{0}.pptx' -f $FileName
+                    $DeckType= 0
+                    If( $SessionToGet.slidedeck -match 'downloaddocument') {
+                        # Slidedeck offered is PDF format
+                        $slidedeckFile = '{0}.pdf' -f $FileName
+                        $DeckType= 1
                     }
-                    Else {
-                        $encodedURL = $sessionToGet.slideDeck
+                    $slidedeckFullFile = Join-Path $DownloadFolder $slidedeckFile
+                    if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
+                        Write-Host "Slide deck file exists, skipping. $($slidedeckFile)"
+                        $DeckInfo[ $InfoExist]++
                     }
-                    $slidedeckURL = [System.Web.HttpUtility]::UrlDecode( $encodedURL)
-                    Write-Verbose ('Downloading {0} to {1}' -f $slidedeckURL,  $slidedeckFullFile)
-                    $wc = New-Object net.webclient
-                    $wc.DownloadFile( $slidedeckURL,  $slidedeckFullFile)
+                    else {
+                        If( $DeckType= 0) {
+                            $encodedURL = ($sessionToGet.slideDeck -split 'src=')[1]
+                        }
+                        Else {
+                            $encodedURL = $sessionToGet.slideDeck
+                        }
+                        $slidedeckURL = [System.Web.HttpUtility]::UrlDecode( $encodedURL)
+                        Write-Verbose ('Downloading {0} to {1}' -f $slidedeckURL,  $slidedeckFullFile)
+                        $wc = New-Object net.webclient
+                        $wc.DownloadFile( $slidedeckURL,  $slidedeckFullFile)
 
-                    If (Test-Path  $slidedeckFullFile) {
-                        If ((Get-Item -Path  $slidedeckFullFile).Length -eq 0) {
-                            Write-Host "File  $slidedeckFullFile is zero length, removing" -ForegroundColor Yellow
-                            Remove-Item -Path " $slidedeckFullFile"
-                        }
-                        If ((Get-Item -Path  $slidedeckFullFile).Length -eq 631596) {
-                            Write-Host "File  $slidedeckFullFile is placeholder slide deck, removing" -ForegroundColor Yellow
-                            Remove-Item -Path " $slidedeckFullFile"
-                            $DeckInfo[ $InfoPlaceholder]++
-                        }
                         If (Test-Path  $slidedeckFullFile) {
-                            Write-Host "Downloaded  $slidedeckFullFile" -ForegroundColor Green
-                            $DeckInfo[ $InfoDownload]++
+                            If ((Get-Item -Path  $slidedeckFullFile).Length -eq 0) {
+                                Write-Warning "File  $slidedeckFullFile is zero length, removing"
+                                Remove-Item -Path " $slidedeckFullFile"
+                            }
+                            If ((Get-Item -Path  $slidedeckFullFile).Length -eq 631596) {
+                                Write-Warning "File  $slidedeckFullFile is placeholder slide deck, removing"
+                                Remove-Item -Path " $slidedeckFullFile"
+                                $DeckInfo[ $InfoPlaceholder]++
+                            }
+                            If (Test-Path  $slidedeckFullFile) {
+                                Write-Host "Downloaded  $slidedeckFullFile"
+                                $DeckInfo[ $InfoDownload]++
+                            }
+                        }
+                        Else {
+                            Write-Warning "Problem downloading  $slidedeckFullFile"
                         }
                     }
-                    Else {
-                        Write-Host "Problem downloading  $slidedeckFullFile" -ForegroundColor Red
+                }
+            }
+
+            if ([system.console]::KeyAvailable) { 
+                $key = [system.console]::readkey($true)
+                if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
+                    Write-Host "TERMINATING"
+                    Stop-RunningDownloadJobs
+                    Exit -1
+                }
+            }
+                   
+        }
+
+        $JobsRunning= Get-RunningDownloadJobs
+        If ( $JobsRunning -gt 0) {
+            Write-Verbose ('Waiting for download jobs to finish ({0} remaining jobs) - press Ctrl-C to abort)' -f $JobsRunning)
+            While  ( $JobsRunning -gt 0) {
+                if ([system.console]::KeyAvailable) { 
+                    Start-Sleep 1
+                    $key = [system.console]::readkey($true)
+                    if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
+                        Write-Host "TERMINATING"
+                        Stop-RunningDownloadJobs
+                        Exit -1
                     }
                 }
+                $JobsRunning= Get-RunningDownloadJobs
             }
         }
+
         Write-Host ('Downloaded {0} slide decks and {1} videos.' -f $DeckInfo[ $InfoDownload], $VideoInfo[ $InfoDownload])
         Write-Host ('Skipped {0} placeholder slide decks, and {1} videos are not yet available.' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
         Write-Host ('{0} slide decks and {1} videos were skipped as they are already present.' -f $DeckInfo[ $InfoExist], $VideoInfo[ $InfoExist])
     }
-}
+
+
