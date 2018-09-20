@@ -22,7 +22,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.8, August 24th, 2018
+    Version 2.9, September 20th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -79,7 +79,12 @@
     Only retrieve sessions with this speaker.
 
     .PARAMETER Product
-    Only retrieve sessions for this product.
+    Only retrieve sessions for this product. You need to specify the full product, subproducts seperated
+    by '/', e.g. 'Microsoft 365/Office 365/Office 365 Management'. Wildcards are allowed.
+
+    .PARAMETER Category
+    Only retrieve sessions for this category. You need to specify the full category, subcategories seperated
+    by '/', e.g. 'M365/Admin, Identity & Mgmt'. Wildcards are allowed.
 
     .PARAMETER ScheduleCode
     Only retrieve sessions with this session code. You can use one or more codes.
@@ -163,6 +168,9 @@
     2.8  Added downloading of Azure Media Services hosted streaming media
          Added simultaneous downloading of AMS hosted OnDemand streams
          Added NoSlidedecks switch
+    2.9  Added Category parameter
+         Fixed searching on Product
+         Increased itemsPerPage when retrieving catalog
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -175,6 +183,10 @@
     .EXAMPLE
     Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite
     .\Get-EventSession.ps1 -DownloadFolder D:\Ignite -ScheduleCode BRK3248,BRK3186
+
+    .EXAMPLE
+    View all Exchange Server related sessions as Ignite including speakers(s), and sort them by date/time
+    Get-EventSession.ps1 -Event Ignite -InfoOnly -Product '*Exchange Server*' | Sort-Object startDateTime | Select-Object @{n='Session'; e={$_.sessionCode}}, @{n='When';e={([datetime]$_.startDateTime).ToString('g')}}, title, @{n='Speakers'; e={$_.speakerNames -join ','}}
     #>
 #Requires -Version 3.0
 
@@ -203,6 +215,10 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [string]$Product = '',
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [string]$Category = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
@@ -484,6 +500,7 @@ param(
             userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
             baseURL     = $EventAPIUrl
             searchURL   = 'session/anon/search'
+            itemsPerPage= 100
         }
  
         $searchbody = '{"searchText":"*","sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]}}'
@@ -500,7 +517,7 @@ param(
         [int32] $sessionCount = $sessiondata.total
         [int32] $remainder = 0
  
-        $PageCount = [System.Math]::DivRem($sessionCount, 10, [ref]$remainder)
+        $PageCount = [System.Math]::DivRem($sessionCount, $web.itemsPerPage, [ref]$remainder)
         If ($remainder -gt 0) {
             $PageCount ++
         }
@@ -509,9 +526,10 @@ param(
         $data = @()
         $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
         $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
-        For ($page = 1; $page -le $PageCount; $page++) {
+#        For ($page = 1; $page -le $PageCount; $page++) {
+        For ($page = 1; $page -le 2; $page++) {
             Write-Progress -Activity "Retrieving MyIgnite Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
-            $searchbody = "{`"searchText`":`"*`",`"searchPage`":$($page),`"sortOption`":`"None`",`"searchFacets`":{`"facets`":[],`"personalizationFacets`":[]}}"
+            $searchbody = "{`"itemsPerPage`":$($web.itemsPerPage),`"searchText`":`"*`",`"searchPage`":$($page),`"sortOption`":`"None`",`"searchFacets`":{`"facets`":[],`"personalizationFacets`":[]}}"
             $searchResultsResponse = Invoke-WebRequest -Uri "$($web.baseURL)/$($web.searchURL)" -Body $searchbody -Method Post -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
             $sessiondata = ConvertFrom-Json -InputObject $searchResults
@@ -520,6 +538,8 @@ param(
                 $object.PSObject.Properties | % {
                     if ($_.Value.Trim) { $object.($_.Name) = $_.Value.Trim() }
                     if ($_.Name -eq 'speakerNames') { $object.($_.Name) = @($_.Value) }
+                    if ($_.Name -eq 'products') { $object.($_.Name) = @($_.Value -replace [char]9, '/') }
+                    if ($_.Name -eq 'contentCategory') { $object.($_.Name) = @(($_.Value -replace [char]9, '/') -replace ' / ', '/') }
                 }
                 Write-Verbose ('Adding info for session {0}' -f $Object.sessionCode)
                 $object.PSObject.TypeNames.Insert(0, 'Session.Information')
@@ -545,17 +565,22 @@ param(
 
     If ($Product) {
         Write-Verbose ('Product specified: {0}' -f $Product)
-        $SessionsToGet = $SessionsToGet | Where-Object { $Product -in $_.product }
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.products | Where {$_ -ilike $Product }}
+    }
+
+    If ($Category) {
+        Write-Verbose ('Category specified: {0}' -f $Category)
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.category | Where {$_ -ilike $Category }}
     }
 
     If ($Title) {
         Write-Verbose ('Title keyword specified: {0}' -f $Title)
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.title -ilike "*$Title*" }
+        $SessionsToGet = $SessionsToGet | Where-Object {$_.title -ilike ('*{0}*' -f $Title) }
     }
 
     If ($Keyword) {
         Write-Verbose ('Abstract keyword specified: {0}' -f $Keyword)
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.abstract -ilike "*$Keyword*" }
+        $SessionsToGet = $SessionsToGet | Where-Object {$_.abstract -ilike ('*{0}*' -f $Keyword) }
     }
 
     If ( $InfoOnly) {
