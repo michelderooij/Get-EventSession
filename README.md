@@ -17,6 +17,7 @@ To prevent retrieving session information for every run, the script will cache s
 
 * PowerShell 3.0
 * YouTube-dl.exe (automatic download from [here](https://yt-dl.org))
+* ffmpeg, (automatic download from [here](https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip)) 
 
 ### Usage
 
