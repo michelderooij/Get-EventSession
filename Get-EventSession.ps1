@@ -526,8 +526,7 @@ param(
         $data = @()
         $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
         $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
-#        For ($page = 1; $page -le $PageCount; $page++) {
-        For ($page = 1; $page -le 2; $page++) {
+        For ($page = 1; $page -le $PageCount; $page++) {
             Write-Progress -Activity "Retrieving MyIgnite Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
             $searchbody = "{`"itemsPerPage`":$($web.itemsPerPage),`"searchText`":`"*`",`"searchPage`":$($page),`"sortOption`":`"None`",`"searchFacets`":{`"facets`":[],`"personalizationFacets`":[]}}"
             $searchResultsResponse = Invoke-WebRequest -Uri "$($web.baseURL)/$($web.searchURL)" -Body $searchbody -Method Post -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
