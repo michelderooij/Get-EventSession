@@ -198,7 +198,7 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [string]$Format= 'worstvideo+bestaudio/best',
+    [string]$Format= 'bestvideo+bestaudio/best',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
