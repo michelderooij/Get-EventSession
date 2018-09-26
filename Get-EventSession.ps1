@@ -171,7 +171,6 @@
     2.9  Added Category parameter
          Fixed searching on Product
          Increased itemsPerPage when retrieving catalog
-    2.91 Update to video downloading routine as they are no longer published through API
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -630,7 +629,7 @@ param(
                             }
                             Else {
                                 # Try session page, eg https://medius.studios.ms/Embed/Video/IG18-BRK2094
-                                $downloadLink = $SessionUrl -f $SessionsToGet.SessionCode
+                                $downloadLink = $SessionUrl -f $SessionToGet.SessionCode
                                 Write-Verbose ('Will attempt download from {0}' -f $downloadLink)
                             }
                         }
