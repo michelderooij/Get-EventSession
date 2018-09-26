@@ -22,7 +22,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.9, September 20th, 2018
+    Version 2.91, September 27th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -171,6 +171,7 @@
     2.9  Added Category parameter
          Fixed searching on Product
          Increased itemsPerPage when retrieving catalog
+    2.91 Update to video downloading routine as they are no longer published through API
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -346,9 +347,9 @@ param(
             $script:DownloadJob= @()
         }
         $process= Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Passthru -Wait:$false -WindowStyle Minimized
-	$object= New-Object -TypeName PSObject -Property @{
-                process= $process
-                description= $Description
+	    $object= New-Object -TypeName PSObject -Property @{
+            process= $process
+            description= $Description
         }
         $script:DownloadJob+= $object
     }
@@ -366,10 +367,12 @@ param(
         'Ignite' {
             $EventAPIUrl= 'https://api.myignite.microsoft.com/api'
             $EventWebUrl= 'https://myignite.microsoft.com/'
+            $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
         }
         'Inspire' {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com/api'
             $EventWebUrl= 'https://myinspire.microsoft.com/'
+            $SessionUrl= ''
         }
         default {
             Write-Error ('Unknown event: {0}' -f $Event)
@@ -464,7 +467,7 @@ param(
                 }
             }
             If ( Test-Path $FFMPEG) {
-                Write-Host ('ffmpeg.exe found at {0}' -f $FFMPEG)
+                Write-Host ('ffmpeg.exe located at {0}' -f $FFMPEG)
                 $DownloadAMSVideos= $true
             }
             Else {
@@ -607,21 +610,29 @@ param(
             Write-Host ('Inspecting contents for session {0}' -f $FileName)
 
             If( ! $NoVideos) {
-                If ( ($DownloadVideos -and -not ([string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink))) -or ($DownloadAMSVideos -and -not ([string]::IsNullOrEmpty( $SessionToGet.onDemand))) ) {
+                If ( $DownloadVideos -or $DownloadAMSVideos) {
+
                     $vidfileName = ("$FileName.mp4")
                     $vidFullFile = Join-Path $DownloadFolder $vidfileName
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
-                        Write-Host "Video file exists, skipping. $($vidfileName)"
+                        Write-Host "Skipping: Video file exists $($vidfileName)"
                         $VideoInfo[ $InfoExist]++
                     }
                     else {
-                        If ( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink) ) {
+                        If ( !( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) ) {
                             $downloadLink = $SessionToGet.onDemand
-                            Write-Verbose ('On-Demand video available at {0}' -f $downloadLink)
+                            Write-Verbose ('Using on-demand link {0}' -f $downloadLink)
                         }
                         Else {
-                            $downloadLink = $SessionToGet.downloadVideoLink
-                            Write-Verbose ('Video available at {0}' -f $downloadLink)
+                            If (!( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)) ) {
+                                $downloadLink = $SessionToGet.downloadVideoLink
+                                Write-Verbose ('Using download video link {0}' -f $downloadLink)
+                            }
+                            Else {
+                                # Try session page, eg https://medius.studios.ms/Embed/Video/IG18-BRK2094
+                                $downloadLink = $SessionUrl -f $SessionsToGet.SessionCode
+                                Write-Verbose ('Will attempt download from {0}' -f $downloadLink)
+                            }
                         }
                         If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
                             Write-Verbose ('Video hosted on Azure Media Services, extracting link from {0}' -f $downloadLink)
@@ -654,9 +665,6 @@ param(
                             $VideoInfo[ $InfoDownload]++
                         }
                     }
-                }
-                Else {
-                    Write-Host ('Skipping video for {0}' -f ($SessionToGet.Title))
                 }
             }
 
@@ -706,6 +714,9 @@ param(
                             Write-Warning "Problem downloading  $slidedeckFullFile"
                         }
                     }
+                }
+                Else {
+                    Write-Host ('No slidedeck link for {0}' -f ($SessionToGet.Title))
                 }
             }
 
