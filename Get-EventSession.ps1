@@ -49,25 +49,10 @@
 
     .PARAMETER Format
     Specify mp4 video format to download using youtube-dl.exe. Direct downloads are in the format provided.
-    Default, the best available video and audio format will be tried (best). Note that lower resolution downloads
-    may result in less readable slides that are presented, and not all formats may be present for all streams.
 
-    Sample values:
-    160          mp4        256x144    DASH video  108k , avc1.4d400b, 30fps, video only
-    133          mp4        426x240    DASH video  242k , avc1.4d400c, 30fps, video only
-    134          mp4        640x360    DASH video  305k , avc1.4d401e, 30fps, video only
-    135          mp4        854x480    DASH video 1155k , avc1.4d4014, 30fps, video only
-    136          mp4        1280x720   DASH video 2310k , avc1.4d4016, 30fps, video only
-    137          mp4        1920x1080  DASH video 2495k , avc1.640028, 30fps, video only
-    18           mp4        640x360    medium , avc1.42001E,  mp4a.40.2@ 96k
-    22           mp4        1280x720   hd720 , avc1.64001F,  mp4a.40.2@192k
-    115          mp4(AMS)   320x180    115k , H264, video only
-    225          mp4(AMS)   480x270    225k , H264, video only
-    333          mp4(AMS)   640x360    333k , H264, video only
-    612          mp4(AMS)   960x540    612k , H264, video only
-    909          mp4(AMS)   1280x720   909k , H264, video only
-
-    For more advanced filtering options, see See https://github.com/rg3/youtube-dl/blob/master/README.md#format-selection-examples
+    For Azure media, the best available video and audio format will be tried (bestvideo+bestaudio). Alternatively, you
+    can select other formats (when present), e.g. worstvideo+bestaudio. Note that lower resolution downloads may result 
+    in less readable slides that are presented, and not all formats may be present for all streams.
     
     .PARAMETER Keyword
     Only retrieve sessions with this keyword in their session description.
