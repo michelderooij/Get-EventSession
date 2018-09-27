@@ -22,7 +22,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.92, September 27th, 2018
+    Version 2.93, September 27th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -156,8 +156,9 @@
     2.9  Added Category parameter
          Fixed searching on Product
          Increased itemsPerPage when retrieving catalog
-    2.91 Update to video downloading routine as they are no longer published through API
+    2.91 Update to video downloading routine due to changes in publishing contents
     2.92 Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
+    2.93 Update to slidedeck downloading routine due to changes in publishing contents
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -357,11 +358,13 @@ param(
             $EventAPIUrl= 'https://api.myignite.microsoft.com/api'
             $EventWebUrl= 'https://myignite.microsoft.com/'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
+            $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
         }
         'Inspire' {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com/api'
             $EventWebUrl= 'https://myinspire.microsoft.com/'
             $SessionUrl= ''
+            $SlidedeckUrl= ''
         }
         default {
             Write-Error ('Unknown event: {0}' -f $Event)
@@ -650,7 +653,7 @@ param(
                             Add-DownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile 
                         }
                         If ( Test-Path $vidFullFile) {
-                            Write-Host "Downloaded $vidFullFile"
+                            Write-Host "Downloaded $vidFullFile" -ForegroundColor Green
                             $VideoInfo[ $InfoDownload]++
                         }
                     }
@@ -658,14 +661,25 @@ param(
             }
 
             If(! $NoSlidedecks) {
-                If ($SessionToGet.slideDeck -match "view.officeapps.live.com.*PPTX" -or $SessionToGet.slidedeck -match 'downloaddocument' ) {
-                    Write-Verbose 'Slide deck is available for download.'
-                    $slidedeckFile = '{0}.pptx' -f $FileName
-                    $DeckType= 0
+                If ( !( [string]::IsNullOrEmpty( $SessionToGet.slideDeck)) ) {
+                    $downloadLink = $SessionToGet.slideDeck
+                    Write-Verbose ('Using slidedeck link {0}' -f $downloadLink)
+                }
+                Else {
+                    # Try session page, eg https://mediusprodstatic.studios.ms/presentations/Ignite2018/<SessionCode>.pptx
+                    $downloadLink = $SlidedeckUrl -f $SessionToGet.SessionCode
+                    Write-Verbose ('Will attempt download from {0}' -f $downloadLink)
+                }
+
+                If ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'mediusprodstatic.studios.ms') {
                     If( $SessionToGet.slidedeck -match 'downloaddocument') {
                         # Slidedeck offered is PDF format
                         $slidedeckFile = '{0}.pdf' -f $FileName
                         $DeckType= 1
+                    }
+                    Else {
+                        $slidedeckFile = '{0}.pptx' -f $FileName
+                        $DeckType= 0
                     }
                     $slidedeckFullFile = Join-Path $DownloadFolder $slidedeckFile
                     if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
@@ -674,15 +688,15 @@ param(
                     }
                     else {
                         If( $DeckType= 0) {
-                            $encodedURL = ($sessionToGet.slideDeck -split 'src=')[1]
+                            $encodedURL = ($downloadLink -split 'src=')[1]
                         }
                         Else {
-                            $encodedURL = $sessionToGet.slideDeck
+                            $encodedURL = $downloadLink
                         }
-                        $slidedeckURL = [System.Web.HttpUtility]::UrlDecode( $encodedURL)
-                        Write-Verbose ('Downloading {0} to {1}' -f $slidedeckURL,  $slidedeckFullFile)
+                        $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $encodedURL)
+                        Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
                         $wc = New-Object net.webclient
-                        $wc.DownloadFile( $slidedeckURL,  $slidedeckFullFile)
+                        $wc.DownloadFile( $DownloadURL,  $slidedeckFullFile)
 
                         If (Test-Path  $slidedeckFullFile) {
                             If ((Get-Item -Path  $slidedeckFullFile).Length -eq 0) {
@@ -695,7 +709,7 @@ param(
                                 $DeckInfo[ $InfoPlaceholder]++
                             }
                             If (Test-Path  $slidedeckFullFile) {
-                                Write-Host "Downloaded  $slidedeckFullFile"
+                                Write-Host "Downloaded  $slidedeckFullFile" -ForegroundColor Green
                                 $DeckInfo[ $InfoDownload]++
                             }
                         }
