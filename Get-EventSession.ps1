@@ -22,7 +22,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.91, September 27th, 2018
+    Version 2.92, September 27th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -156,6 +156,8 @@
     2.9  Added Category parameter
          Fixed searching on Product
          Increased itemsPerPage when retrieving catalog
+    2.91 Update to video downloading routine as they are no longer published through API
+    2.92 Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -249,6 +251,9 @@ param(
 
     $YTlink = 'https://github.com/rg3/youtube-dl/releases/download/2016.09.27/youtube-dl.exe'
     $FFMPEGlink = 'https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip'
+
+    # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
     Function Fix-FileName ($title) {
         return ((((($title -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace "'","").Trim()
