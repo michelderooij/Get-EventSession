@@ -156,9 +156,9 @@
     2.9  Added Category parameter
          Fixed searching on Product
          Increased itemsPerPage when retrieving catalog
-    2.91 Update to video downloading routine due to changes in publishing contents
+    2.91 Update to video downloading routine due to changes in published session info
     2.92 Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
-    2.93 Update to slidedeck downloading routine due to changes in publishing contents
+    2.93 Update to slidedeck downloading routine due to changes in published session info
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -280,16 +280,82 @@ param(
         }
     }
 
-    Function Get-RunningDownloadJobs {
+    Function Get-RunningDeckDownloadJobs {
         $Temp= @()
-        ForEach( $job in $script:DownloadJob) {
+        ForEach( $job in $script:DeckDownloadJob) {
+            if($job.job.State -eq 'Running') {
+                $Temp+= $job
+            }
+            Else {
+                # Job finished, add to total
+		        If( $job.job.State -eq 'Completed' ) {
+                    Write-Host ('Downloaded {0}' -f $job.description) -ForegroundColor Green
+                    $DeckInfo[ $InfoDownload]++
+                }
+                Else {
+                    Write-Warning ('Problem downloading {0}' -f $job.description)
+
+                }
+            }
+        }
+        $script:DeckDownloadJob= $Temp
+        return ($script:DeckDownloadJob).Count
+    }
+
+    Function Stop-RunningDeckDownloadJobs {
+        While ($script:DeckDownloadJob | Where-Object { $_.job.State -eq 'Running'})  {
+            $script:DeckDownloadJob | ForEach-Object { Remove-Job -Id $_.job.Id -Force}
+        }
+    }
+
+    Function Add-DeckDownloadJob {
+        param( 
+            $FilePath,
+            $DownloadUrl,
+            $Description
+        )
+        If( Get-Variable -Name DeckDownloadJob -Scope Script -ErrorAction SilentlyContinue) {
+            $JobsRunning= Get-RunningDeckDownloadJobs
+            If ( $JobsRunning -ge $MaxDownloadJobs) {
+                Write-Verbose ('Slidedeck download queue full ({0} jobs), waiting for a slot ..' -f $JobsRunning, $MaxDownloadJobs)
+                While ( $JobsRunning -ge $MaxDownloadJobs) {
+                    if ([system.console]::KeyAvailable) { 
+                        Start-Sleep 1
+                        $key = [system.console]::readkey($true)
+                        if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
+                            Write-Host "TERMINATING" 
+                            Stop-RunningVideoDownloadJobs
+                            Stop-RunningDeckDownloadJobs
+                            Exit -1
+                        }
+                    }
+                    Start-Sleep 5
+                    $JobsRunning= Get-RunningDeckDownloadJobs
+                }
+            }
+        }
+        Else {
+            $script:DeckDownloadJob= @()
+        }
+        
+        $job= Start-Job -ScriptBlock { param( $url, $file) $wc = New-Object net.webclient; $wc.DownloadFile( $url, $file) } -ArgumentList $DownloadUrl, $FilePath
+	    $object= New-Object -TypeName PSObject -Property @{
+            job= $job
+            description= $Description
+        }
+        $script:DeckDownloadJob+= $object
+    }
+
+    Function Get-RunningVideoDownloadJobs {
+        $Temp= @()
+        ForEach( $job in $script:VideoDownloadJob) {
             if(! $job.process.HasExited ) {
                 $Temp+= $job
             }
             Else {
                 # Job finished, add to total
-		If( Test-Path $job.description ) {
-                    Write-Host ('Downloaded {0}' -f $job.description)
+		        If( Test-Path $job.description ) {
+                    Write-Host ('Downloaded {0}' -f $job.description) -ForegroundColor Green
                     $VideoInfo[ $InfoDownload]++
                 }
                 Else {
@@ -298,50 +364,51 @@ param(
                 }
             }
         }
-        $script:DownloadJob= $Temp
-        return ($script:DownloadJob).Count
+        $script:VideoDownloadJob= $Temp
+        return ($script:VideoDownloadJob).Count
     }
 
-    Function Stop-RunningDownloadJobs {
-        While ($script:DownloadJob | Where-Object { ! $_.process.HasExited })  {
-            $script:DownloadJob | ForEach-Object { Stop-Process -Id $_.process.Id -Force }
+    Function Stop-RunningVideoDownloadJobs {
+        While ($script:VideoDownloadJob | Where-Object { ! $_.process.HasExited })  {
+            $script:VideoDownloadJob | ForEach-Object { Stop-Process -Id $_.process.Id -Force }
         }
     }
 
-    Function Add-DownloadJob {
+    Function Add-VideoDownloadJob {
         param( 
             $FilePath,
             $ArgumentList,
             $Description
         )
-        If( Get-Variable -Name DownloadJob -Scope Script -ErrorAction SilentlyContinue) {
-            $JobsRunning= Get-RunningDownloadJobs
+        If( Get-Variable -Name VideoDownloadJob -Scope Script -ErrorAction SilentlyContinue) {
+            $JobsRunning= Get-RunningVideoDownloadJobs
             If ( $JobsRunning -ge $MaxDownloadJobs) {
-                Write-Verbose ('Download queue full ({0} jobs), waiting for job to finish ..' -f $JobsRunning, $MaxDownloadJobs)
+                Write-Verbose ('Video download queue full ({0} jobs), waiting for a slot ..' -f $JobsRunning, $MaxDownloadJobs)
                 While ( $JobsRunning -ge $MaxDownloadJobs) {
                     if ([system.console]::KeyAvailable) { 
                         Start-Sleep 1
                         $key = [system.console]::readkey($true)
                         if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
                             Write-Host "TERMINATING" 
-                            Stop-RunningDownloadJobs
+                            Stop-RunningVideoDownloadJobs
+                            Stop-RunningDeckDownloadJobs
                             Exit -1
                         }
                     }
                     Start-Sleep 5
-                    $JobsRunning= Get-RunningDownloadJobs
+                    $JobsRunning= Get-RunningVideoDownloadJobs
                 }
             }
         }
         Else {
-            $script:DownloadJob= @()
+            $script:VideoDownloadJob= @()
         }
         $process= Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Passthru -Wait:$false -WindowStyle Minimized
 	    $object= New-Object -TypeName PSObject -Property @{
             process= $process
             description= $Description
         }
-        $script:DownloadJob+= $object
+        $script:VideoDownloadJob+= $object
     }
 
     $ProxyURL = Get-IEProxy
@@ -599,7 +666,7 @@ param(
             Write-Progress -Activity 'Downloading session content' -Status "Downloading $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
             $FileName = Fix-FileName "$($SessionToGet.sessionCode.Trim()) - $($SessionToGet.title.Trim())"
 
-            Write-Host ('Inspecting contents for session {0}' -f $FileName)
+            Write-Host ('Processing info session {0}' -f $FileName)
 
             If( ! $NoVideos) {
                 If ( $DownloadVideos -or $DownloadAMSVideos) {
@@ -639,7 +706,7 @@ param(
                                 If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
                                 If ( $Format) { $Arg += ('--format {0}' -f $Format) }
                                 Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
-                                Add-DownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile
+                                Add-VideoDownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile
                             }
                             Else {
                                 Write-Warning "Skipping: Problem extracting Azure Media Service URL"
@@ -650,7 +717,7 @@ param(
                             If ( $ProxyURL) { $Arg += "--proxy $ProxyURL" }
                             If ( $Format) { $Arg += ('--format {0}' -f $Format) }
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
-                            Add-DownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile 
+                            Add-VideoDownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile 
                         }
                         If ( Test-Path $vidFullFile) {
                             Write-Host "Downloaded $vidFullFile" -ForegroundColor Green
@@ -695,27 +762,7 @@ param(
                         }
                         $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $encodedURL)
                         Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
-                        $wc = New-Object net.webclient
-                        $wc.DownloadFile( $DownloadURL,  $slidedeckFullFile)
-
-                        If (Test-Path  $slidedeckFullFile) {
-                            If ((Get-Item -Path  $slidedeckFullFile).Length -eq 0) {
-                                Write-Warning "File  $slidedeckFullFile is zero length, removing"
-                                Remove-Item -Path " $slidedeckFullFile"
-                            }
-                            If ((Get-Item -Path  $slidedeckFullFile).Length -eq 631596) {
-                                Write-Warning "File  $slidedeckFullFile is placeholder slide deck, removing"
-                                Remove-Item -Path " $slidedeckFullFile"
-                                $DeckInfo[ $InfoPlaceholder]++
-                            }
-                            If (Test-Path  $slidedeckFullFile) {
-                                Write-Host "Downloaded  $slidedeckFullFile" -ForegroundColor Green
-                                $DeckInfo[ $InfoDownload]++
-                            }
-                        }
-                        Else {
-                            Write-Warning "Problem downloading  $slidedeckFullFile"
-                        }
+                        Add-DeckDownloadJob -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -Description $slidedeckFullFile
                     }
                 }
                 Else {
@@ -727,27 +774,29 @@ param(
                 $key = [system.console]::readkey($true)
                 if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
                     Write-Host "TERMINATING"
-                    Stop-RunningDownloadJobs
+                    Stop-RunningVideoDownloadJobs
+                    Stop-RunningDeckDownloadJobs
                     Exit -1
                 }
             }
                    
         }
 
-        $JobsRunning= Get-RunningDownloadJobs
+        $JobsRunning= (Get-RunningVideoDownloadJobs) + (Get-RunningDeckDownloadJobs)
         If ( $JobsRunning -gt 0) {
-            Write-Verbose ('Waiting for download jobs to finish ({0} remaining jobs) - press Ctrl-C to abort)' -f $JobsRunning)
+            Write-Verbose ('Waiting for download jobs to finish ({0} remaining) - press Ctrl-C to abort)' -f $JobsRunning)
             While  ( $JobsRunning -gt 0) {
                 if ([system.console]::KeyAvailable) { 
                     Start-Sleep 1
                     $key = [system.console]::readkey($true)
                     if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
                         Write-Host "TERMINATING"
-                        Stop-RunningDownloadJobs
+                        Stop-RunningVideoDownloadJobs
+                        Stop-RunningDeckDownloadJobs
                         Exit -1
                     }
                 }
-                $JobsRunning= Get-RunningDownloadJobs
+                $JobsRunning= (Get-RunningVideoDownloadJobs) + (Get-RunningDeckDownloadJobs)
             }
         }
 
