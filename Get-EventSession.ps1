@@ -253,7 +253,7 @@ param(
     $FFMPEGlink = 'https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip'
 
     # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls" 
 
     Function Fix-FileName ($title) {
         return ((((($title -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace "'","").Trim()
