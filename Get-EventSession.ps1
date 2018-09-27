@@ -50,9 +50,9 @@
     .PARAMETER Format
     Specify mp4 video format to download using youtube-dl.exe. Direct downloads are in the format provided.
 
-    For Azure media, the best available video and audio format will be tried (bestvideo+bestaudio). Alternatively, you
-    can select other formats (when present), e.g. worstvideo+bestaudio. Note that lower resolution downloads may result 
-    in less readable slides that are presented, and not all formats may be present for all streams.
+    For Azure media, the smallest video and best audio format will be tried (worstvideo+bestaudio/best). 
+    Alternatively, you can select other formats (when present), e.g. bestvideo+bestaudio. Note that the format 
+    requested needs to be present in the stream package.
     
     .PARAMETER Keyword
     Only retrieve sessions with this keyword in their session description.
@@ -183,7 +183,7 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [string]$Format= 'bestvideo+bestaudio/best',
+    [string]$Format= 'worstvideo+bestaudio/best',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
