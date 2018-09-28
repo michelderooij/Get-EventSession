@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.94, September 28th, 2018
+    Version 2.95, September 28th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -161,6 +161,7 @@
     2.92 Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
     2.93 Update to slidedeck downloading routine due to changes in published session info
     2.94 Fixed cleanup of finished jobs
+    2.95 Fixed encoding of filenames
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -290,15 +291,14 @@ param(
             }
             Else {
                 # Job finished, add to total
-		If( $job.job.State -eq 'Completed' ) {
+		If( $job.job.State -eq 'Completed' -and (Test-Path -Path $job.description)) {
                     Write-Host ('Downloaded {0}' -f $job.description) -ForegroundColor Green
-                    Remove-Job -Id $job.job.Id -Force
                     $DeckInfo[ $InfoDownload]++
                 }
                 Else {
                     Write-Warning ('Problem downloading {0}' -f $job.description)
-
                 }
+                Remove-Job -Id $job.job.Id -Force
             }
         }
         $script:DeckDownloadJob= $Temp
@@ -339,7 +339,7 @@ param(
             $script:DeckDownloadJob= @()
         }
         
-        $job= Start-Job -ScriptBlock { param( $url, $file) $wc = New-Object net.webclient; $wc.DownloadFile( $url, $file) } -ArgumentList $DownloadUrl, $FilePath
+        $job= Start-Job -ScriptBlock { param( $url, $file) $wc = New-Object System.Net.WebClient; $wc.Encoding = [System.Text.Encoding]::UTF8; $wc.DownloadFile( $url, $file) } -ArgumentList $DownloadUrl, $FilePath
 	    $object= New-Object -TypeName PSObject -Property @{
             job= $job
             description= $Description
