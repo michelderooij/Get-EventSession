@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.93, September 27th, 2018
+    Version 2.94, September 28th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -160,6 +160,7 @@
     2.91 Update to video downloading routine due to changes in published session info
     2.92 Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
     2.93 Update to slidedeck downloading routine due to changes in published session info
+    2.94 Fixed cleanup of finished jobs
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -289,8 +290,9 @@ param(
             }
             Else {
                 # Job finished, add to total
-		        If( $job.job.State -eq 'Completed' ) {
+		If( $job.job.State -eq 'Completed' ) {
                     Write-Host ('Downloaded {0}' -f $job.description) -ForegroundColor Green
+                    Remove-Job -Id $job.job.Id -Force
                     $DeckInfo[ $InfoDownload]++
                 }
                 Else {
@@ -304,9 +306,7 @@ param(
     }
 
     Function Stop-RunningDeckDownloadJobs {
-        While ($script:DeckDownloadJob | Where-Object { $_.job.State -eq 'Running'})  {
-            $script:DeckDownloadJob | ForEach-Object { Remove-Job -Id $_.job.Id -Force}
-        }
+        $script:DeckDownloadJob | ForEach-Object { Remove-Job -Id $_.job.Id -Force}
     }
 
     Function Add-DeckDownloadJob {
