@@ -11,13 +11,14 @@
     is catched by the script because we need to stop download jobs when aborting the script.
 
     .AUTHOR
-    Michel de Rooij 	http://eightwone.com
+    Michel de Rooij 	         http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	http://deploywindows.info
-    Scott Ladewig 	http://ladewig.com
-    Tim Pringle         http://www.powershell.amsterdam
-    Andy Race           https://github.com/AndyRace
+    Mattias Fors 	         http://deploywindows.info
+    Scott Ladewig 	         http://ladewig.com
+    Tim Pringle                  http://www.powershell.amsterdam
+    Andy Race                    https://github.com/AndyRace
+    Richard van Nieuwenhuizen
 
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
