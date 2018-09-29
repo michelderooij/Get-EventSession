@@ -681,7 +681,7 @@ param(
                     $vidfileName = ("$FileName.mp4")
                     $vidFullFile = Join-Path $DownloadFolder $vidfileName
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
-                        Write-Host "Skipping: Video file exists $($vidfileName)"
+                        Write-Host "Skipping: Video exists $($vidfileName)"
                         $VideoInfo[ $InfoExist]++
                     }
                     else {
@@ -702,7 +702,12 @@ param(
                         }
                         If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
                             Write-Verbose ('Video hosted on Azure Media Services, checking link {0}' -f $downloadLink)
-                            $ValidUrl= Invoke-WebRequest -Uri $downloadLink -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                            Try {
+                                $ValidUrl= Invoke-WebRequest -Uri $downloadLink -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                            }
+                            Catch {
+                                $ValidUrl= $false
+                            }
                             If( $ValidUrl) {                        
                                 $OnDemandPage= (Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL).RawContent 
 
@@ -718,7 +723,7 @@ param(
                                     Add-VideoDownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile
                                 }
                                 Else {
-                                    Write-Warning "Skipping: Azure Media Service URL not found"
+                                    Write-Warning "Skipping: Azure Media Service URL not found on page"
                                 }                        
                             }
                             Else {
@@ -763,7 +768,7 @@ param(
                     }
                     $slidedeckFullFile = Join-Path $DownloadFolder $slidedeckFile
                     if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
-                        Write-Host "Skipping: Slidedeck file exists $($slidedeckFile)"
+                        Write-Host "Skipping: Slidedeck exists $($slidedeckFile)"
                         $DeckInfo[ $InfoExist]++
                     }
                     else {
@@ -774,13 +779,18 @@ param(
                             $encodedURL = $downloadLink
                         }
                         $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $encodedURL)
-                        $ValidUrl= Invoke-WebRequest -Uri $DownloadUrl -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                        Try {
+                            $ValidUrl= Invoke-WebRequest -Uri $DownloadUrl -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                        }
+                        Catch {
+                            $ValidUrl= $false
+                        }
                         If( $ValidUrl) {                        
                             Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
                             Add-DeckDownloadJob -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -Description $slidedeckFullFile
                         }
                         Else {
-                            Write-Warning ('Skipping: {0} unavailable' -f $DownloadURL)
+                            Write-Warning ('Skipping: Unavailable {0}' -f $DownloadURL)
                         }
                     }
                 }
