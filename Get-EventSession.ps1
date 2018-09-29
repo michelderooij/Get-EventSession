@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.95, September 28th, 2018
+    Version 2.96, September 29th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -162,6 +162,8 @@
     2.93 Update to slidedeck downloading routine due to changes in published session info
     2.94 Fixed cleanup of finished jobs
     2.95 Fixed encoding of filenames
+    2.96 Fixed terminating cleanup when no slidedecks are being downloaded
+         Added testing for contents to show contents is not available rather than generic 'problem'
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -260,7 +262,7 @@ param(
     [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls" 
 
     Function Fix-FileName ($title) {
-        return ((((($title -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace "'","").Trim()
+        return ((((($title -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
     }
 
     Function Get-IEProxy {
@@ -306,7 +308,9 @@ param(
     }
 
     Function Stop-RunningDeckDownloadJobs {
-        $script:DeckDownloadJob | ForEach-Object { Remove-Job -Id $_.job.Id -Force}
+        If( Get-Variable -Name DeckDownloadJob -Scope Script -ErrorAction SilentlyContinue) {
+            $script:DeckDownloadJob | ForEach-Object { Remove-Job -Id $_.job.Id -Force}
+        }
     }
 
     Function Add-DeckDownloadJob {
@@ -370,8 +374,10 @@ param(
     }
 
     Function Stop-RunningVideoDownloadJobs {
-        While ($script:VideoDownloadJob | Where-Object { ! $_.process.HasExited })  {
-            $script:VideoDownloadJob | ForEach-Object { Stop-Process -Id $_.process.Id -Force }
+        If( Get-Variable -Name VideoDownloadJob -Scope Script -ErrorAction SilentlyContinue) {
+            While ($script:VideoDownloadJob | Where-Object { ! $_.process.HasExited })  {
+               $script:VideoDownloadJob | ForEach-Object { Stop-Process -Id $_.process.Id -Force }
+            }
         }
     }
 
@@ -695,23 +701,29 @@ param(
                             }
                         }
                         If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
-                            Write-Verbose ('Video hosted on Azure Media Services, extracting link from {0}' -f $downloadLink)
-                            $OnDemandPage= (Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL).RawContent 
+                            Write-Verbose ('Video hosted on Azure Media Services, checking link {0}' -f $downloadLink)
+                            $ValidUrl= Invoke-WebRequest -Uri $downloadLink -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                            If( $ValidUrl) {                        
+                                $OnDemandPage= (Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL).RawContent 
 
-                            # Get the AMS URL from the page:
-                            If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
-                                Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
-                                $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
-                                #$Manifest= ([xml](Invoke-WebRequest -Uri $Endpoint -Proxy $ProxyURL)).MPD
-                                $Arg = "-o ""$vidFullFile""", $Endpoint
-                                If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
-                                If ( $Format) { $Arg += ('--format {0}' -f $Format) }
-                                Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
-                                Add-VideoDownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile
+                                # Get the AMS URL from the page:
+                                If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
+                                    Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
+                                    $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
+                                    #$Manifest= ([xml](Invoke-WebRequest -Uri $Endpoint -Proxy $ProxyURL)).MPD
+                                    $Arg = "-o ""$vidFullFile""", $Endpoint
+                                    If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
+                                    If ( $Format) { $Arg += ('--format {0}' -f $Format) }
+                                    Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
+                                    Add-VideoDownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile
+                                }
+                                Else {
+                                    Write-Warning "Skipping: Azure Media Service URL not found"
+                                }                        
                             }
                             Else {
-                                Write-Warning "Skipping: Problem extracting Azure Media Service URL"
-                            }                        
+                                 Write-Warning ('Skipping: {0} unavailable' -f $downloadLink)
+                            }
                         }
                         Else {
                             $Arg = "-o ""$vidFullFile""", $downloadLink, "--no-check-certificate"
@@ -751,7 +763,7 @@ param(
                     }
                     $slidedeckFullFile = Join-Path $DownloadFolder $slidedeckFile
                     if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
-                        Write-Host "Slide deck file exists, skipping. $($slidedeckFile)"
+                        Write-Host "Skipping: Slidedeck file exists $($slidedeckFile)"
                         $DeckInfo[ $InfoExist]++
                     }
                     else {
@@ -762,8 +774,14 @@ param(
                             $encodedURL = $downloadLink
                         }
                         $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $encodedURL)
-                        Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
-                        Add-DeckDownloadJob -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -Description $slidedeckFullFile
+                        $ValidUrl= Invoke-WebRequest -Uri $DownloadUrl -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                        If( $ValidUrl) {                        
+                            Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
+                            Add-DeckDownloadJob -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -Description $slidedeckFullFile
+                        }
+                        Else {
+                            Write-Warning ('Skipping: {0} unavailable' -f $DownloadURL)
+                        }
                     }
                 }
                 Else {
