@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.96, September 29th, 2018
+    Version 2.97, October 1st, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -49,11 +49,19 @@
     Specifies location to download sessions to. When omitted, will use 'systemdrive'\'Event'.
 
     .PARAMETER Format
-    Specify mp4 video format to download using youtube-dl.exe. Direct downloads are in the format provided.
+    For Azure media, default option is worstvideo+bestaudio/best. Alternatively, you can select 
+    other formats (when present), e.g. bestvideo+bestaudio. Note that the format requested needs to 
+    be present in the stream package.
 
-    For Azure media, the smallest video and best audio format will be tried (worstvideo+bestaudio/best). 
-    Alternatively, you can select other formats (when present), e.g. bestvideo+bestaudio. Note that the format 
-    requested needs to be present in the stream package.
+    For YouTube videos, you can use the following formats:
+    160          mp4        256x144    DASH video  108k , avc1.4d400b, 30fps, video only
+    133          mp4        426x240    DASH video  242k , avc1.4d400c, 30fps, video only
+    134          mp4        640x360    DASH video  305k , avc1.4d401e, 30fps, video only
+    135          mp4        854x480    DASH video 1155k , avc1.4d4014, 30fps, video only
+    136          mp4        1280x720   DASH video 2310k , avc1.4d4016, 30fps, video only
+    137          mp4        1920x1080  DASH video 2495k , avc1.640028, 30fps, video only
+    18           mp4        640x360    medium , avc1.42001E,  mp4a.40.2@ 96k
+    22           mp4        1280x720   hd720 , avc1.64001F,  mp4a.40.2@192k (best, default)
     
     .PARAMETER Keyword
     Only retrieve sessions with this keyword in their session description.
@@ -164,6 +172,8 @@
     2.95 Fixed encoding of filenames
     2.96 Fixed terminating cleanup when no slidedecks are being downloaded
          Added testing for contents to show contents is not available rather than generic 'problem'
+    2.97 Update to change in video downloading location (YouTube)
+         Changed default Format due to switch in video hosting - see YouTube format table
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -191,7 +201,7 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [string]$Format= 'worstvideo+bestaudio/best',
+    [string]$Format= $null,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
@@ -701,7 +711,7 @@ param(
                             }
                         }
                         If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
-                            Write-Verbose ('Video hosted on Azure Media Services, checking link {0}' -f $downloadLink)
+                            Write-Verbose ('Checking hosted video link {0}' -f $downloadLink)
                             Try {
                                 $ValidUrl= Invoke-WebRequest -Uri $downloadLink -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
                             }
@@ -711,19 +721,30 @@ param(
                             If( $ValidUrl) {                        
                                 $OnDemandPage= (Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL).RawContent 
 
-                                # Get the AMS URL from the page:
+                                # Check for embedded AMS 
                                 If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
-                                    #$Manifest= ([xml](Invoke-WebRequest -Uri $Endpoint -Proxy $ProxyURL)).MPD
                                     $Arg = "-o ""$vidFullFile""", $Endpoint
                                     If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
-                                    If ( $Format) { $Arg += ('--format {0}' -f $Format) }
+                                    If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format worstvideo+bestaudio/best') }
                                     Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
                                     Add-VideoDownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile
                                 }
                                 Else {
-                                    Write-Warning "Skipping: Azure Media Service URL not found on page"
+                                    # Check for embedded YouTube 
+                                    If( $OnDemandPage -match '"https:\/\/www\.youtube-nocookie\.com\/embed\/(?<YouTubeID>.*?)\?enablejsapi=1&"') {
+                                        $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
+                                        Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
+                                        $Arg = "-o ""$vidFullFile""", $Endpoint
+                                        If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
+                                        If ( $Format) { $Arg += ('--format {0}' -f $Format) }
+                                        Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
+                                        Add-VideoDownloadJob -FilePath $YouTubeDL -ArgumentList $Arg -Description $vidFullFile
+                                    }
+                                    Else {
+                                        Write-Warning "Skipping: Embedded AMS or YouTube URL not found"
+                                    }
                                 }                        
                             }
                             Else {
