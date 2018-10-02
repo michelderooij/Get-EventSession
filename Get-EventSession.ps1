@@ -178,7 +178,7 @@
           Made verbose mode less noisy
     2.98  Converted background downloads to single background job queue
           Cosmetics
-    2.981 Added cleanup of occasional leftovers (*.mp4.f5_A_aac_UND_2_192_1.part, *.mp4.f5_A_aac_UND_2_192_1.ytdl, *.f1_V_video_3.mp4)
+    2.981 Added cleanup of occasional leftovers (eg *.mp4.f5_A_aac_UND_2_192_1.ytdl, *.f1_V_video_3.mp4)
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
