@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.971, October 1st, 2018
+    Version 2.981, October 2nd, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -178,6 +178,7 @@
           Made verbose mode less noisy
     2.98  Converted background downloads to single background job queue
           Cosmetics
+    2.981 Added cleanup of occasional leftovers (*.mp4.f5_A_aac_UND_2_192_1.part, *.mp4.f5_A_aac_UND_2_192_1.ytdl, *.f1_V_video_3.mp4)
 
     .EXAMPLE
     Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
@@ -301,6 +302,17 @@ param(
         }
     }
 
+    Function Clean-VideoLeftovers ($videofile) {
+        $masks= '.mp4.f5_A_aac_UND_2_192_1.part', '.mp4.f5_A_aac_UND_2_192_1.ytdl', '.f1_V_video_3.mp4'
+	ForEach( $mask in $masks) {
+            $FileMask= $videofile -replace '.mp4', $mask
+            $files= Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach {
+                Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
+		$_ | Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     Function Get-BackgroundDownloadJobs {
         $Temp= @()
         ForEach( $job in $script:BackgroundDownloadJobs) {
@@ -309,7 +321,7 @@ param(
             }
             Else {
                 # Job finished, add to total
-		       If( $job.job.State -ieq 'Completed' -and (Test-Path -Path $job.file)) {
+		If( $job.job.State -ieq 'Completed' -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
                     If( $job.Type -eq 1) {
                         # Slidedeck
@@ -318,6 +330,7 @@ param(
                     Else {
                         # Video
                         $VideoInfo[ $InfoDownload]++
+                        Clean-VideoLeftovers $job.file
                     }
                 }
                 Else {
@@ -653,6 +666,7 @@ param(
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
                         Write-Host "Skipping: Video exists $($vidfileName)"
                         $VideoInfo[ $InfoExist]++
+                        Clean-VideoLeftovers $vidFullFile
                     }
                     else {
                         If ( !( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) ) {
