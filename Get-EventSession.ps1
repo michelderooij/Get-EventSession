@@ -201,6 +201,9 @@
     View all Exchange Server related sessions as Ignite including speakers(s), and sort them by date/time
     Get-EventSession.ps1 -Event Ignite -InfoOnly -Product '*Exchange Server*' | Sort-Object startDateTime | Select-Object @{n='Session'; e={$_.sessionCode}}, @{n='When';e={([datetime]$_.startDateTime).ToString('g')}}, title, @{n='Speakers'; e={$_.speakerNames -join ','}}
 
+    .EXAMPLE
+    Get all available sessions, display them in a GridView to select multiple at once, and download them to D:\Ignite
+    .\Get-EventSession.ps1 -ScheduleCode (.\Get-EventSession.ps1 -InfoOnly | Out-GridView -Title 'Select Videos to Download, or Cancel for all Videos' -PassThru).SessionCode -MaxDownloadJobs 10 -DownloadFolder 'D:\Ignite'
     #>
 #Requires -Version 3.0
 
