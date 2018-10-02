@@ -303,7 +303,7 @@ param(
     }
 
     Function Clean-VideoLeftovers ($videofile) {
-        $masks= '.mp4.f5_A_aac_UND_2_192_1.part', '.mp4.f5_A_aac_UND_2_192_1.ytdl', '.f1_V_video_3.mp4'
+        $masks= '.mp4.f5_*.part', '.mp4.f5_*.ytdl', '.f1_*.mp4'
 	ForEach( $mask in $masks) {
             $FileMask= $videofile -replace '.mp4', $mask
             $files= Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach {
