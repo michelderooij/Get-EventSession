@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.981, October 2nd, 2018
+    Version 2.983, October 2nd, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -102,6 +102,9 @@
     .PARAMETER Event
     Specify what event to download sessions for. Valid values are Ignite (Default), and Inspire.
 
+    .PARAMETER OGVPicker
+    Specify that you want to pick sessions to download using Out-GridView.
+
     .PARAMETER InfoOnly
     Tells the script to return session information only.
     Note that by default, only session code and title will be displayed.
@@ -179,10 +182,12 @@
     2.98  Converted background downloads to single background job queue
           Cosmetics
     2.981 Added cleanup of occasional leftovers (eg *.mp4.f5_A_aac_UND_2_192_1.ytdl, *.f1_V_video_3.mp4)
+    2.982 Minor tweaks
+    2.983 Added OGVPicker switch
 
     .EXAMPLE
-    Download all available contents of Inspire sessions containing the word 'Teams' in the title to D:\Inspire:
-    .\Get-EventSession.ps1 -DownloadFolder D:\Inspire -Format 18 -Keyword 'Teams' -Event Inspire
+    Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
+    .\Get-EventSession.ps1 -DownloadFolder D:\Ignite-Format 22 -Keyword 'Teams' -Event Ignite
 
     .EXAMPLE
     Get information of all sessions, and output only location and time information for sessions (co-)presented by Tony Redmond:
@@ -195,6 +200,7 @@
     .EXAMPLE
     View all Exchange Server related sessions as Ignite including speakers(s), and sort them by date/time
     Get-EventSession.ps1 -Event Ignite -InfoOnly -Product '*Exchange Server*' | Sort-Object startDateTime | Select-Object @{n='Session'; e={$_.sessionCode}}, @{n='When';e={([datetime]$_.startDateTime).ToString('g')}}, title, @{n='Speakers'; e={$_.speakerNames -join ','}}
+
     #>
 #Requires -Version 3.0
 
@@ -257,6 +263,10 @@ param(
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [switch]$InfoOnly,
+
+    [parameter( Mandatory = $true, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [switch]$OGVPicker,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
@@ -334,7 +344,7 @@ param(
                     }
                 }
                 Else {
-                    Write-Warning ('Problem downloading {0}' -f $job.file)
+                    Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job))
                 }
                 $job.job | Stop-Job -PassThru | Remove-Job -Force
             }
@@ -389,11 +399,11 @@ param(
         Else {
             # Video
             $job= Start-Job -ScriptBlock { 
-                param( $arglist, $file) 
-                Start-Process -FilePath $file -ArgumentList $arglist -Wait:$true -WindowStyle Hidden
+                param( $arglist, $file)
+                Start-Process -FilePath $file -ArgumentList $arglist -Wait -WindowStyle Hidden
             } -ArgumentList $ArgumentList, $FilePath
         }
-	    $object= New-Object -TypeName PSObject -Property @{
+	$object= New-Object -TypeName PSObject -Property @{
             Type= $Type
             job= $job
             file= $file
@@ -473,7 +483,8 @@ param(
 
                 If ($p.ExitCode -ne 0) {
                     If ( $stderr -contains 'Error launching') {
-                        Throw 'Problem running youtube-dl.exe. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).'
+                        Write-Error 'Problem running youtube-dl.exe. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).'
+                        Exit -1
                     }
                     Else {
                         Write-Host $stderr
@@ -507,7 +518,7 @@ param(
                             Remove-Item -Path $TempFile -Force
                         }
                         Catch {
-                            Write-Warning ('Problem extracting ffmpeg.exe from {0}' -f $FFMPEGZip)
+                            Write-Error ('Problem extracting ffmpeg.exe from {0}' -f $FFMPEGZip)
                         }
                     }
                     Else {
@@ -562,7 +573,7 @@ param(
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
         }
         Catch {
-            Throw ('Problem retrieving session catalog: {0}' -f $error[0])
+            Write-Error ('Problem retrieving session catalog: {0}' -f $error[0])
             Exit 1
         }
         $sessiondata = ConvertFrom-Json -InputObject $searchResults
@@ -579,7 +590,7 @@ param(
         $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
         $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
         For ($page = 1; $page -le $PageCount; $page++) {
-            Write-Progress -Activity "Retrieving MyIgnite Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
+            Write-Progress -Id 1 -Activity "Retrieving Ignite Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
             $searchbody = "{`"itemsPerPage`":$($web.itemsPerPage),`"searchText`":`"*`",`"searchPage`":$($page),`"sortOption`":`"None`",`"searchFacets`":{`"facets`":[],`"personalizationFacets`":[]}}"
             $searchResultsResponse = Invoke-WebRequest -Uri "$($web.baseURL)/$($web.searchURL)" -Body $searchbody -Method Post -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
@@ -598,6 +609,7 @@ param(
                 [array]$data += $object
             }
         }
+        Write-Progress -Id 1 -Completed -Activity "Finished retrieval of Ignite Session Catalog" 
         Write-Host 'Storing session information'
         $data | Sort-Object -Property sessionCode -Unique | Export-CliXml -Encoding Unicode -Force -Path $SessionCache
     }
@@ -639,6 +651,10 @@ param(
         Write-Output $SessionsToGet
     }
     Else {
+
+        If( $OGVPicker) {
+            $SessionsToGet= $SessionsToGet | Out-GridView -Title 'Select Videos to Download, or Cancel for all Videos' -PassThru
+        }
 
         $i = 0
         $DeckInfo = @(0, 0, 0)
@@ -707,7 +723,7 @@ param(
                                         Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
                                         $Arg = "-o ""$vidFullFile""", $Endpoint
                                         If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
-                                        If ( $Format) { $Arg += ('--format {0}' -f $Format) }
+                                        If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
                                     }
                                     Else {
                                         Write-Warning "Skipping: Embedded AMS or YouTube URL not found"
@@ -809,6 +825,8 @@ param(
                    
         }
 
+        Write-Progress -Id 1 -Completed -Activity "Finished processing session information"
+
         $JobsRunning= Get-BackgroundDownloadJobs
         If ( $JobsRunning -gt 0) {
             Write-Host ('Waiting for download jobs to finish - press Ctrl-C to abort)' -f $JobsRunning)
@@ -825,6 +843,8 @@ param(
                 $JobsRunning= Get-BackgroundDownloadJobs
             }
         }
+
+        Write-Progress -Id 2 -Completed -Activity "Download jobs finished"  
 
         Write-Host ('Downloaded {0} slide decks and {1} videos.' -f $DeckInfo[ $InfoDownload], $VideoInfo[ $InfoDownload])
         Write-Host ('{0} slide decks and {1} videos are not yet available.' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
