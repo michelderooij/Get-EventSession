@@ -14,8 +14,8 @@
     Michel de Rooij 	         http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	         http://deploywindows.info
-    Scott Ladewig 	         http://ladewig.com
+    Mattias Fors 	             http://deploywindows.info
+    Scott Ladewig 	             http://ladewig.com
     Tim Pringle                  http://www.powershell.amsterdam
     Andy Race                    https://github.com/AndyRace
     Richard van Nieuwenhuizen
@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.983, October 2nd, 2018
+    Version 2.984, October 10th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -79,6 +79,14 @@
     .PARAMETER Category
     Only retrieve sessions for this category. You need to specify the full category, subcategories seperated
     by '/', e.g. 'M365/Admin, Identity & Mgmt'. Wildcards are allowed.
+
+    .PARAMETER SolutionArea
+    Only retrieve sessions for this solution area. You need to specify the full 
+    name, e.g. 'Modern Workplace'. Wildcards are allowed.
+
+    .PARAMETER LearningPath
+    Only retrieve sessions part of this this learningPath. You need to specify 
+    the full name, e.g. 'Data Analyst'. Wildcards are allowed.
 
     .PARAMETER ScheduleCode
     Only retrieve sessions with this session code. You can use one or more codes.
@@ -184,6 +192,10 @@
     2.981 Added cleanup of occasional leftovers (eg *.mp4.f5_A_aac_UND_2_192_1.ytdl, *.f1_V_video_3.mp4)
     2.982 Minor tweaks
     2.983 Added OGVPicker switch
+    2.984 Changed keyword search to description, not abstract
+          Fixed searching for Products and Category
+          Added searching for SolutionArea
+          Added searching for LearningPath
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -236,6 +248,14 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [string]$Category = '',
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [string]$SolutionArea = '',
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [string]$LearningPath= '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
@@ -626,7 +646,7 @@ param(
 
     If ($Speaker) {
         Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker)
-        $SessionsToGet = $SessionsToGet | Where-Object { $Speaker -in $_.speakerNames }
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.speakerNames | Where {$_ -ilike $Speaker} }
     }
 
     If ($Product) {
@@ -636,7 +656,17 @@ param(
 
     If ($Category) {
         Write-Verbose ('Category specified: {0}' -f $Category)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.category | Where {$_ -ilike $Category }}
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.contentCategory | Where {$_ -ilike $Category }}
+    }
+
+    If ($SolutionArea) {
+        Write-Verbose ('SolutionArea specified: {0}' -f $SolutionArea)
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.solutionArea | Where {$_ -ilike $SolutionArea }}
+    }
+
+    If ($LearningPath) {
+        Write-Verbose ('SolutionArea specified: {0}' -f $LearningPath)
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.learningPath | Where {$_ -ilike $LearningPath }}
     }
 
     If ($Title) {
@@ -645,8 +675,8 @@ param(
     }
 
     If ($Keyword) {
-        Write-Verbose ('Abstract keyword specified: {0}' -f $Keyword)
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.abstract -ilike ('*{0}*' -f $Keyword) }
+        Write-Verbose ('Description keyword specified: {0}' -f $Keyword)
+        $SessionsToGet = $SessionsToGet | Where-Object {$_.description -ilike ('*{0}*' -f $Keyword) }
     }
 
     If ( $InfoOnly) {
