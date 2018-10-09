@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.984, October 10th, 2018
+    Version 2.985, October 10th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -103,6 +103,10 @@
 
     .PARAMETER MaxDownloadJobs
     Specifies the maximum number of concurrent downloads.
+
+    .PARAMETER Proxy
+    Specify the URI of the proxy to use, e.g. http://proxy:8080. When omitted, the current 
+    system settings will be used.
 
     .PARAMETER Start
     Item number to start crawling with - useful for restarts.
@@ -196,6 +200,7 @@
           Fixed searching for Products and Category
           Added searching for SolutionArea
           Added searching for LearningPath
+    2.985 Added Proxy support
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -277,6 +282,11 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [ValidateRange(1,128)] 
     [int]$MaxDownloadJobs=4,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [uri]$Proxy=$null,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -434,7 +444,12 @@ param(
         $script:BackgroundDownloadJobs+= $object
     }
 
-    $ProxyURL = Get-IEProxy
+    If( $Proxy) {
+        $ProxyURL= $Proxy
+    }
+    Else {
+        $ProxyURL = Get-IEProxy
+    }
     If ( $ProxyURL) {
         Write-Host "Using proxy address $ProxyURL"
     }
