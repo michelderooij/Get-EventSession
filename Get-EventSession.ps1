@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.985, October 10th, 2018
+    Version 2.986, October 23th, 2018
 
     .DESCRIPTION
     This script can download Microsoft Ignite & Inspire session information and available 
@@ -201,6 +201,7 @@
           Added searching for SolutionArea
           Added searching for LearningPath
     2.985 Added Proxy support
+    2.986 Minor update to accomodate publishing of slideDecks links
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -814,11 +815,11 @@ param(
                     $downloadLink = $SessionToGet.slideDeck
                 }
                 Else {
-                    # Try session page, eg https://mediusprodstatic.studios.ms/presentations/Ignite2018/<SessionCode>.pptx
+                    # Try alternative construction
                     $downloadLink = $SlidedeckUrl -f $SessionToGet.SessionCode
                 }
 
-                If ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'mediusprodstatic.studios.ms') {
+                If ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius') {
                     If( $SessionToGet.slidedeck -match 'downloaddocument') {
                         # Slidedeck offered is PDF format
                         $slidedeckFile = '{0}.pdf' -f $FileName
