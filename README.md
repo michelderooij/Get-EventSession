@@ -2,14 +2,12 @@
 
 ## Getting Started
 
-Script to assist in downloading Microsoft Ignite or Inspire contents or return 
+Script to assist in downloading Microsoft Ignite, Inspire or Build contents or return 
 session information for easier digesting. 
 
 Video downloads will leverage a utility which can be downloaded
 from https://yt-dl.org/latest/youtube-dl.exe, and needs to reside in the same folder
 as the script. The script itself will try to download the utility when the utility is not present.
-
-Note that for Inspire, it currently only downloads available presentations.
 
 To prevent retrieving session information for every run, the script will cache session information.
 
