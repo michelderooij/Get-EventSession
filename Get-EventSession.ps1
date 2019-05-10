@@ -1,6 +1,6 @@
 ﻿<#
     .SYNOPSIS
-    Script to assist in downloading Microsoft Ignite or Inspire contents or return 
+    Script to assist in downloading Microsoft Ignite, Inspire or Build contents or return 
     session information for easier digesting. Video downloads will leverage external utilities, 
     depending on the used video format. To prevent retrieving session information for every run,
     the script will cache session information.
@@ -23,11 +23,11 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 2.986, October 23th, 2018
+    Version 3.0, May 10th, 2019
 
     .DESCRIPTION
-    This script can download Microsoft Ignite & Inspire session information and available 
-    slidedecks and videos using MyIgnite/MyInspire portal.
+    This script can download Microsoft Ignite, Inspire and Build session information and available 
+    slidedecks and videos using MyIgnite/MyInspire/MyBuild techcommunity portal.
 
     Video downloads will leverage one or more utilities:
     - YouTube-dl, which can be downloaded from https://yt-dl.org/latest/youtube-dl.exe. This utility
@@ -112,7 +112,7 @@
     Item number to start crawling with - useful for restarts.
 
     .PARAMETER Event
-    Specify what event to download sessions for. Valid values are Ignite (Default), and Inspire.
+    Specify what event to download sessions for. Valid values are Ignite (Default), Inspire and Build.
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -202,6 +202,7 @@
           Added searching for LearningPath
     2.985 Added Proxy support
     2.986 Minor update to accomodate publishing of slideDecks links
+    3.0   Added Build support
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -292,7 +293,7 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
-    [ValidateSet('Ignite', 'Inspire')]
+    [ValidateSet('Ignite', 'Inspire','Build')]
     [string]$Event='Ignite',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -463,12 +464,21 @@ param(
         'Ignite' {
             $EventAPIUrl= 'https://api.myignite.microsoft.com/api'
             $EventWebUrl= 'https://myignite.microsoft.com/'
+            $EventSearchURI= 'session/anon/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
         }
         'Inspire' {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com/api'
             $EventWebUrl= 'https://myinspire.microsoft.com/'
+            $EventSearchURI= 'session/anon/search'
+            $SessionUrl= ''
+            $SlidedeckUrl= ''
+        }
+        'Build' {
+            $EventAPIUrl= 'https://api.mybuild.techcommunity.microsoft.com/api/'
+            $EventWebUrl= 'https://mybuild.techcommunity.microsoft.com/'
+            $EventSearchURI= 'session/search'
             $SessionUrl= ''
             $SlidedeckUrl= ''
         }
@@ -601,7 +611,7 @@ param(
             contentType = 'application/json; charset=utf-8'
             userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
             baseURL     = $EventAPIUrl
-            searchURL   = 'session/anon/search'
+            searchURL   = $EventSearchURI
             itemsPerPage= 100
         }
  
