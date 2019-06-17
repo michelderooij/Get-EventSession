@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.0, May 10th, 2019
+    Version 3.01, May 11th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -203,6 +203,8 @@
     2.985 Added Proxy support
     2.986 Minor update to accomodate publishing of slideDecks links
     3.0   Added Build support
+    3.01  Added CTRL-Break notice to 'waiting for downloads' message
+          Fixed 'No video located for' message
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -406,7 +408,7 @@ param(
         )
         $JobsRunning= Get-BackgroundDownloadJobs
         If ( $JobsRunning -ge $MaxDownloadJobs) {
-            Write-Host ('Maximum background download jobs reached ({0}), waiting for free slot ..' -f $JobsRunning)
+            Write-Host ('Maximum background download jobs reached ({0}), waiting for free slot - press Ctrl-C once to abort..' -f $JobsRunning)
             While ( $JobsRunning -ge $MaxDownloadJobs) {
                 if ([system.console]::KeyAvailable) { 
                     Start-Sleep 1
@@ -435,7 +437,7 @@ param(
             # Video
             $job= Start-Job -ScriptBlock { 
                 param( $arglist, $file)
-                Start-Process -FilePath $file -ArgumentList $arglist -Wait -WindowStyle Hidden
+                Start-Process -FilePath $file -ArgumentList $arglist -Wait -WindowStyle Hidden 
             } -ArgumentList $ArgumentList, $FilePath
         }
 	$object= New-Object -TypeName PSObject -Property @{
@@ -803,7 +805,7 @@ param(
                                 If ( $Format) { $Arg += ('--format {0}' -f $Format) }
                             }
                             Else {
-                                Write-Warning ('No video located for {0}' -f $downloadLink)
+                                Write-Warning ('No video link for {0}' -f ($SessionToGet.Title))
                                 $Endpoint= $null
                             }
                         }
@@ -888,7 +890,7 @@ param(
 
         $JobsRunning= Get-BackgroundDownloadJobs
         If ( $JobsRunning -gt 0) {
-            Write-Host ('Waiting for download jobs to finish - press Ctrl-C to abort)' -f $JobsRunning)
+            Write-Host ('Waiting for download jobs to finish - press Ctrl-C once to abort)' -f $JobsRunning)
             While  ( $JobsRunning -gt 0) {
                 if ([system.console]::KeyAvailable) { 
                     Start-Sleep 1
