@@ -14,8 +14,8 @@
     Michel de Rooij 	         http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	             http://deploywindows.info
-    Scott Ladewig 	             http://ladewig.com
+    Mattias Fors 	         http://deploywindows.info
+    Scott Ladewig 	         http://ladewig.com
     Tim Pringle                  http://www.powershell.amsterdam
     Andy Race                    https://github.com/AndyRace
     Richard van Nieuwenhuizen
@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.01, May 11th, 2019
+    Version 3.1, July 23rd, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -205,6 +205,8 @@
     3.0   Added Build support
     3.01  Added CTRL-Break notice to 'waiting for downloads' message
           Fixed 'No video located for' message
+    3.1   Updated to work with the Inspire 2019 catalog
+          Cosmetics
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -464,25 +466,31 @@ param(
     # Determine what event URLs to use
     Switch( $Event) {
         'Ignite' {
-            $EventAPIUrl= 'https://api.myignite.microsoft.com/api'
+            $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventWebUrl= 'https://myignite.microsoft.com/'
-            $EventSearchURI= 'session/anon/search'
+            $EventSearchURI= 'api/session/anon/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
+            $Method= 'Get'
+            $searchbody = '{"searchText":"*","sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]}}'
         }
         'Inspire' {
-            $EventAPIUrl= 'https://api.myinspire.microsoft.com/api'
+            $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventWebUrl= 'https://myinspire.microsoft.com/'
-            $EventSearchURI= 'session/anon/search'
+            $EventSearchURI= 'api/session/search'
             $SessionUrl= ''
             $SlidedeckUrl= ''
+            $Method= 'Post'
+            $SearchBody= '{"itemsPerPage":12,"searchText":"*","searchPage":1,"sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]},"recommendedItemIds":[],"favoritesIds":[],"mustHaveOnDemandVideo":false}'
         }
         'Build' {
-            $EventAPIUrl= 'https://api.mybuild.techcommunity.microsoft.com/api/'
+            $EventAPIUrl= 'https://api.mybuild.techcommunity.microsoft.com'
             $EventWebUrl= 'https://mybuild.techcommunity.microsoft.com/'
-            $EventSearchURI= 'session/search'
+            $EventSearchURI= 'api/session/search'
             $SessionUrl= ''
             $SlidedeckUrl= ''
+            $Method= 'Get'
+            $searchbody = '{"searchText":"*","sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]}}'
         }
         default {
             Write-Error ('Unknown event: {0}' -f $Event)
@@ -608,7 +616,6 @@ param(
     If ( -not( $SessionCacheValid)) {
 
         Write-Host 'Reading session catalog'
-        # Get session info using code from Tim Pringle site http://www.powershell.amsterdam/2016/08/05/using-powershell-to-get-data-for-microsoft-ignite/
         $web = @{
             contentType = 'application/json; charset=utf-8'
             userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
@@ -616,11 +623,10 @@ param(
             searchURL   = $EventSearchURI
             itemsPerPage= 100
         }
- 
-        $searchbody = '{"searchText":"*","sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]}}'
+
         Try {
-            $request = Invoke-WebRequest -Uri $EventWebUrl -Method Get -ContentType $web.contentType -UserAgent $web.userAgent -SessionVariable session -Proxy $ProxyURL
-            $searchResultsResponse = Invoke-WebRequest -Uri "$($web.baseURL)/$($web.searchURL)" -Body $searchbody -Method Post -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
+            $request = Invoke-WebRequest -Uri $EventWebUrl -Method Get -ContentType $web.contentType -UserAgent $web.userAgent -SessionVariable $session -Proxy $ProxyURL
+            $searchResultsResponse = Invoke-WebRequest -Uri ('{0}/{1}' -f $web.baseURL, $web.searchURL) -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
         }
         Catch {
@@ -641,9 +647,9 @@ param(
         $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
         $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
         For ($page = 1; $page -le $PageCount; $page++) {
-            Write-Progress -Id 1 -Activity "Retrieving Ignite Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
+            Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
             $searchbody = "{`"itemsPerPage`":$($web.itemsPerPage),`"searchText`":`"*`",`"searchPage`":$($page),`"sortOption`":`"None`",`"searchFacets`":{`"facets`":[],`"personalizationFacets`":[]}}"
-            $searchResultsResponse = Invoke-WebRequest -Uri "$($web.baseURL)/$($web.searchURL)" -Body $searchbody -Method Post -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
+            $searchResultsResponse = Invoke-WebRequest -Uri ('{0}/{1}' -f $web.baseURL, $web.searchURL) -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
             $sessiondata = ConvertFrom-Json -InputObject $searchResults
             ForEach ( $Item in $sessiondata.data) {
