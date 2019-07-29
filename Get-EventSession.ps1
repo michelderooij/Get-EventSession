@@ -11,19 +11,19 @@
     is catched by the script because we need to stop download jobs when aborting the script.
 
     .AUTHOR
-    Michel de Rooij 	         http://eightwone.com
+    Michel de Rooij 	        http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	         http://deploywindows.info
-    Scott Ladewig 	         http://ladewig.com
-    Tim Pringle                  http://www.powershell.amsterdam
-    Andy Race                    https://github.com/AndyRace
+    Mattias Fors 	            http://deploywindows.info
+    Scott Ladewig 	            http://ladewig.com
+    Tim Pringle                 http://www.powershell.amsterdam
+    Andy Race                   https://github.com/AndyRace
     Richard van Nieuwenhuizen
 
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.1, July 23rd, 2019
+    Version 3.11, July 29th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -207,6 +207,7 @@
           Fixed 'No video located for' message
     3.1   Updated to work with the Inspire 2019 catalog
           Cosmetics
+    3.11  Some more Cosmetics
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -648,7 +649,7 @@ param(
         $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
         For ($page = 1; $page -le $PageCount; $page++) {
             Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
-            $searchbody = "{`"itemsPerPage`":$($web.itemsPerPage),`"searchText`":`"*`",`"searchPage`":$($page),`"sortOption`":`"None`",`"searchFacets`":{`"facets`":[],`"personalizationFacets`":[]}}"
+            $searchbody = '{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]}}' -f $web.itemsPerPage, $page
             $searchResultsResponse = Invoke-WebRequest -Uri ('{0}/{1}' -f $web.baseURL, $web.searchURL) -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
             $sessiondata = ConvertFrom-Json -InputObject $searchResults
@@ -737,7 +738,7 @@ param(
         Foreach ($SessionToGet in $SessionsToGet) {
             $i++
             Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
-            $FileName = Fix-FileName "$($SessionToGet.sessionCode.Trim()) - $($SessionToGet.title.Trim())"
+            $FileName = Fix-FileName ('{0} - {1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
 
             Write-Host ('Processing info session {0}' -f $FileName)
 
@@ -747,7 +748,7 @@ param(
                     $vidfileName = ("$FileName.mp4")
                     $vidFullFile = Join-Path $DownloadFolder $vidfileName
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
-                        Write-Host "Skipping: Video exists $($vidfileName)"
+                        Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
                         $VideoInfo[ $InfoExist]++
                         Clean-VideoLeftovers $vidFullFile
                     }
@@ -849,7 +850,7 @@ param(
                     }
                     $slidedeckFullFile = Join-Path $DownloadFolder $slidedeckFile
                     if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
-                        Write-Host "Skipping: Slidedeck exists $($slidedeckFile)"
+                        Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
                         $DeckInfo[ $InfoExist]++
                     }
                     else {
@@ -877,7 +878,7 @@ param(
                     }
                 }
                 Else {
-                    Write-Host ('No slidedeck link for {0}' -f ($SessionToGet.Title))
+                    Write-Warning ('No slidedeck link for {0}' -f ($SessionToGet.Title))
                 }
             }
 
