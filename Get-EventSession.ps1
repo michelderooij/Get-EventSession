@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.11, July 29th, 2019
+    Version 3.12, August 1st, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -50,8 +50,9 @@
 
     .PARAMETER Format
     For Azure media, default option is worstvideo+bestaudio/best. Alternatively, you can select 
-    other formats (when present), e.g. bestvideo+bestaudio. Note that the format requested needs to 
-    be present in the stream package.
+    other formats (when present), e.g. bestvideo+bestaudio. Note that 
+    1) The format requested needs to be present in the stream package
+    2) Storage required for bestvideo is significantly more than worstvideo
 
     For YouTube videos, you can use the following formats:
     160          mp4        256x144    DASH video  108k , avc1.4d400b, 30fps, video only
@@ -208,6 +209,8 @@
     3.1   Updated to work with the Inspire 2019 catalog
           Cosmetics
     3.11  Some more Cosmetics
+    3.12  Updated to work with current Ignite & Build catalogs
+          Raised the retry limits for YouTube-dl a bit
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -384,8 +387,9 @@ param(
                     }
                 }
                 Else {
-                    Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job))
+                    Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job.ChildJob[0]))
                 }
+                $job.job.ChildJobs | Stop-Job 
                 $job.job | Stop-Job -PassThru | Remove-Job -Force
             }
         }
@@ -398,7 +402,10 @@ param(
     }
 
     Function Stop-BackgroundDownloadJobs {
-        $script:BackgroundDownloadJobs | ForEach-Object { $_.Job | Stop-Job -PassThru | Remove-Job -Force}
+        ForEach( $BGJob in $script:BackgroundDownloadJobs ) { 
+		$BGJob.Job.ChildJobs | Stop-Job 
+		$BGJob.Job | Stop-Job -PassThru | Remove-Job -Force
+	}
     }
 
     Function Add-BackgroundDownloadJob {
@@ -438,9 +445,12 @@ param(
         }
         Else {
             # Video
-            $job= Start-Job -ScriptBlock { 
+            $job= Start-Job -ScriptBlock {
                 param( $arglist, $file)
-                Start-Process -FilePath $file -ArgumentList $arglist -Wait -WindowStyle Hidden 
+                $myPid= Start-Process -FilePath $file -ArgumentList $arglist -Passthru -WindowStyle Hidden
+                While( Get-Process -Id $myPid -ErrorAction SilentlyContinue) {
+                    Start-Sleep 1
+                }
             } -ArgumentList $ArgumentList, $FilePath
         }
 	$object= New-Object -TypeName PSObject -Property @{
@@ -448,6 +458,7 @@ param(
             job= $job
             file= $file
         }
+
         $script:BackgroundDownloadJobs+= $object
     }
 
@@ -468,21 +479,22 @@ param(
     Switch( $Event) {
         'Ignite' {
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
-            $EventWebUrl= 'https://myignite.microsoft.com/'
+            $EventWebUrl= 'https://myignite.microsoft.com'
             $EventSearchURI= 'api/session/anon/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
-            $Method= 'Get'
-            $searchbody = '{"searchText":"*","sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]}}'
+            $Method= 'Post'
+            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
         'Inspire' {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
-            $EventWebUrl= 'https://myinspire.microsoft.com/'
+            $EventWebUrl= 'https://myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= ''
             $SlidedeckUrl= ''
             $Method= 'Post'
-            $SearchBody= '{"itemsPerPage":12,"searchText":"*","searchPage":1,"sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]},"recommendedItemIds":[],"favoritesIds":[],"mustHaveOnDemandVideo":false}'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
         'Build' {
             $EventAPIUrl= 'https://api.mybuild.techcommunity.microsoft.com'
@@ -490,8 +502,8 @@ param(
             $EventSearchURI= 'api/session/search'
             $SessionUrl= ''
             $SlidedeckUrl= ''
-            $Method= 'Get'
-            $searchbody = '{"searchText":"*","sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]}}'
+            $Method= 'Post'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
         default {
             Write-Error ('Unknown event: {0}' -f $Event)
@@ -620,14 +632,15 @@ param(
         $web = @{
             contentType = 'application/json; charset=utf-8'
             userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
-            baseURL     = $EventAPIUrl
-            searchURL   = $EventSearchURI
+            requestUri  = [uri]('{0}/{1}' -f $EventAPIUrl, $EventSearchURI)
             itemsPerPage= 100
         }
 
         Try {
             $request = Invoke-WebRequest -Uri $EventWebUrl -Method Get -ContentType $web.contentType -UserAgent $web.userAgent -SessionVariable $session -Proxy $ProxyURL
-            $searchResultsResponse = Invoke-WebRequest -Uri ('{0}/{1}' -f $web.baseURL, $web.searchURL) -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
+            $SearchBody= $EventSearchBody -f '12', '1'
+            Write-Verbose ('Using URI {0}' -f $web.requestUri)
+            $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
         }
         Catch {
@@ -649,8 +662,8 @@ param(
         $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
         For ($page = 1; $page -le $PageCount; $page++) {
             Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
-            $searchbody = '{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{"facets":[],"personalizationFacets":[]}}' -f $web.itemsPerPage, $page
-            $searchResultsResponse = Invoke-WebRequest -Uri ('{0}/{1}' -f $web.baseURL, $web.searchURL) -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
+            $SearchBody= $EventSearchBody -f $web.itemsPerPage, $page
+            $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
             $sessiondata = ConvertFrom-Json -InputObject $searchResults
             ForEach ( $Item in $sessiondata.data) {
@@ -780,7 +793,7 @@ param(
                                 If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
-                                    $Arg = "-o ""$vidFullFile""", $Endpoint
+                                    $Arg = @( ('-o "{0}"' -f $vidFullFile), $Endpoint, '--retries 50', '--fragment-retries 50')
                                     If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
                                     If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format worstvideo+bestaudio/best') }
                                 }
@@ -789,7 +802,7 @@ param(
                                     If( $OnDemandPage -match '"https:\/\/www\.youtube-nocookie\.com\/embed\/(?<YouTubeID>.+?)\?enablejsapi=1&"') {
                                         $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
                                         Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
-                                        $Arg = "-o ""$vidFullFile""", $Endpoint
+                                        $Arg = @( ('-o "{0}"' -f $vidFullFile), $Endpoint, '--retries 50', '--fragment-retries 50')
                                         If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
                                         If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
                                     }
@@ -807,9 +820,13 @@ param(
                         Else {
                             If( $downloadLink) {
                                 $Endpoint= $downloadLink
-                                $Arg = "-o ""$vidFullFile""", $downloadLink, "--no-check-certificate"
-                                If ( $ProxyURL) { $Arg += "--proxy $ProxyURL" }
-                                If ( $Format) { $Arg += ('--format {0}' -f $Format) }
+                                $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink, '--no-check-certificate', '--retries 50', '--fragment-retries 50')
+                                If ( $ProxyURL) { 
+                                    $Arg += ('--proxy "{0}"' -f $ProxyURL)
+                                }
+                                If ( $Format) { 
+                                    $Arg += ('--format {0}' -f $Format) 
+                                }
                             }
                             Else {
                                 Write-Warning ('No video link for {0}' -f ($SessionToGet.Title))
@@ -910,6 +927,9 @@ param(
                 }
                 $JobsRunning= Get-BackgroundDownloadJobs
             }
+        }
+        Else {
+            Write-Host ('Background download jobs have finished' -f $JobsRunning)
         }
 
         Write-Progress -Id 2 -Completed -Activity "Download jobs finished"  
