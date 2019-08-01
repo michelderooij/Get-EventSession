@@ -210,7 +210,11 @@
           Cosmetics
     3.11  Some more Cosmetics
     3.12  Updated to work with current Ignite & Build catalogs
+<<<<<<< HEAD
           Bumped the download retry limits for YouTube-dl a bit
+=======
+          Raised the retry limits for YouTube-dl a bit
+>>>>>>> abc5a8075654b40bcf0bdd1dfe6394ad99b9865f
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -387,12 +391,16 @@ param(
                     }
                 }
                 Else {
+<<<<<<< HEAD
 		    If( $job.Type -eq 1) {
                         Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job))
                     }
                     Else {
                         Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job.ChildJobs[0]))
                     }
+=======
+                    Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job.ChildJob[0]))
+>>>>>>> abc5a8075654b40bcf0bdd1dfe6394ad99b9865f
                 }
                 $job.job.ChildJobs | Stop-Job 
                 $job.job | Stop-Job -PassThru | Remove-Job -Force
@@ -452,9 +460,14 @@ param(
             # Video
             $job= Start-Job -ScriptBlock {
                 param( $arglist, $file)
+<<<<<<< HEAD
                 $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -Passthru -NoNewWindow
 #                $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -Passthru -WindowStyle Hidden
                 While( Get-Process -Id $myProcess.Id -ErrorAction SilentlyContinue) {
+=======
+                $myPid= Start-Process -FilePath $file -ArgumentList $arglist -Passthru -WindowStyle Hidden
+                While( Get-Process -Id $myPid -ErrorAction SilentlyContinue) {
+>>>>>>> abc5a8075654b40bcf0bdd1dfe6394ad99b9865f
                     Start-Sleep 1
                 }
             } -ArgumentList $ArgumentList, $FilePath
