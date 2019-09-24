@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.12, August 1st, 2019
+    Version 3.13, September 24th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -211,6 +211,7 @@
     3.11  Some more Cosmetics
     3.12  Updated to work with current Ignite & Build catalogs
           Bumped the download retry limits for YouTube-dl a bit
+    3.13  Updated Ignite catalog endpoints
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -484,9 +485,9 @@ param(
     # Determine what event URLs to use
     Switch( $Event) {
         'Ignite' {
-            $EventAPIUrl= 'https://api.myignite.microsoft.com'
-            $EventWebUrl= 'https://myignite.microsoft.com'
-            $EventSearchURI= 'api/session/anon/search'
+            $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
+            $EventWebUrl= 'https://myignite.techcommunity.microsoft.com'
+            $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
             $Method= 'Post'
@@ -675,7 +676,6 @@ param(
             ForEach ( $Item in $sessiondata.data) {
                 $object = $Item -as [PSCustomObject]
                 $object.PSObject.Properties | % {
-                    if ($_.Value.Trim) { $object.($_.Name) = $_.Value.Trim() }
                     if ($_.Name -eq 'speakerNames') { $object.($_.Name) = @($_.Value) }
                     if ($_.Name -eq 'products') { $object.($_.Name) = @($_.Value -replace [char]9, '/') }
                     if ($_.Name -eq 'contentCategory') { $object.($_.Name) = @(($_.Value -replace [char]9, '/') -replace ' / ', '/') }
