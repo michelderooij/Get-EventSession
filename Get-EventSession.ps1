@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.13, September 24th, 2019
+    Version 3.15, November 1st, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -88,6 +88,9 @@
     .PARAMETER LearningPath
     Only retrieve sessions part of this this learningPath. You need to specify 
     the full name, e.g. 'Data Analyst'. Wildcards are allowed.
+
+    .PARAMETER Topic
+    Only retrieve sessions for this topic area. Wildcards are allowed.
 
     .PARAMETER ScheduleCode
     Only retrieve sessions with this session code. You can use one or more codes.
@@ -212,6 +215,10 @@
     3.12  Updated to work with current Ignite & Build catalogs
           Bumped the download retry limits for YouTube-dl a bit
     3.13  Updated Ignite catalog endpoints
+    3.14  Removed superfluous testing loading of main event page
+          Fixed LearningPath option verbose output
+          Some code cosmetics
+    3.15  Added Topic parameter
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -275,6 +282,10 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [string]$Topic= '',
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [string[]]$ScheduleCode = "",
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -302,7 +313,7 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
-    [ValidateSet('Ignite', 'Inspire','Build')]
+    [ValidateSet('Ignite', 'Inspire','Build','Ignite2018')]
     [string]$Event='Ignite',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -401,8 +412,8 @@ param(
         }
         $script:BackgroundDownloadJobs= $Temp
         $Num= ($script:BackgroundDownloadJobs | Measure-Object).Count
-        $NumDeck= ($script:BackgroundDownloadJobs | Where {$_.Type -eq 1} | Measure-Object).Count
-        $NumVid= ($script:BackgroundDownloadJobs | Where {$_.Type -eq 2} | Measure-Object).Count
+        $NumDeck= ($script:BackgroundDownloadJobs | Where-Object {$_.Type -eq 1} | Measure-Object).Count
+        $NumVid= ($script:BackgroundDownloadJobs | Where-Object {$_.Type -eq 2} | Measure-Object).Count
         Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('{0} downloads in progress ({1} slidedecks / {2} videos)' -f $Num, $NumDeck, $NumVid) -PercentComplete ($Num / $MaxDownloadJobs * 100)
         return $Num
     }
@@ -486,7 +497,15 @@ param(
     Switch( $Event) {
         'Ignite' {
             $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
-            $EventWebUrl= 'https://myignite.techcommunity.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
+            $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
+            $Method= 'Post'
+            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
+        }
+        'Ignite2018' {
+            $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
@@ -496,7 +515,6 @@ param(
         }
         'Inspire' {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
-            $EventWebUrl= 'https://myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= ''
             $SlidedeckUrl= ''
@@ -505,7 +523,6 @@ param(
         }
         'Build' {
             $EventAPIUrl= 'https://api.mybuild.techcommunity.microsoft.com'
-            $EventWebUrl= 'https://mybuild.techcommunity.microsoft.com/'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= ''
             $SlidedeckUrl= ''
@@ -644,7 +661,6 @@ param(
         }
 
         Try {
-            $request = Invoke-WebRequest -Uri $EventWebUrl -Method Get -ContentType $web.contentType -UserAgent $web.userAgent -SessionVariable $session -Proxy $ProxyURL
             $SearchBody= $EventSearchBody -f '12', '1'
             Write-Verbose ('Using URI {0}' -f $web.requestUri)
             $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
@@ -700,27 +716,32 @@ param(
 
     If ($Speaker) {
         Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.speakerNames | Where {$_ -ilike $Speaker} }
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.speakerNames | Where-Object {$_ -ilike $Speaker} }
     }
 
     If ($Product) {
         Write-Verbose ('Product specified: {0}' -f $Product)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.products | Where {$_ -ilike $Product }}
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.products | Where-Object {$_ -ilike $Product }}
     }
 
     If ($Category) {
         Write-Verbose ('Category specified: {0}' -f $Category)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.contentCategory | Where {$_ -ilike $Category }}
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.contentCategory | Where-Object {$_ -ilike $Category }}
     }
 
     If ($SolutionArea) {
         Write-Verbose ('SolutionArea specified: {0}' -f $SolutionArea)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.solutionArea | Where {$_ -ilike $SolutionArea }}
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.solutionArea | Where-Object {$_ -ilike $SolutionArea }}
     }
 
     If ($LearningPath) {
-        Write-Verbose ('SolutionArea specified: {0}' -f $LearningPath)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.learningPath | Where {$_ -ilike $LearningPath }}
+        Write-Verbose ('LearningPath specified: {0}' -f $LearningPath)
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.learningPath | Where-Object {$_ -ilike $LearningPath }}
+    }
+
+    If ($Topic) {
+        Write-Verbose ('Topic specified: {0}' -f $Topic)
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.topic | Where-Object {$_ -ilike $Topic }}
     }
 
     If ($Title) {
