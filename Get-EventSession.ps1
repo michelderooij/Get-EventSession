@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.17, November 4th, 2019
+    Version 3.18, November 4th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -228,7 +228,7 @@
     3.16  Corrected prefixes for Ignite 2019
     3.17  Added NoGuess switch
           Added NoRepeats switch
-          Added Ignite2018 event
+    3.18  Added Ignite2018 event
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -522,12 +522,12 @@ param(
         }
         'Ignite2018' {
             $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
-            $EventSearchURI= 'api/session/search'
+            $EventSearchURI= 'api/videos/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}},"from":"2018-09-24T08:00:00-05:00","to":"2018-09-28T19:00:00-05:00"}}'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2018-01-01T08:00:00-05:00","endDateTime":"2019-01-01T19:00:00-05:00"}}]}}'
         }
         'Inspire' {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
