@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.16, November 4th, 2019
+    Version 3.17, November 4th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -100,6 +100,12 @@
 
     .PARAMETER NoSlidedecks
     Switch to indicate you don't want to download slidedecks.
+
+    .PARAMETER NoGuessing
+    Switch to indicate you don't want the script to try to guess the URLs to retrieve media from MS Studios.
+
+    .PARAMETER NoRepeats
+    Switch to indicate you don't want the script to download repeated sessions.
 
     .PARAMETER FFMPEG
     Specifies full location of ffmpeg.exe utility. When omitted, it is searched for and
@@ -220,6 +226,9 @@
           Some code cosmetics
     3.15  Added Topic parameter
     3.16  Corrected prefixes for Ignite 2019
+    3.17  Added NoGuess switch
+          Added NoRepeats switch
+          Added Ignite2018 event
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -326,7 +335,14 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
-    [switch]$Overwrite
+    [switch]$Overwrite,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [switch]$NoRepeats,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [switch]$NoGuessing
 )
 
     # Max age for cache, older than this # days will force info refresh
@@ -466,7 +482,6 @@ param(
             $job= Start-Job -ScriptBlock {
                 param( $arglist, $file)
                 $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -Passthru -NoNewWindow
-#                $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -Passthru -WindowStyle Hidden
                 While( Get-Process -Id $myProcess.Id -ErrorAction SilentlyContinue) {
                     Start-Sleep 1
                 }
@@ -512,7 +527,7 @@ param(
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}},"from":"2018-09-24T08:00:00-05:00","to":"2018-09-28T19:00:00-05:00"}}'
         }
         'Inspire' {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
@@ -750,6 +765,11 @@ param(
         $SessionsToGet = $SessionsToGet | Where-Object {$_.title -ilike ('*{0}*' -f $Title) }
     }
 
+    If ($NoRepeats) {
+        Write-Verbose ('Skipping repeat sessions')
+        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotlike '*R'}
+    }
+
     If ($Keyword) {
         Write-Verbose ('Description keyword specified: {0}' -f $Keyword)
         $SessionsToGet = $SessionsToGet | Where-Object {$_.description -ilike ('*{0}*' -f $Keyword) }
@@ -802,8 +822,13 @@ param(
                                 $downloadLink = $SessionToGet.downloadVideoLink
                             }
                             Else {
-                                # Try session page, eg https://medius.studios.ms/Embed/Video/IG18-BRK2094
-                                $downloadLink = $SessionUrl -f $SessionToGet.SessionCode
+                                If( $NoGuessing) {
+                                    $downloadLink= $null
+                                }
+                                Else { 
+                                    # Try session page, eg https://medius.studios.ms/Embed/Video/IG18-BRK2094
+                                    $downloadLink = $SessionUrl -f $SessionToGet.SessionCode
+                                }
                             }
                         }
                         If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
@@ -879,8 +904,13 @@ param(
                     $downloadLink = $SessionToGet.slideDeck
                 }
                 Else {
-                    # Try alternative construction
-                    $downloadLink = $SlidedeckUrl -f $SessionToGet.SessionCode
+                    If( $NoGuessing) {
+                        $downloadLink= $null
+                    }
+                    Else {
+                        # Try alternative construction
+                        $downloadLink = $SlidedeckUrl -f $SessionToGet.SessionCode
+                    }
                 }
 
                 If ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius') {
