@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.15, November 1st, 2019
+    Version 3.16, November 4th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -219,6 +219,7 @@
           Fixed LearningPath option verbose output
           Some code cosmetics
     3.15  Added Topic parameter
+    3.16  Corrected prefixes for Ignite 2019
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -498,8 +499,8 @@ param(
         'Ignite' {
             $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
-            $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
+            $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG19-{0}'
+            $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2019/{0}.pptx'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
