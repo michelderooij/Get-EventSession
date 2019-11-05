@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.18, November 4th, 2019
+    Version 3.19, November 5th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -229,6 +229,7 @@
     3.17  Added NoGuess switch
           Added NoRepeats switch
     3.18  Added Ignite2018 event
+    3.19  Fixed video downloading
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -386,11 +387,11 @@ param(
 
     Function Clean-VideoLeftovers ($videofile) {
         $masks= '.mp4.f5_*.part', '.mp4.f5_*.ytdl', '.f1_*.mp4'
-	ForEach( $mask in $masks) {
+	    ForEach( $mask in $masks) {
             $FileMask= $videofile -replace '.mp4', $mask
             $files= Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach {
                 Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
-		$_ | Remove-Item -ErrorAction SilentlyContinue
+		        $_ | Remove-Item -ErrorAction SilentlyContinue
             }
         }
     }
@@ -403,7 +404,7 @@ param(
             }
             Else {
                 # Job finished, add to total
-		If( $job.job.State -ieq 'Completed' -and (Test-Path -Path $job.file)) {
+		        If( $job.job.State -ieq 'Completed' -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
                     If( $job.Type -eq 1) {
                         # Slidedeck
@@ -416,14 +417,14 @@ param(
                     }
                 }
                 Else {
-		    If( $job.Type -eq 1) {
+		            If( $job.Type -eq 1) {
                         Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job))
                     }
                     Else {
                         Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job.ChildJobs[0]))
                     }
                 }
-                $job.job.ChildJobs | Stop-Job 
+                $job.job.ChildJobs | Stop-Job -PassThru | Remove-Job -Force
                 $job.job | Stop-Job -PassThru | Remove-Job -Force
             }
         }
@@ -436,10 +437,11 @@ param(
     }
 
     Function Stop-BackgroundDownloadJobs {
+        $JobsRunning= Get-BackgroundDownloadJobs
         ForEach( $BGJob in $script:BackgroundDownloadJobs ) { 
-		$BGJob.Job.ChildJobs | Stop-Job 
-		$BGJob.Job | Stop-Job -PassThru | Remove-Job -Force
-	}
+		    $BGJob.Job.ChildJobs | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+		    $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+	    }
     }
 
     Function Add-BackgroundDownloadJob {
@@ -481,18 +483,14 @@ param(
             # Video
             $job= Start-Job -ScriptBlock {
                 param( $arglist, $file)
-                $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -Passthru -NoNewWindow
-                While( Get-Process -Id $myProcess.Id -ErrorAction SilentlyContinue) {
-                    Start-Sleep 1
-                }
-            } -ArgumentList $ArgumentList, $FilePath
+                $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -PassThru -WindowStyle Hidden -Wait
+            } -ArgumentList $ArgumentList, $FilePath         
         }
-	$object= New-Object -TypeName PSObject -Property @{
+	    $object= New-Object -TypeName PSObject -Property @{
             Type= $Type
             job= $job
             file= $file
         }
-
         $script:BackgroundDownloadJobs+= $object
     }
 
