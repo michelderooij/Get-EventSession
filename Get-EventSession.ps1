@@ -237,6 +237,7 @@
     3.21  Added Timestamp switch
           Updated file naming to strip embbeded name of format, e.g. f1_V_video_3
           Added stopping of Youtube-DL helper app spawned processes
+    3.22  Added skipping of processing future sessions
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -833,8 +834,12 @@ param(
                 $SessionTime= $null
             }
             Write-Host ('Processing info session {0} ({1})' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'))
+            If(!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
+                Write-Warning ('Session {0} did not take place yet, skipping' -f $SessionToGet.sessioncode)
+            }
+            Else {
 
-            If( ! $NoVideos) {
+              If( ! $NoVideos) {
                 If ( $DownloadVideos -or $DownloadAMSVideos) {
 
                     $vidfileName = ("$FileName.mp4")
@@ -935,9 +940,9 @@ param(
                         }
                     }
                 }
-            }
+              }
 
-            If(! $NoSlidedecks) {
+              If(! $NoSlidedecks) {
                 If ( !( [string]::IsNullOrEmpty( $SessionToGet.slideDeck)) ) {
                     $downloadLink = $SessionToGet.slideDeck
                 }
@@ -1000,6 +1005,7 @@ param(
                 Else {
                     Write-Warning ('No slidedeck link for {0}' -f ($SessionToGet.Title))
                 }
+              }
             }
 
             if ([system.console]::KeyAvailable) { 
