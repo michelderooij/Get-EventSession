@@ -815,6 +815,8 @@ param(
         $InfoPlaceholder = 1
         $InfoExist = 2
 
+        $myTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById( 'US Eastern Standard Time')
+
         [console]::TreatControlCAsInput = $true
 
         $SessionsSelected = ($SessionsToGet | Measure-Object).Count
@@ -824,7 +826,8 @@ param(
             Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
             $FileName = Fix-FileName ('{0} - {1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
             If( $Timestamp -and !([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
-                $SessionTime= $SessionToGet.startDateTime
+                # Get session localized timestamp, undoing TZ adjustments
+                $SessionTime= [System.TimeZoneInfo]::ConvertTime((Get-Date -Date $SessionToGet.startDateTime).ToUniversalTime(), $myTimeZone ).toString('g')
             }
             Else {
                 $SessionTime= $null
