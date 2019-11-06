@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.19, November 5th, 2019
+    Version 3.21, November 6th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -134,6 +134,9 @@
     .PARAMETER Overwrite
     Skips detecting existing files, overwriting them if they exist.
 
+    .PARAMETER Timestamp
+    Tells script to change the timestamp of the downloaded media files to match the original session timestamp, when available.
+
     .REVISION
     2.0   Initial (Mattias Fors)
     2.1   Added video downloading, reformatting code (Michel de Rooij)
@@ -230,6 +233,10 @@
           Added NoRepeats switch
     3.18  Added Ignite2018 event
     3.19  Fixed video downloading
+    3.20  Fixed background job cleanup
+    3.21  Added Timestamp switch
+          Updated file naming to strip embbeded name of format, e.g. f1_V_video_3
+          Added stopping of Youtube-DL helper app spawned processes
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -343,7 +350,11 @@ param(
     [switch]$NoRepeats,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [switch]$NoGuessing
+    [switch]$NoGuessing,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [switch]$Timestamp
+
 )
 
     # Max age for cache, older than this # days will force info refresh
@@ -361,8 +372,12 @@ param(
 
     $script:BackgroundDownloadJobs= @()
 
+    Function Iif($Cond, $IfTrue, $IfFalse) {
+        If( $Cond) { $IfTrue } Else { $IfFalse }
+    }
+
     Function Fix-FileName ($title) {
-        return ((((($title -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
+        return (((((($title -replace '\.f1_V_video_[0-9]\.', '.') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
     }
 
     Function Get-IEProxy {
@@ -404,8 +419,15 @@ param(
             }
             Else {
                 # Job finished, add to total
-		        If( $job.job.State -ieq 'Completed' -and (Test-Path -Path $job.file)) {
+		If( $job.job.State -ieq 'Completed' -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
+                    If( $job.Timestamp) {
+                       #Set timestamp
+                       $FileObj= Get-ChildItem -Path $job.file
+                       Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
+                       $FileObj.CreationTime= $job.Timestamp
+                       $FileObj.LastWriteTime= $job.Timestamp
+                    }
                     If( $job.Type -eq 1) {
                         # Slidedeck
                         $DeckInfo[ $InfoDownload]++
@@ -417,14 +439,14 @@ param(
                     }
                 }
                 Else {
-		            If( $job.Type -eq 1) {
+		    If( $job.Type -eq 1) {
                         Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job))
                     }
                     Else {
                         Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job.ChildJobs[0]))
                     }
                 }
-                $job.job.ChildJobs | Stop-Job -PassThru | Remove-Job -Force
+                $job.job.ChildJobs | Stop-Job
                 $job.job | Stop-Job -PassThru | Remove-Job -Force
             }
         }
@@ -439,9 +461,10 @@ param(
     Function Stop-BackgroundDownloadJobs {
         $JobsRunning= Get-BackgroundDownloadJobs
         ForEach( $BGJob in $script:BackgroundDownloadJobs ) { 
-		    $BGJob.Job.ChildJobs | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
-		    $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
-	    }
+            $BGJob.Job.ChildJobs | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+	    $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+	}
+        Get-Process -Name YouTube-DL -ErrorAction SilentlyContinue | Stop-Process
     }
 
     Function Add-BackgroundDownloadJob {
@@ -450,7 +473,8 @@ param(
             $FilePath,
             $DownloadUrl,
             $ArgumentList,
-            $File
+            $File,
+            $Timestamp= $null
         )
         $JobsRunning= Get-BackgroundDownloadJobs
         If ( $JobsRunning -ge $MaxDownloadJobs) {
@@ -486,10 +510,11 @@ param(
                 $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -PassThru -WindowStyle Hidden -Wait
             } -ArgumentList $ArgumentList, $FilePath         
         }
-	    $object= New-Object -TypeName PSObject -Property @{
+        $object= New-Object -TypeName PSObject -Property @{
             Type= $Type
             job= $job
             file= $file
+            timestamp= $timestamp
         }
         $script:BackgroundDownloadJobs+= $object
     }
@@ -798,8 +823,13 @@ param(
             $i++
             Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
             $FileName = Fix-FileName ('{0} - {1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
-
-            Write-Host ('Processing info session {0}' -f $FileName)
+            If( $Timestamp -and !([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
+                $SessionTime= $SessionToGet.startDateTime
+            }
+            Else {
+                $SessionTime= $null
+            }
+            Write-Host ('Processing info session {0} ({1})' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'))
 
             If( ! $NoVideos) {
                 If ( $DownloadVideos -or $DownloadAMSVideos) {
@@ -808,6 +838,13 @@ param(
                     $vidFullFile = Join-Path $DownloadFolder $vidfileName
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
                         Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
+                        If( $SessionTime) {
+                            #Set timestamp
+                            $FileObj= Get-ChildItem -Path $vidFullFile
+                            Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $vidFullFile)
+                            $FileObj.CreationTime= $SessionTime
+                            $FileObj.LastWriteTime= $SessionTime
+                        }
                         $VideoInfo[ $InfoExist]++
                         Clean-VideoLeftovers $vidFullFile
                     }
@@ -844,7 +881,7 @@ param(
                                 If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
-                                    $Arg = @( ('-o "{0}"' -f $vidFullFile), $Endpoint, '--retries 50', '--fragment-retries 50')
+                                    $Arg = @( ('-o "{0}"' -f $vidFullFile), $Endpoint)
                                     If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
                                     If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format worstvideo+bestaudio/best') }
                                 }
@@ -853,7 +890,7 @@ param(
                                     If( $OnDemandPage -match '"https:\/\/www\.youtube-nocookie\.com\/embed\/(?<YouTubeID>.+?)\?enablejsapi=1&"') {
                                         $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
                                         Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
-                                        $Arg = @( ('-o "{0}"' -f $vidFullFile), $Endpoint, '--retries 50', '--fragment-retries 50')
+                                        $Arg = @( ('-o "{0}"' -f $vidFullFile), $Endpoint)
                                         If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
                                         If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
                                     }
@@ -871,7 +908,7 @@ param(
                         Else {
                             If( $downloadLink) {
                                 $Endpoint= $downloadLink
-                                $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink, '--no-check-certificate', '--retries 50', '--fragment-retries 50')
+                                $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink, '--no-check-certificate')
                                 If ( $ProxyURL) { 
                                     $Arg += ('--proxy "{0}"' -f $ProxyURL)
                                 }
@@ -887,7 +924,7 @@ param(
                         If( $Endpoint) {
                             # Direct, AMS or YT video found, attempt download
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
-                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile
+                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime
                         }
                         Else {
                             # Video not available or no link found
@@ -924,6 +961,13 @@ param(
                     $slidedeckFullFile = Join-Path $DownloadFolder $slidedeckFile
                     if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
                         Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
+                        If( $SessionTime) {
+                            #Set timestamp
+                            $FileObj= Get-ChildItem -Path $slidedeckFullFile
+                            Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $slidedeckFullFile)
+                            $FileObj.CreationTime= $SessionTime
+                            $FileObj.LastWriteTime= $SessionTime
+                        }
                         $DeckInfo[ $InfoExist]++
                     }
                     else {
@@ -942,7 +986,7 @@ param(
                         }
                         If( $ValidUrl) {                        
                             Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
-                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile
+                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime
                         }
                         Else {
                             Write-Warning ('Skipping: Unavailable {0}' -f $DownloadURL)
