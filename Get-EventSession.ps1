@@ -14,8 +14,8 @@
     Michel de Rooij 	        http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	            http://deploywindows.info
-    Scott Ladewig 	            http://ladewig.com
+    Mattias Fors 	        http://deploywindows.info
+    Scott Ladewig 	        http://ladewig.com
     Tim Pringle                 http://www.powershell.amsterdam
     Andy Race                   https://github.com/AndyRace
     Richard van Nieuwenhuizen
@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.21, November 6th, 2019
+    Version 3.22, November 7th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -64,6 +64,33 @@
     18           mp4        640x360    medium , avc1.42001E,  mp4a.40.2@ 96k
     22           mp4        1280x720   hd720 , avc1.64001F,  mp4a.40.2@192k (best, default)
     
+    For Azure Media Services, you could use format tags, such as 1_V_video_1 or 1_V_video_3.
+    Note that these formats might not be consistent for different streams, e.g. 1_V_video_1
+    might represent 1280x720 in one stream, while corresponding to 960x540 in another. To 
+    prevent this, usage of filters is recommended.
+
+    You can use filters or priority when selecting the media:
+    - Filters allow you to put criteria on the media you select to download, e.g. 
+      "bestvideo[height<=540]+bestaudio" will download the video stream where video is 540p at 
+      most plus the audio stream (and ffmpeg will combine the two to a single MP4 file). It 
+      allows you also to do cool things like "bestvideo[filesize<200M]+bestaudio". 
+    - Priority allows you to provide additional criteria if the previous one fails, such as 
+      when a desired quality is not available, e.g. "best/worstvideo+bestaudio" will download 
+      worst video stream and best audio stream when the best video and audio stream are not present.
+
+    Format selection filter courtesey of Youtube-DL; for more examples, see 
+    https://github.com/ytdl-org/youtube-dl/blob/master/README.md#format-selection-examples
+
+    .PARAMETER Captions
+    When specified, for Azure Media Services contents, downloads caption files where available. 
+    Files are usually in VTT format, and playable by VLC Player a.o. Note that captions might not always 
+    be accurate due to machine translation, but at least will help in following the story :)
+
+    .PARAMETER Subs
+    When specified, for YouTube contents, downloads subtitles in provided languages by specifying one 
+    or more 2-letter language codes seperated by a comma, e.g. en,fr,de,nl. Downloaded subtitles may be
+    in VTT or SRT format. Again, the subtitles might not always be accurate due to machine translation.
+
     .PARAMETER Keyword
     Only retrieve sessions with this keyword in their session description.
 
@@ -238,6 +265,11 @@
           Updated file naming to strip embbeded name of format, e.g. f1_V_video_3
           Added stopping of Youtube-DL helper app spawned processes
     3.22  Added skipping of processing future sessions
+    3.23  Added Captions switch and Subs parameter
+          Added skipping of additional repeats (schedule code ending in R2/R3)
+          Fixed filename construction containing '%'
+          Added filtering options to description of Format parameter
+          Decreased probing/retrieving video URLs from Azure Media Services (speed benefit)
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -354,7 +386,13 @@ param(
     [switch]$NoGuessing,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [switch]$Timestamp
+    [switch]$Timestamp,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [string[]]$Subs,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [switch]$Captions
 
 )
 
@@ -407,7 +445,7 @@ param(
             $FileMask= $videofile -replace '.mp4', $mask
             $files= Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach {
                 Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
-		        $_ | Remove-Item -ErrorAction SilentlyContinue
+		$_ | Remove-Item -ErrorAction SilentlyContinue
             }
         }
     }
@@ -422,6 +460,7 @@ param(
                 # Job finished, add to total
 		If( $job.job.State -ieq 'Completed' -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
+
                     If( $job.Timestamp) {
                        #Set timestamp
                        $FileObj= Get-ChildItem -Path $job.file
@@ -509,7 +548,7 @@ param(
             $job= Start-Job -ScriptBlock {
                 param( $arglist, $file)
                 $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -PassThru -WindowStyle Hidden -Wait
-            } -ArgumentList $ArgumentList, $FilePath         
+            } -ArgumentList $ArgumentList, $FilePath     
         }
         $object= New-Object -TypeName PSObject -Property @{
             Type= $Type
@@ -790,8 +829,8 @@ param(
     }
 
     If ($NoRepeats) {
-        Write-Verbose ('Skipping repeat sessions')
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotlike '*R'}
+        Write-Verbose ('Skipping repeated sessions')
+        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[2-3]?$'}
     }
 
     If ($Keyword) {
@@ -835,7 +874,7 @@ param(
             }
             Write-Host ('Processing info session {0} ({1})' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'))
             If(!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
-                Write-Warning ('Session {0} did not take place yet, skipping' -f $SessionToGet.sessioncode)
+                Write-Verbose ('Skipping session {0}: Didn''t take place yet' -f $SessionToGet.sessioncode)
             }
             Else {
 
@@ -877,30 +916,54 @@ param(
                         If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
                             Write-Verbose ('Checking hosted video link {0}' -f $downloadLink)
                             Try {
-                                $ValidUrl= Invoke-WebRequest -Uri $downloadLink -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                                $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
                             }
                             Catch {
-                                $ValidUrl= $false
+                                $DownloadedPage= $null
                             }
-                            If( $ValidUrl) {                        
-                                $OnDemandPage= (Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL).RawContent 
+                            If( $DownloadedPage) {                        
+                                $OnDemandPage= $DownloadedPage.RawContent 
                                 
                                 # Check for embedded AMS 
                                 If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
-                                    $Arg = @( ('-o "{0}"' -f $vidFullFile), $Endpoint)
+                                    $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
                                     If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
                                     If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format worstvideo+bestaudio/best') }
+                                    If ( $Captions) { 
+                                        # Caption file in AMS needs seperate download
+                                        If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\.vtt\?.*?)"') {
+                                            $captionVTTFile= ($vidFullFile -replace '%', '%%') -replace '.mp4', '.vtt'
+                                            Write-Verbose ('Retrieving caption file from URL {0}' -f $matches.AzureCaptionURL)
+                                            Try {
+                                                $wc = New-Object System.Net.WebClient
+                                                $wc.Encoding = [System.Text.Encoding]::UTF8
+                                                $wc.DownloadFile( $matches.AzureCaptionURL, $captionVTTFile) 
+                                                Write-Host ('Downloaded caption file {0}' -f $captionVTTFile) -ForegroundColor Green
+
+                                                $FileObj= Get-ChildItem -Path $captionVTTFile
+                                                Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $captionVTTFile)
+                                                $FileObj.CreationTime= $SessionTime
+                                                $FileObj.LastWriteTime= $SessionTime                                            }
+                                            Catch {
+                                                Write-Error ('Problem downloading caption file') 
+                                            }
+                                        }
+                                        Else {
+                                            Write-Warning "Subtitles requested, but no Caption URL found"
+                                        }
+                                    }
                                 }
                                 Else {
                                     # Check for embedded YouTube 
                                     If( $OnDemandPage -match '"https:\/\/www\.youtube-nocookie\.com\/embed\/(?<YouTubeID>.+?)\?enablejsapi=1&"') {
                                         $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
                                         Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
-                                        $Arg = @( ('-o "{0}"' -f $vidFullFile), $Endpoint)
+                                        $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
                                         If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
-                                        If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
+                                        If ( $Format) { $Arg += ('--format"{0}' -f $Format) } Else { $Arg += ('--format 22') }
+                                        If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
                                     }
                                     Else {
                                         Write-Warning "Skipping: Embedded AMS or YouTube URL not found"
