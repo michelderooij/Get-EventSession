@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.24, November 10th, 2019
+    Version 3.25, November 10th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -292,6 +292,7 @@
           Decreased probing/retrieving video URLs from Azure Media Services (speed benefit)
     3.24  Added PreferDirect switch
           Enhanced Format parameter description
+    3.25  Updated Youtube-DL download URL
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -428,7 +429,7 @@ param(
     $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
     $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $Event)
 
-    $YTlink = 'https://github.com/rg3/youtube-dl/releases/download/2016.09.27/youtube-dl.exe'
+    $YTlink = 'https://github.com/ytdl-org/youtube-dl/releases/download/2019.11.05/youtube-dl.exe'
     $FFMPEGlink = 'https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip'
 
     # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
