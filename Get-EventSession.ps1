@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.22, November 7th, 2019
+    Version 3.24, November 10th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -49,11 +49,26 @@
     Specifies location to download sessions to. When omitted, will use 'systemdrive'\'Event'.
 
     .PARAMETER Format
-    For Azure media, default option is worstvideo+bestaudio/best. Alternatively, you can select 
-    other formats (when present), e.g. bestvideo+bestaudio. Note that 
-    1) The format requested needs to be present in the stream package
-    2) Storage required for bestvideo is significantly more than worstvideo
 
+    The Format specified depends on the media hosting the source videos:
+    - Direct Downloads
+    - Azure Media Services
+    - YouTube
+
+    Azure Media Services
+    ====================
+    For Azure Media Services, default option is worstvideo+bestaudio/best. Alternatively, you can 
+    select other formats (when present), e.g. bestvideo+bestaudio. Note that the format requested 
+    needs to be present in the stream package. Storage required for bestvideo is significantly 
+    more than worstvideo. 
+
+    For Azure Media Services, you could also use format tags, such as 1_V_video_1 or 1_V_video_3.
+    Note that these formats might not be consistent for different streams, e.g. 1_V_video_1
+    might represent 1280x720 in one stream, while corresponding to 960x540 in another. To 
+    prevent this, usage of filters is recommended.
+
+    YouTube
+    =======
     For YouTube videos, you can use the following formats:
     160          mp4        256x144    DASH video  108k , avc1.4d400b, 30fps, video only
     133          mp4        426x240    DASH video  242k , avc1.4d400c, 30fps, video only
@@ -63,11 +78,6 @@
     137          mp4        1920x1080  DASH video 2495k , avc1.640028, 30fps, video only
     18           mp4        640x360    medium , avc1.42001E,  mp4a.40.2@ 96k
     22           mp4        1280x720   hd720 , avc1.64001F,  mp4a.40.2@192k (best, default)
-    
-    For Azure Media Services, you could use format tags, such as 1_V_video_1 or 1_V_video_3.
-    Note that these formats might not be consistent for different streams, e.g. 1_V_video_1
-    might represent 1280x720 in one stream, while corresponding to 960x540 in another. To 
-    prevent this, usage of filters is recommended.
 
     You can use filters or priority when selecting the media:
     - Filters allow you to put criteria on the media you select to download, e.g. 
@@ -80,6 +90,10 @@
 
     Format selection filter courtesey of Youtube-DL; for more examples, see 
     https://github.com/ytdl-org/youtube-dl/blob/master/README.md#format-selection-examples
+
+    Direct Downloads
+    ================ 
+    Direct Downloads are downloaded directly from the provided downloadVideoLink source.
 
     .PARAMETER Captions
     When specified, for Azure Media Services contents, downloads caption files where available. 
@@ -161,8 +175,14 @@
     .PARAMETER Overwrite
     Skips detecting existing files, overwriting them if they exist.
 
+    .PARAMETER PreferDirect
+    Instructs script to prefer direct video downloads over Azure Media Services, when both are 
+    available. Note that direct downloads may be faster, but offer only single quality downloads, 
+    where AMS may offer multiple video qualities.
+
     .PARAMETER Timestamp
-    Tells script to change the timestamp of the downloaded media files to match the original session timestamp, when available.
+    Tells script to change the timestamp of the downloaded media files to match the original 
+    session timestamp, when available.
 
     .REVISION
     2.0   Initial (Mattias Fors)
@@ -270,6 +290,8 @@
           Fixed filename construction containing '%'
           Added filtering options to description of Format parameter
           Decreased probing/retrieving video URLs from Azure Media Services (speed benefit)
+    3.24  Added PreferDirect switch
+          Enhanced Format parameter description
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -392,7 +414,10 @@ param(
     [string[]]$Subs,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [switch]$Captions
+    [switch]$Captions,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [switch]$PreferDirect
 
 )
 
@@ -416,7 +441,7 @@ param(
     }
 
     Function Fix-FileName ($title) {
-        return (((((($title -replace '\.f1_V_video_[0-9]\.', '.') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
+        return ((((($title -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
     }
 
     Function Get-IEProxy {
@@ -897,7 +922,12 @@ param(
                     }
                     else {
                         If ( !( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) ) {
-                            $downloadLink = $SessionToGet.onDemand
+                            If( $PreferDirect -and (!( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)))) {
+                                $downloadLink = $SessionToGet.downloadVideoLink
+                            }
+                            Else {
+                                $downloadLink = $SessionToGet.onDemand
+                            }
                         }
                         Else {
                             If (!( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)) ) {
@@ -977,6 +1007,8 @@ param(
                             }
                         }
                         Else {
+                            # Direct
+                            Write-Verbose ('Using direct video link {0}' -f $downloadLink)
                             If( $downloadLink) {
                                 $Endpoint= $downloadLink
                                 $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink, '--no-check-certificate')
