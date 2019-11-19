@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.25, November 10th, 2019
+    Version 3.27, November 19th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -85,8 +85,9 @@
       most plus the audio stream (and ffmpeg will combine the two to a single MP4 file). It 
       allows you also to do cool things like "bestvideo[filesize<200M]+bestaudio". 
     - Priority allows you to provide additional criteria if the previous one fails, such as 
-      when a desired quality is not available, e.g. "best/worstvideo+bestaudio" will download 
-      worst video stream and best audio stream when the best video and audio stream are not present.
+      when a desired quality is not available, e.g. "bestvideo+bestaudio/worstvideo+bestaudio" 
+      will download worst video and best audio stream when the best video and audio streams 
+      are not present.
 
     Format selection filter courtesey of Youtube-DL; for more examples, see 
     https://github.com/ytdl-org/youtube-dl/blob/master/README.md#format-selection-examples
@@ -293,6 +294,15 @@
     3.24  Added PreferDirect switch
           Enhanced Format parameter description
     3.25  Updated Youtube-DL download URL
+    3.26  Updated mutual exclusion for PreferDirect & other parameters/switches
+          Added workaround for long file names (NT Style name syntax)
+          Added PowerShell ISE detection
+          Added Garbage Collection
+    3.27  Reworked jobs for downloading videos
+          Added progress bars for downloading of videos
+          Failed video downloads will show last line of error output
+          Added replacment of square brackets in file names
+          Removed obsolete Clean-VideoLeftOvers call
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -314,12 +324,11 @@
     Get all available sessions, display them in a GridView to select multiple at once, and download them to D:\Ignite
     .\Get-EventSession.ps1 -ScheduleCode (.\Get-EventSession.ps1 -InfoOnly | Out-GridView -Title 'Select Videos to Download, or Cancel for all Videos' -PassThru).SessionCode -MaxDownloadJobs 10 -DownloadFolder 'D:\Ignite'
     #>
-#Requires -Version 3.0
-
 [cmdletbinding( DefaultParameterSetName = 'Default' )]
 param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$DownloadFolder,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -328,38 +337,47 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$Keyword = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$Title = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$Speaker = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$Product = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$Category = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$SolutionArea = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$LearningPath= '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$Topic= '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string[]]$ScheduleCode = "",
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -368,25 +386,30 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$NoSlidedecks,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$FFMPEG,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [ValidateRange(1,128)] 
     [int]$MaxDownloadJobs=4,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [uri]$Proxy=$null,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [ValidateSet('Ignite', 'Inspire','Build','Ignite2018')]
     [string]$Event='Ignite',
 
@@ -395,29 +418,39 @@ param(
 
     [parameter( Mandatory = $true, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$OGVPicker,
 
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$Overwrite,
 
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$NoRepeats,
 
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$NoGuessing,
 
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$Timestamp,
 
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [string[]]$Subs,
 
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [switch]$Captions,
 
-    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
     [switch]$PreferDirect
 
 )
@@ -442,7 +475,7 @@ param(
     }
 
     Function Fix-FileName ($title) {
-        return ((((($title -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
+        return (((((((($title -replace '\]', ')') -replace '\[', '(') -replace [char]0x202f, ' ') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
     }
 
     Function Get-IEProxy {
@@ -466,7 +499,7 @@ param(
     }
 
     Function Clean-VideoLeftovers ($videofile) {
-        $masks= '.mp4.f5_*.part', '.mp4.f5_*.ytdl', '.f1_*.mp4'
+        $masks= '.mp4.*.part', '.mp4.f*.ytdl', '.f*.mp4'
 	    ForEach( $mask in $masks) {
             $FileMask= $videofile -replace '.mp4', $mask
             $files= Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach {
@@ -478,15 +511,41 @@ param(
 
     Function Get-BackgroundDownloadJobs {
         $Temp= @()
+        $progressId= 3
         ForEach( $job in $script:BackgroundDownloadJobs) {
-            if($job.job.State -ieq 'Running') {
+            switch( $job.Type) {
+                1 {
+                    $isJobRunning= $job.job.State -eq 'Running'
+                }
+                2 {
+                    $isJobRunning= Get-Process -Id $job.job.Id -ErrorAction SilentlyContinue
+                }
+                default {
+                    $isJobRunning= $false
+                }
+            }
+            if( $isJobRunning) {
                 $Temp+= $job
             }
             Else {
-                # Job finished, add to total
-		If( $job.job.State -ieq 'Completed' -and (Test-Path -Path $job.file)) {
+                # Job finished, process outcome
+                switch( $job.Type) {
+                    1 {
+                        $isJobSuccess= $job.job.State -eq 'Completed'
+                        $DeckInfo[ $InfoDownload]++
+                    }
+                    2 {
+                        $isJobSuccess= $job.job.exitCode -eq 0
+                        $VideoInfo[ $InfoDownload]++
+                        Clean-VideoLeftovers $job.file
+                    }
+                    default {
+                        $isJobSuccess= $false
+                    }
+                }
+		If( $isJobSuccess -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
-
+                    # Do we need to adjust timestamp
                     If( $job.Timestamp) {
                        #Set timestamp
                        $FileObj= Get-ChildItem -Path $job.file
@@ -494,43 +553,79 @@ param(
                        $FileObj.CreationTime= $job.Timestamp
                        $FileObj.LastWriteTime= $job.Timestamp
                     }
-                    If( $job.Type -eq 1) {
-                        # Slidedeck
-                        $DeckInfo[ $InfoDownload]++
-                    }
-                    Else {
-                        # Video
-                        $VideoInfo[ $InfoDownload]++
-                        Clean-VideoLeftovers $job.file
-                    }
                 }
                 Else {
-		    If( $job.Type -eq 1) {
-                        Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job))
-                    }
-                    Else {
-                        Write-Error ('Problem downloading {0}: {1}' -f $job.file, (Receive-Job -Job $job.job.ChildJobs[0]))
+                    switch( $job.Type) {
+                        1 {
+                            Write-Error ('Problem downloading {0}' -f $job.title)
+                            $job.job.ChildJobs | Stop-Job
+                            $job.job | Stop-Job -PassThru | Remove-Job -Force
+                        }
+                        2 {
+                            $LastLine= (Get-Content -Path $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select -Last 1
+                            Write-Error ('Problem downloading {0}: {1}' -f $job.title, $LastLine)
+                            #Remove-Item -Path $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
+                        }
+                        default {
+                        }
                     }
                 }
-                $job.job.ChildJobs | Stop-Job
-                $job.job | Stop-Job -PassThru | Remove-Job -Force
             }
         }
+        $Num= ($Temp| Measure-Object).Count
         $script:BackgroundDownloadJobs= $Temp
-        $Num= ($script:BackgroundDownloadJobs | Measure-Object).Count
-        $NumDeck= ($script:BackgroundDownloadJobs | Where-Object {$_.Type -eq 1} | Measure-Object).Count
-        $NumVid= ($script:BackgroundDownloadJobs | Where-Object {$_.Type -eq 2} | Measure-Object).Count
-        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('{0} downloads in progress ({1} slidedecks / {2} videos)' -f $Num, $NumDeck, $NumVid) -PercentComplete ($Num / $MaxDownloadJobs * 100)
+        Show-BackgroundDownloadJobs 
         return $Num
+    }
+
+    Function Show-BackgroundDownloadJobs {
+        $Num=0
+        $NumDeck= 0
+        $NumVid= 0
+        ForEach( $BGJob in $script:BackgroundDownloadJobs) {
+            $Num++
+            Switch( $BGJob.Type) {
+                1 {
+                     $NumDeck++
+                }
+                2 {
+                     $NumVid++
+                }
+            }
+        }
+        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('{0} jobs in progress ({1} slidedecks / {2} videos)' -f $Num, $NumDeck, $NumVid)
+
+        $progressId= 3
+        $noticeShown= $false
+        ForEach( $job in $script:BackgroundDownloadJobs) {
+            If( $Job.Type -eq 2) {
+                $LastLine= (Get-Content -Path $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select -Last 1
+                If( $LastLine -match '.*\s(?<pct>[\d\.]+)%.*') {
+                    Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status ('Downloading ({0}%)' -f $matches.pct) -ParentId 2
+                }
+                Else {
+                    Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status 'Evaluating..' -ParentId 2
+                }
+                $progressId++
+            }
+        }
     }
 
     Function Stop-BackgroundDownloadJobs {
         $JobsRunning= Get-BackgroundDownloadJobs
+        # Stop all slidedeck background jobs
         ForEach( $BGJob in $script:BackgroundDownloadJobs ) { 
-            $BGJob.Job.ChildJobs | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
-	    $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+            Switch( $BGJob.Type) {
+                1 {
+                    $BGJob.Job.ChildJobs | Stop-Job -PassThru 
+	            $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+                }
+                2 {
+                    Stop-Process -Id $BGJob.job.id -Force -ErrorAction SilentlyContinue
+                    Remove-Item -Path $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
+                }
+            }
 	}
-        Get-Process -Name YouTube-DL -ErrorAction SilentlyContinue | Stop-Process
     }
 
     Function Add-BackgroundDownloadJob {
@@ -540,7 +635,8 @@ param(
             $DownloadUrl,
             $ArgumentList,
             $File,
-            $Timestamp= $null
+            $Timestamp= $null,
+            $Title
         )
         $JobsRunning= Get-BackgroundDownloadJobs
         If ( $JobsRunning -ge $MaxDownloadJobs) {
@@ -559,7 +655,7 @@ param(
                 $JobsRunning= Get-BackgroundDownloadJobs
             }
         }
-        Write-Host ('Initiating download of {0}' -f $File)
+        Write-Host ('Initiating download of {0}' -f $title)
         If( $Type -eq 1) {
             # Slidedeck
             $job= Start-Job -ScriptBlock { 
@@ -568,21 +664,47 @@ param(
                 $wc.Encoding = [System.Text.Encoding]::UTF8
                 $wc.DownloadFile( $url, $file) 
             } -ArgumentList $DownloadUrl, $FilePath
+            $stdOutTempFile = $null
+            $stdErrTempFile = $null
         }
         Else {
             # Video
-            $job= Start-Job -ScriptBlock {
-                param( $arglist, $file)
-                $myProcess= Start-Process -FilePath $file -ArgumentList $arglist -PassThru -WindowStyle Hidden -Wait
-            } -ArgumentList $ArgumentList, $FilePath     
+            $TempFile= Join-Path ($env:TEMP) (New-Guid).Guid
+            $stdOutTempFile = '{0}-Out.log' -f $TempFile
+            $stdErrTempFile = '{0}-Err.log' -f $TempFile
+            $ProcessParam= @{
+                FilePath= $FilePath
+                ArgumentList= $ArgumentList
+                RedirectStandardError= $stdErrTempFile 
+                RedirectStandardOutput= $stdOutTempFile 
+                Wait= $false
+                Passthru= $true
+                NoNewWindow= $true
+                #WindowStyle= [System.Diagnostics.ProcessWindowStyle]::Normal
+            }
+            $job= Start-Process @ProcessParam
         }
         $object= New-Object -TypeName PSObject -Property @{
             Type= $Type
             job= $job
             file= $file
+            title= $Title
             timestamp= $timestamp
+            stdOutTempFile= $stdOutTempFile
+            stdErrTempFile= $stdErrTempFile
         }
         $script:BackgroundDownloadJobs+= $object
+        Show-BackgroundDownloadJobs
+    }
+
+##########
+# MAIN
+##########
+
+#Requires -Version 3.0
+
+    If( $psISE) {
+        Throw( 'Running from PowerShell ISE is not supported due to requirement to capture console input for proper termination of the script. Please run from a regular PowerShell session.')
     }
 
     If( $Proxy) {
@@ -908,7 +1030,7 @@ param(
                 If ( $DownloadVideos -or $DownloadAMSVideos) {
 
                     $vidfileName = ("$FileName.mp4")
-                    $vidFullFile = Join-Path $DownloadFolder $vidfileName
+                    $vidFullFile = '\\?\{0}' -f (Join-Path $DownloadFolder $vidfileName)
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
                         Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
                         If( $SessionTime) {
@@ -918,8 +1040,9 @@ param(
                             $FileObj.CreationTime= $SessionTime
                             $FileObj.LastWriteTime= $SessionTime
                         }
+#Write-host ('Timing..'); $StartTimer=Get-Date
                         $VideoInfo[ $InfoExist]++
-                        Clean-VideoLeftovers $vidFullFile
+#write-host ('Elapsed: {0}' -f ((Get-Date)- $StartTimer).TotalMilliseconds)
                     }
                     else {
                         If ( !( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) ) {
@@ -965,7 +1088,7 @@ param(
                                     If ( $Captions) { 
                                         # Caption file in AMS needs seperate download
                                         If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\.vtt\?.*?)"') {
-                                            $captionVTTFile= ($vidFullFile -replace '%', '%%') -replace '.mp4', '.vtt'
+                                            $captionVTTFile= $vidFullFile -replace '.mp4', '.vtt'
                                             Write-Verbose ('Retrieving caption file from URL {0}' -f $matches.AzureCaptionURL)
                                             Try {
                                                 $wc = New-Object System.Net.WebClient
@@ -1016,9 +1139,6 @@ param(
                                 If ( $ProxyURL) { 
                                     $Arg += ('--proxy "{0}"' -f $ProxyURL)
                                 }
-                                If ( $Format) { 
-                                    $Arg += ('--format {0}' -f $Format) 
-                                }
                             }
                             Else {
                                 Write-Warning ('No video link for {0}' -f ($SessionToGet.Title))
@@ -1028,7 +1148,7 @@ param(
                         If( $Endpoint) {
                             # Direct, AMS or YT video found, attempt download
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
-                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime
+                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -Title ($SessionToGet.Title)
                         }
                         Else {
                             # Video not available or no link found
@@ -1062,7 +1182,7 @@ param(
                         $slidedeckFile = '{0}.pptx' -f $FileName
                         $DeckType= 0
                     }
-                    $slidedeckFullFile = Join-Path $DownloadFolder $slidedeckFile
+                    $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
                     if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
                         Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
                         If( $SessionTime) {
@@ -1090,7 +1210,7 @@ param(
                         }
                         If( $ValidUrl) {                        
                             Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
-                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime
+                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -Title ($SessionToGet.Title)
                         }
                         Else {
                             Write-Warning ('Skipping: Unavailable {0}' -f $DownloadURL)
@@ -1103,6 +1223,8 @@ param(
                 }
               }
             }
+
+            $JobsRunning= Get-BackgroundDownloadJobs
 
             if ([system.console]::KeyAvailable) { 
                 $key = [system.console]::readkey($true)
@@ -1130,6 +1252,7 @@ param(
                         Exit -1
                     }
                 }
+                Start-Sleep 1
                 $JobsRunning= Get-BackgroundDownloadJobs
             }
         }
