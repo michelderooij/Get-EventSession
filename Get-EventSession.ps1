@@ -299,7 +299,7 @@
           Added PowerShell ISE detection
           Added Garbage Collection
     3.27  Reworked jobs for downloading videos
-          Added progress bars for downloading of videos
+          Added status bars for downloading of videos
           Failed video downloads will show last line of error output
           Added replacment of square brackets in file names
           Removed obsolete Clean-VideoLeftOvers call
@@ -600,8 +600,10 @@ param(
         ForEach( $job in $script:BackgroundDownloadJobs) {
             If( $Job.Type -eq 2) {
                 $LastLine= (Get-Content -Path $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select -Last 1
-                If( $LastLine -match '.*\s(?<pct>[\d\.]+)%.*') {
-                    Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status ('Downloading ({0}%)' -f $matches.pct) -ParentId 2
+                If($LastLine) {
+#                If( $LastLine -match '.*\s(?<pct>[\d\.]+)%.*') {
+                    Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status $LastLine -ParentId 2
+#                    Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status ('Downloading ({0}%)' -f $matches.pct) -ParentId 2
                 }
                 Else {
                     Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status 'Evaluating..' -ParentId 2
