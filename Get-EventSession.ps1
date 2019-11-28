@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.27, November 19th, 2019
+    Version 3.30, November 28th, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -301,8 +301,12 @@
     3.27  Reworked jobs for downloading videos
           Added status bars for downloading of videos
           Failed video downloads will show last line of error output
-          Added replacment of square brackets in file names
+          Added replacement of square brackets in file names
           Removed obsolete Clean-VideoLeftOvers call
+    3.28  Uncommented line to cleanup output files after downloading video
+          Changed 'Error' lines to single line outputs or throws (where appropriate)
+    3.29  Added 'Stopped downloading ..' messages when terminating
+    3.30  Increased wait cycle during progress refresh
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -498,13 +502,13 @@ param(
         }
     }
 
-    Function Clean-VideoLeftovers ($videofile) {
-        $masks= '.mp4.*.part', '.mp4.f*.ytdl', '.f*.mp4'
-	    ForEach( $mask in $masks) {
+    Function Clean-VideoLeftovers ( $videofile) {
+        $masks= '.mp4.*.part', '.mp4.f*.ytdl'
+	ForEach( $mask in $masks) {
             $FileMask= $videofile -replace '.mp4', $mask
             $files= Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach {
                 Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
-		$_ | Remove-Item -ErrorAction SilentlyContinue
+		Remove-Item -Path $_.fullname -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -538,6 +542,7 @@ param(
                         $isJobSuccess= $job.job.exitCode -eq 0
                         $VideoInfo[ $InfoDownload]++
                         Clean-VideoLeftovers $job.file
+                        Write-Progress -Id $job.job.Id -Activity ('Video {0}' -f $Job.title) -Completed
                     }
                     default {
                         $isJobSuccess= $false
@@ -557,14 +562,14 @@ param(
                 Else {
                     switch( $job.Type) {
                         1 {
-                            Write-Error ('Problem downloading {0}' -f $job.title)
+                            Write-Host ('Problem downloading {0}' -f $job.title) -ForegroundColor Red
                             $job.job.ChildJobs | Stop-Job
                             $job.job | Stop-Job -PassThru | Remove-Job -Force
                         }
                         2 {
                             $LastLine= (Get-Content -Path $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select -Last 1
-                            Write-Error ('Problem downloading {0}: {1}' -f $job.title, $LastLine)
-                            #Remove-Item -Path $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
+                            Write-Host ('Problem downloading {0}: {1}' -f $job.title, $LastLine) -ForegroundColor Red
+                            Remove-Item -Path $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
                         }
                         default {
                         }
@@ -595,18 +600,15 @@ param(
         }
         Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('{0} jobs in progress ({1} slidedecks / {2} videos)' -f $Num, $NumDeck, $NumVid)
 
-        $progressId= 3
         $noticeShown= $false
         ForEach( $job in $script:BackgroundDownloadJobs) {
             If( $Job.Type -eq 2) {
                 $LastLine= (Get-Content -Path $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select -Last 1
                 If($LastLine) {
-#                If( $LastLine -match '.*\s(?<pct>[\d\.]+)%.*') {
-                    Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status $LastLine -ParentId 2
-#                    Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status ('Downloading ({0}%)' -f $matches.pct) -ParentId 2
+                    Write-Progress -Id $job.job.id -Activity ('Video {0}' -f $Job.title) -Status $LastLine -ParentId 2
                 }
                 Else {
-                    Write-Progress -Id $progressId -Activity ('Video {0}' -f $Job.title) -Status 'Evaluating..' -ParentId 2
+                    Write-Progress -Id $job.job.id -Activity ('Video {0}' -f $Job.title) -Status 'Evaluating..' -ParentId 2
                 }
                 $progressId++
             }
@@ -624,9 +626,11 @@ param(
                 }
                 2 {
                     Stop-Process -Id $BGJob.job.id -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Seconds 1
                     Remove-Item -Path $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
                 }
             }
+            Write-Warning ('Stopped downloading {0}' -f $BGJob.title) 
 	}
     }
 
@@ -648,12 +652,12 @@ param(
                     Start-Sleep 1
                     $key = [system.console]::readkey($true)
                     if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
-                        Write-Host "TERMINATING" 
+                        Write-Host "TERMINATING" -ForegroundColor Red
                         Stop-BackgroundDownloadJobs
                         Exit -1
                     }
                 }
-                Start-Sleep 1
+                Start-Sleep 5
                 $JobsRunning= Get-BackgroundDownloadJobs
             }
         }
@@ -759,7 +763,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
         default {
-            Write-Error ('Unknown event: {0}' -f $Event)
+            Write-Host ('Unknown event: {0}' -f $Event) -ForegroundColor Red
             Exit -1
         }
     }
@@ -808,8 +812,7 @@ param(
 
                 If ($p.ExitCode -ne 0) {
                     If ( $stderr -contains 'Error launching') {
-                        Write-Error 'Problem running youtube-dl.exe. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).'
-                        Exit -1
+                        Throw 'Problem running youtube-dl.exe. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).'
                     }
                     Else {
                         Write-Host $stderr
@@ -843,11 +846,11 @@ param(
                             Remove-Item -Path $TempFile -Force
                         }
                         Catch {
-                            Write-Error ('Problem extracting ffmpeg.exe from {0}' -f $FFMPEGZip)
+                            Throw ('Problem extracting ffmpeg.exe from {0}' -f $FFMPEGZip)
                         }
                     }
                     Else {
-                        Write-Warning 'ffmpeg.exe missing in downloaded archive'
+                        Throw 'ffmpeg.exe missing in downloaded archive'
                     }
                 }
             }
@@ -875,7 +878,7 @@ param(
             }
         }
         Catch {
-            Write-Error 'Error reading cache file or cache file invalid - will read from online catalog'
+            Write-Host 'Error reading cache file or cache file invalid - will read from online catalog' -ForegroundColor Red
         }
     }
 
@@ -896,8 +899,7 @@ param(
             $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
         }
         Catch {
-            Write-Error ('Problem retrieving session catalog: {0}' -f $error[0])
-            Exit 1
+            Throw ('Problem retrieving session catalog: {0}' -f $error[0])
         }
         $sessiondata = ConvertFrom-Json -InputObject $searchResults
         [int32] $sessionCount = $sessiondata.total
@@ -1042,9 +1044,7 @@ param(
                             $FileObj.CreationTime= $SessionTime
                             $FileObj.LastWriteTime= $SessionTime
                         }
-#Write-host ('Timing..'); $StartTimer=Get-Date
                         $VideoInfo[ $InfoExist]++
-#write-host ('Elapsed: {0}' -f ((Get-Date)- $StartTimer).TotalMilliseconds)
                     }
                     else {
                         If ( !( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) ) {
@@ -1085,7 +1085,6 @@ param(
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
                                     $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-                                    If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
                                     If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format worstvideo+bestaudio/best') }
                                     If ( $Captions) { 
                                         # Caption file in AMS needs seperate download
@@ -1101,9 +1100,10 @@ param(
                                                 $FileObj= Get-ChildItem -Path $captionVTTFile
                                                 Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $captionVTTFile)
                                                 $FileObj.CreationTime= $SessionTime
-                                                $FileObj.LastWriteTime= $SessionTime                                            }
+                                                $FileObj.LastWriteTime= $SessionTime
+                                            }
                                             Catch {
-                                                Write-Error ('Problem downloading caption file') 
+                                                Write-Host ('Problem downloading caption file') -ForegroundColor Red
                                             }
                                         }
                                         Else {
@@ -1117,7 +1117,6 @@ param(
                                         $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
                                         Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
                                         $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-                                        If ( $ProxyURL) { $Arg += ('--proxy {0}' -f $ProxyURL) }
                                         If ( $Format) { $Arg += ('--format"{0}' -f $Format) } Else { $Arg += ('--format 22') }
                                         If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
                                     }
@@ -1137,10 +1136,7 @@ param(
                             Write-Verbose ('Using direct video link {0}' -f $downloadLink)
                             If( $downloadLink) {
                                 $Endpoint= $downloadLink
-                                $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink, '--no-check-certificate')
-                                If ( $ProxyURL) { 
-                                    $Arg += ('--proxy "{0}"' -f $ProxyURL)
-                                }
+                                $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink)
                             }
                             Else {
                                 Write-Warning ('No video link for {0}' -f ($SessionToGet.Title))
@@ -1148,7 +1144,15 @@ param(
                             }
                         }
                         If( $Endpoint) {
-                            # Direct, AMS or YT video found, attempt download
+                            # Direct, AMS or YT video found, attempt download but first define common parameters
+
+                            If ( $ProxyURL) { 
+                                $Arg += ('--proxy "{0}"' -f $ProxyURL)
+                            }
+                            $Arg+= '--socket-timeout 90'
+                            $Arg+= '--no-check-certificate'                            
+                            $Arg+= '--retries 15'
+
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
                             Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -Title ($SessionToGet.Title)
                         }
@@ -1254,7 +1258,7 @@ param(
                         Exit -1
                     }
                 }
-                Start-Sleep 1
+                Start-Sleep 5
                 $JobsRunning= Get-BackgroundDownloadJobs
             }
         }
