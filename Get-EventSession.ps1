@@ -1218,7 +1218,7 @@ param(
                         }
                         If( $ValidUrl) {                        
                             Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
-                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
                         }
                         Else {
                             Write-Warning ('Skipping: Unavailable {0}' -f $DownloadURL)
