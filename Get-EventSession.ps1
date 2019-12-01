@@ -307,6 +307,8 @@
           Changed 'Error' lines to single line outputs or throws (where appropriate)
     3.29  Added 'Stopped downloading ..' messages when terminating
     3.30  Increased wait cycle during progress refresh
+          Added schedule code to progress status
+          Revised detection successful video downloads
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -522,7 +524,7 @@ param(
                     $isJobRunning= $job.job.State -eq 'Running'
                 }
                 2 {
-                    $isJobRunning= Get-Process -Id $job.job.Id -ErrorAction SilentlyContinue
+                    $isJobRunning= -not $job.job.hasExited
                 }
                 default {
                     $isJobRunning= $false
@@ -539,10 +541,10 @@ param(
                         $DeckInfo[ $InfoDownload]++
                     }
                     2 {
-                        $isJobSuccess= $job.job.exitCode -eq 0
+                        $isJobSuccess= (Test-Path -Path $job.file)
                         $VideoInfo[ $InfoDownload]++
                         Clean-VideoLeftovers $job.file
-                        Write-Progress -Id $job.job.Id -Activity ('Video {0}' -f $Job.title) -Completed
+                        Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                     }
                     default {
                         $isJobSuccess= $false
@@ -562,13 +564,13 @@ param(
                 Else {
                     switch( $job.Type) {
                         1 {
-                            Write-Host ('Problem downloading {0}' -f $job.title) -ForegroundColor Red
+                            Write-Host ('Problem downloading {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
                             $job.job.ChildJobs | Stop-Job
                             $job.job | Stop-Job -PassThru | Remove-Job -Force
                         }
                         2 {
                             $LastLine= (Get-Content -Path $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select -Last 1
-                            Write-Host ('Problem downloading {0}: {1}' -f $job.title, $LastLine) -ForegroundColor Red
+                            Write-Host ('Problem downloading {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
                             Remove-Item -Path $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
                         }
                         default {
@@ -598,18 +600,16 @@ param(
                 }
             }
         }
-        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('{0} jobs in progress ({1} slidedecks / {2} videos)' -f $Num, $NumDeck, $NumVid)
+        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedecks, {2} videos)' -f $Num, $NumDeck, $NumVid)
 
         $noticeShown= $false
         ForEach( $job in $script:BackgroundDownloadJobs) {
             If( $Job.Type -eq 2) {
                 $LastLine= (Get-Content -Path $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select -Last 1
-                If($LastLine) {
-                    Write-Progress -Id $job.job.id -Activity ('Video {0}' -f $Job.title) -Status $LastLine -ParentId 2
+                If(!( $LastLine)) {
+                    $LastLine= 'Evaluating..'
                 }
-                Else {
-                    Write-Progress -Id $job.job.id -Activity ('Video {0}' -f $Job.title) -Status 'Evaluating..' -ParentId 2
-                }
+                Write-Progress -Id $job.job.id -Activity ('Video {0} {1}' -f $job.scheduleCode, $Job.title) -Status $LastLine -ParentId 2
                 $progressId++
             }
         }
@@ -630,7 +630,7 @@ param(
                     Remove-Item -Path $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
                 }
             }
-            Write-Warning ('Stopped downloading {0}' -f $BGJob.title) 
+            Write-Warning ('Stopped downloading {0} {1}' -f $BGJob.scheduleCode, $BGJob.title) 
 	}
     }
 
@@ -642,7 +642,8 @@ param(
             $ArgumentList,
             $File,
             $Timestamp= $null,
-            $Title
+            $Title='',
+            $ScheduleCode=''
         )
         $JobsRunning= Get-BackgroundDownloadJobs
         If ( $JobsRunning -ge $MaxDownloadJobs) {
@@ -695,6 +696,7 @@ param(
             job= $job
             file= $file
             title= $Title
+            scheduleCode= $ScheduleCode
             timestamp= $timestamp
             stdOutTempFile= $stdOutTempFile
             stdErrTempFile= $stdErrTempFile
@@ -1154,7 +1156,7 @@ param(
                             $Arg+= '--retries 15'
 
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
-                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -Title ($SessionToGet.Title)
+                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
                         }
                         Else {
                             # Video not available or no link found
@@ -1216,7 +1218,7 @@ param(
                         }
                         If( $ValidUrl) {                        
                             Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
-                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -Title ($SessionToGet.Title)
+                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
                         }
                         Else {
                             Write-Warning ('Skipping: Unavailable {0}' -f $DownloadURL)
