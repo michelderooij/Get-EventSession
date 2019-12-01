@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.30, November 28th, 2019
+    Version 3.31, December 1st, 2019
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -309,6 +309,7 @@
     3.30  Increased wait cycle during progress refresh
           Added schedule code to progress status
           Revised detection successful video downloads
+    3.31  Corrected video cleanup logic
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -543,7 +544,6 @@ param(
                     2 {
                         $isJobSuccess= (Test-Path -Path $job.file)
                         $VideoInfo[ $InfoDownload]++
-                        Clean-VideoLeftovers $job.file
                         Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                     }
                     default {
@@ -559,6 +559,9 @@ param(
                        Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
                        $FileObj.CreationTime= $job.Timestamp
                        $FileObj.LastWriteTime= $job.Timestamp
+                    }
+                    If( $job.Type -eq 2) {
+                        Clean-VideoLeftovers $job.file
                     }
                 }
                 Else {
