@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.31, December 1st, 2019
+    Version 3.33, February 11th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -310,6 +310,8 @@
           Added schedule code to progress status
           Revised detection successful video downloads
     3.31  Corrected video cleanup logic
+    3.32  Do not assume Slidedeck exists when size is 0
+    3.33  Fixed typo when specifying format for direct YouTube downloads
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -568,8 +570,8 @@ param(
                     switch( $job.Type) {
                         1 {
                             Write-Host ('Problem downloading {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
-                            $job.job.ChildJobs | Stop-Job
-                            $job.job | Stop-Job -PassThru | Remove-Job -Force
+                            $job.job.ChildJobs | Stop-Job | Out-Null
+                            $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
                         }
                         2 {
                             $LastLine= (Get-Content -Path $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select -Last 1
@@ -629,7 +631,7 @@ param(
                 }
                 2 {
                     Stop-Process -Id $BGJob.job.id -Force -ErrorAction SilentlyContinue
-                    Start-Sleep -Seconds 1
+                    Start-Sleep -Seconds 5
                     Remove-Item -Path $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
                 }
             }
@@ -653,7 +655,7 @@ param(
             Write-Host ('Maximum background download jobs reached ({0}), waiting for free slot - press Ctrl-C once to abort..' -f $JobsRunning)
             While ( $JobsRunning -ge $MaxDownloadJobs) {
                 if ([system.console]::KeyAvailable) { 
-                    Start-Sleep 1
+                    Start-Sleep 5
                     $key = [system.console]::readkey($true)
                     if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
                         Write-Host "TERMINATING" -ForegroundColor Red
@@ -661,7 +663,6 @@ param(
                         Exit -1
                     }
                 }
-                Start-Sleep 5
                 $JobsRunning= Get-BackgroundDownloadJobs
             }
         }
@@ -1049,6 +1050,7 @@ param(
                             $FileObj.CreationTime= $SessionTime
                             $FileObj.LastWriteTime= $SessionTime
                         }
+                        #Clean-VideoLeftovers $vidFullFile
                         $VideoInfo[ $InfoExist]++
                     }
                     else {
@@ -1122,7 +1124,7 @@ param(
                                         $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
                                         Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
                                         $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-                                        If ( $Format) { $Arg += ('--format"{0}' -f $Format) } Else { $Arg += ('--format 22') }
+                                        If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
                                         If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
                                     }
                                     Else {
@@ -1194,7 +1196,7 @@ param(
                         $DeckType= 0
                     }
                     $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
-                    if ((Test-Path -Path  $slidedeckFullFile) -and -not $Overwrite) {
+                    if ((Test-Path -Path  $slidedeckFullFile) -and ((Get-ChildItem -Path $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
                         Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
                         If( $SessionTime) {
                             #Set timestamp
@@ -1240,7 +1242,7 @@ param(
             if ([system.console]::KeyAvailable) { 
                 $key = [system.console]::readkey($true)
                 if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
-                    Write-Host "TERMINATING"
+                    Write-Host "TERMINATING" -ForegroundColor Red
                     Stop-BackgroundDownloadJobs
                     Exit -1
                 }
@@ -1255,10 +1257,10 @@ param(
             Write-Host ('Waiting for download jobs to finish - press Ctrl-C once to abort)' -f $JobsRunning)
             While  ( $JobsRunning -gt 0) {
                 if ([system.console]::KeyAvailable) { 
-                    Start-Sleep 1
+                    Start-Sleep 5
                     $key = [system.console]::readkey($true)
                     if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
-                        Write-Host "TERMINATING"
+                        Write-Host "TERMINATING" -ForegroundColor Red
                         Stop-BackgroundDownloadJobs
                         Exit -1
                     }
