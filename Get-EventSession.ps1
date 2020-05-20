@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.33, February 11th, 2020
+    Version 3.34, May 20th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -60,7 +60,12 @@
     For Azure Media Services, default option is worstvideo+bestaudio/best. Alternatively, you can 
     select other formats (when present), e.g. bestvideo+bestaudio. Note that the format requested 
     needs to be present in the stream package. Storage required for bestvideo is significantly 
-    more than worstvideo. 
+    more than worstvideo. Note that you can also provide complex filter and preference, e.g. 
+    bestvideo[height=540][filesize<384MB]+bestaudio,bestvideo[height=720][filesize<512MB]+bestaudio,bestvideo[height=360]+bestaudio,bestvideo+bestaudio
+    1) This would first attempt to download the video of 540p if it is less than 384MB, and best audio.
+    2) When not present, then attempt to downlod video of 720p less than 512MB.
+    3) Thirdly, attempt to download video of 360p with best audio.
+    4) If none of the previous filters found matches, just pick the best video and best audio streams.
 
     For Azure Media Services, you could also use format tags, such as 1_V_video_1 or 1_V_video_3.
     Note that these formats might not be consistent for different streams, e.g. 1_V_video_1
@@ -312,6 +317,10 @@
     3.31  Corrected video cleanup logic
     3.32  Do not assume Slidedeck exists when size is 0
     3.33  Fixed typo when specifying format for direct YouTube downloads
+    3.34  Updated for Build 2020
+          Added NoRepeat filtering for Build 2020
+          Made Event parameter mandatory, and not defaulting to Ignite
+          Added filtering example to Format parameter spec
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -415,12 +424,12 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [uri]$Proxy=$null,
 
-    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
-    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
-    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [parameter( Mandatory = $true, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $true, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $true, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
     [ValidateSet('Ignite', 'Inspire','Build','Ignite2018')]
-    [string]$Event='Ignite',
+    [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [switch]$InfoOnly,
@@ -761,7 +770,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
         'Build' {
-            $EventAPIUrl= 'https://api.mybuild.techcommunity.microsoft.com'
+            $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= ''
             $SlidedeckUrl= ''
@@ -988,7 +997,7 @@ param(
 
     If ($NoRepeats) {
         Write-Verbose ('Skipping repeated sessions')
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[2-3]?$'}
+        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[2-3]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$'}
     }
 
     If ($Keyword) {
