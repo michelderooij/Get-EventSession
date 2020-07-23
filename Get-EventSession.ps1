@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.34, May 20th, 2020
+    Version 3.35, July 23rd, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -321,6 +321,7 @@
           Added NoRepeat filtering for Build 2020
           Made Event parameter mandatory, and not defaulting to Ignite
           Added filtering example to Format parameter spec
+    3.35  Updated for Inspire 2020
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -747,6 +748,7 @@ param(
             $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG19-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG19-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2019/{0}.pptx'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
@@ -756,6 +758,7 @@ param(
             $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
             $EventSearchURI= 'api/videos/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG18-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
@@ -764,7 +767,8 @@ param(
         'Inspire' {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= ''
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP20-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP20-{0}'
             $SlidedeckUrl= ''
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
@@ -773,6 +777,7 @@ param(
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= ''
+            $CaptionURL= ''
             $SlidedeckUrl= ''
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
