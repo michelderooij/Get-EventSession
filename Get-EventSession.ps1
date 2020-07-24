@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.36, July 24th, 2020
+    Version 3.37, July 24th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -323,10 +323,12 @@
           Added filtering example to Format parameter spec
     3.35  Updated for Inspire 2020
     3.36  Small fix for Inspire repeat session naming
+    3.37  Added ExcludecommunityTopic parameter (so you can skip 'Fun and Wellness' Animal Cam contents)
+          Modified Keyword and Title parameters (can be multiple values now)
 
     .EXAMPLE
-    Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
-    .\Get-EventSession.ps1 -DownloadFolder D:\Ignite-Format 22 -Keyword 'Teams' -Event Ignite
+    Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
+    .\Get-EventSession.ps1 -DownloadFolder D:\Ignite-Format 22 -Keyword 'Teams' -Event Ignite -ExcludecommunityTopic 'Fun and Wellness'
 
     .EXAMPLE
     Get information of all sessions, and output only location and time information for sessions (co-)presented by Tony Redmond:
@@ -353,27 +355,27 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [string]$Format= $null,
+    [string]$Format,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [string]$Keyword = '',
+    [string[]]$Keyword,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [string]$Title = '',
+    [string[]]$Title,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [string]$Speaker = '',
+    [string]$Speaker,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [string]$Product = '',
+    [string]$Product,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
@@ -383,22 +385,27 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [string]$SolutionArea = '',
+    [string]$SolutionArea,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [string]$LearningPath= '',
+    [string]$LearningPath,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [string]$Topic= '',
+    [string]$Topic,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [string[]]$ScheduleCode = "",
+    [string[]]$ScheduleCode,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [string[]]$ExcludecommunityTopic,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -966,6 +973,11 @@ param(
         $SessionsToGet = $SessionsToGet | Where-Object { $scheduleCode -contains $_.sessioncode }
     }
 
+    If ($ExcludeCommunityTopic) {
+        Write-Verbose ('Excluding community topic: {0}' -f $ExcludeCommunityTopic)
+        $SessionsToGet = $SessionsToGet | Where-Object { $ExcludeCommunityTopic -inotcontains $_.CommunityTopic  }
+    }
+
     If ($Speaker) {
         Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker)
         $SessionsToGet = $SessionsToGet | Where-Object { $_.speakerNames | Where-Object {$_ -ilike $Speaker} }
@@ -997,8 +1009,12 @@ param(
     }
 
     If ($Title) {
-        Write-Verbose ('Title keyword specified: {0}' -f $Title)
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.title -ilike ('*{0}*' -f $Title) }
+        $SessionsToGetTemp= [System.Collections.ArrayList]@()
+        ForEach( $item in $Title) {
+            Write-Verbose ('Title keyword(s) specified: {0}' -f $item)
+            $SessionsToGet | Where-Object {$_.title -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
+        }
+        $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
     }
 
     If ($NoRepeats) {
@@ -1007,8 +1023,12 @@ param(
     }
 
     If ($Keyword) {
-        Write-Verbose ('Description keyword specified: {0}' -f $Keyword)
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.description -ilike ('*{0}*' -f $Keyword) }
+        $SessionsToGetTemp= [System.Collections.ArrayList]@()
+        ForEach( $item in $Title) {
+            Write-Verbose ('Description keyword(s) specified: {0}' -f $item)
+            $SessionsToGet | Where-Object {$_.description -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
+        }
+        $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
     }
 
     If ( $InfoOnly) {
