@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.35, July 23rd, 2020
+    Version 3.36, July 24th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -322,6 +322,7 @@
           Made Event parameter mandatory, and not defaulting to Ignite
           Added filtering example to Format parameter spec
     3.35  Updated for Inspire 2020
+    3.36  Small fix for Inspire repeat session naming
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite:
@@ -1002,7 +1003,7 @@ param(
 
     If ($NoRepeats) {
         Write-Verbose ('Skipping repeated sessions')
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[2-3]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$'}
+        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[1-3]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$'}
     }
 
     If ($Keyword) {
