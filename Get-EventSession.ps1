@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.37, July 24th, 2020
+    Version 3.38, July 25th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -325,6 +325,7 @@
     3.36  Small fix for Inspire repeat session naming
     3.37  Added ExcludecommunityTopic parameter (so you can skip 'Fun and Wellness' Animal Cam contents)
           Modified Keyword and Title parameters (can be multiple values now)
+    3.38  Added support for direct downloading of AMS caption files (eg Inspire)
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1076,6 +1077,7 @@ param(
 
                     $vidfileName = ("$FileName.mp4")
                     $vidFullFile = '\\?\{0}' -f (Join-Path $DownloadFolder $vidfileName)
+
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
                         Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
                         If( $SessionTime) {
@@ -1130,13 +1132,19 @@ param(
                                     If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format worstvideo+bestaudio/best') }
                                     If ( $Captions) { 
                                         # Caption file in AMS needs seperate download
-                                        If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\.vtt\?.*?)"') {
+                                        $captionFileLink= $SessionToGet.captionFileLink
+                                        If( ! $captionFileLink) {
+                                            If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\.vtt\?.*?)"') {
+                                                $captionFileLink= $matches.AzureCaptionURL
+                                            }
+                                        }
+                                        If( $captionFileLink) {
                                             $captionVTTFile= $vidFullFile -replace '.mp4', '.vtt'
-                                            Write-Verbose ('Retrieving caption file from URL {0}' -f $matches.AzureCaptionURL)
+                                            Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
                                             Try {
                                                 $wc = New-Object System.Net.WebClient
                                                 $wc.Encoding = [System.Text.Encoding]::UTF8
-                                                $wc.DownloadFile( $matches.AzureCaptionURL, $captionVTTFile) 
+                                                $wc.DownloadFile( $captionFileLink, $captionVTTFile) 
                                                 Write-Host ('Downloaded caption file {0}' -f $captionVTTFile) -ForegroundColor Green
 
                                                 $FileObj= Get-ChildItem -Path $captionVTTFile
