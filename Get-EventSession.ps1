@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.38, July 27th, 2020
+    Version 3.39, July 28th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -326,6 +326,7 @@
     3.37  Added ExcludecommunityTopic parameter (so you can skip 'Fun and Wellness' Animal Cam contents)
           Modified Keyword and Title parameters (can be multiple values now)
     3.38  Added detection of filetype for presentations (PPTX/PDF)
+    3.39  Added code to deal with specifying <Event><Year>
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -438,7 +439,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('Ignite', 'Inspire','Build','Ignite2018')]
+    [ValidateSet('Ignite', 'Inspire','Build','Build2020','Inspire2020','Ignite2019','Ignite2018')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -753,7 +754,7 @@ param(
 
     # Determine what event URLs to use
     Switch( $Event) {
-        'Ignite' {
+        {'Ignite','Ignite2019' -contains $_} {
             $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG19-{0}'
@@ -773,7 +774,7 @@ param(
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2018-01-01T08:00:00-05:00","endDateTime":"2019-01-01T19:00:00-05:00"}}]}}'
         }
-        'Inspire' {
+        {'Inspire', 'Inspire2020' -contains $_} {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP20-{0}'
@@ -782,11 +783,11 @@ param(
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
-        'Build' {
+        {'Build', 'Build2020' -contains $_} {
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= ''
-            $CaptionURL= ''
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B20-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B20-{0}'
             $SlidedeckUrl= ''
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
