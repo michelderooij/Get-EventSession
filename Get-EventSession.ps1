@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.38, July 25th, 2020
+    Version 3.38, July 27th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -325,7 +325,7 @@
     3.36  Small fix for Inspire repeat session naming
     3.37  Added ExcludecommunityTopic parameter (so you can skip 'Fun and Wellness' Animal Cam contents)
           Modified Keyword and Title parameters (can be multiple values now)
-    3.38  Added support for direct downloading of AMS caption files (eg Inspire)
+    3.38  Added detection of filetype for presentations (PPTX/PDF)
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1204,7 +1204,7 @@ param(
                             $Arg+= '--retries 15'
 
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
-                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+#                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
                         }
                         Else {
                             # Video not available or no link found
@@ -1229,49 +1229,48 @@ param(
                 }
 
                 If ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius') {
-                    If( $SessionToGet.slidedeck -match 'downloaddocument') {
-                        # Slidedeck offered is PDF format
-                        $slidedeckFile = '{0}.pdf' -f $FileName
-                        $DeckType= 1
+
+                    $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
+
+                    Try {
+                       $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
                     }
-                    Else {
-                        $slidedeckFile = '{0}.pptx' -f $FileName
-                        $DeckType= 0
+                    Catch {
+                        $ValidUrl= $false
                     }
-                    $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
-                    if ((Test-Path -Path  $slidedeckFullFile) -and ((Get-ChildItem -Path $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
-                        Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
-                        If( $SessionTime) {
-                            #Set timestamp
-                            $FileObj= Get-ChildItem -Path $slidedeckFullFile
-                            Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $slidedeckFullFile)
-                            $FileObj.CreationTime= $SessionTime
-                            $FileObj.LastWriteTime= $SessionTime
-                        }
-                        $DeckInfo[ $InfoExist]++
-                    }
-                    else {
-                        If( $DeckType= 0) {
-                            $encodedURL = ($downloadLink -split 'src=')[1]
+
+                    If( $ValidURL) {
+                        If( $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
+                            # Slidedeck offered is PDF format
+                            $slidedeckFile = '{0}.pdf' -f $FileName
+                            $DeckType= 1
                         }
                         Else {
-                            $encodedURL = $downloadLink
+                            $slidedeckFile = '{0}.pptx' -f $FileName
+                            $DeckType= 0
                         }
-                        $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $encodedURL)
-                        Try {
-                            $ValidUrl= Invoke-WebRequest -Uri $DownloadUrl -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                        $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
+
+                        if ((Test-Path -Path  $slidedeckFullFile) -and ((Get-ChildItem -Path $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
+                            Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
+                            If( $SessionTime) {
+                                #Set timestamp
+                                $FileObj= Get-ChildItem -Path $slidedeckFullFile
+                                Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $slidedeckFullFile)
+                                $FileObj.CreationTime= $SessionTime
+                                $FileObj.LastWriteTime= $SessionTime
+                            }
+                            $DeckInfo[ $InfoExist]++
                         }
-                        Catch {
-                            $ValidUrl= $false
-                        }
-                        If( $ValidUrl) {                        
+                        Else {
+
                             Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
                             Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
                         }
-                        Else {
-                            Write-Warning ('Skipping: Unavailable {0}' -f $DownloadURL)
-                            $DeckInfo[ $InfoPlaceholder]++
-                        }
+                    }
+                    Else {
+                        Write-Warning ('Skipping: Unavailable {0}' -f $DownloadURL)
+                        $DeckInfo[ $InfoPlaceholder]++
                     }
                 }
                 Else {
