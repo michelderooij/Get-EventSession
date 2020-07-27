@@ -1204,7 +1204,7 @@ param(
                             $Arg+= '--retries 15'
 
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
-#                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
                         }
                         Else {
                             # Video not available or no link found
