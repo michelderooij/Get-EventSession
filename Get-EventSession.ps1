@@ -329,6 +329,7 @@
     3.39  Added code to deal with specifying <Event><Year>
     3.40  Modified API endpoint for Ignite 2020
           Changed yearless Event specification to add year suffix, eg Ignite->Ignite2020, etc.
+          Fixed Azure Media Services video scraping for Ignite2020
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -760,7 +761,7 @@ param(
             $Event= 'Ignite2020'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG20-{0}'
+            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG20-{0}?mhid=myignite'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG20-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2020/{0}.pptx'
             $Method= 'Post'
@@ -1159,7 +1160,7 @@ param(
                                 $OnDemandPage= $DownloadedPage.RawContent 
                                 
                                 # Check for embedded AMS 
-                                If( $OnDemandPage -match '<video id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
+                                If( $OnDemandPage -match '<video (playsinline)? id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
                                     $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
