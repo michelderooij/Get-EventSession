@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.40, September 22th, 2020
+    Version 3.41, September 24th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -330,6 +330,8 @@
     3.40  Modified API endpoint for Ignite 2020
           Changed yearless Event specification to add year suffix, eg Ignite->Ignite2020, etc.
           Fixed Azure Media Services video scraping for Ignite2020
+    3.41  Fixed: Error message for timeless sessions after downloading caption file
+          Fixed: Downloading of caption files when video file is already downloaded
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1091,6 +1093,7 @@ param(
         $SessionsSelected = ($SessionsToGet | Measure-Object).Count
         Write-Host ('There are {0} sessions matching your criteria.' -f $SessionsSelected)
         Foreach ($SessionToGet in $SessionsToGet) {
+
             $i++
             Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
             $FileName = Fix-FileName ('{0} - {1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
@@ -1122,7 +1125,7 @@ param(
                             $FileObj.CreationTime= $SessionTime
                             $FileObj.LastWriteTime= $SessionTime
                         }
-                        #Clean-VideoLeftovers $vidFullFile
+                        Clean-VideoLeftovers $vidFullFile
                         $VideoInfo[ $InfoExist]++
                     }
                     else {
@@ -1165,36 +1168,6 @@ param(
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
                                     $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
                                     If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format worstvideo+bestaudio/best') }
-                                    If ( $Captions) { 
-                                        # Caption file in AMS needs seperate download
-                                        $captionFileLink= $SessionToGet.captionFileLink
-                                        If( ! $captionFileLink) {
-                                            If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\.vtt\?.*?)"') {
-                                                $captionFileLink= $matches.AzureCaptionURL
-                                            }
-                                        }
-                                        If( $captionFileLink) {
-                                            $captionVTTFile= $vidFullFile -replace '.mp4', '.vtt'
-                                            Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
-                                            Try {
-                                                $wc = New-Object System.Net.WebClient
-                                                $wc.Encoding = [System.Text.Encoding]::UTF8
-                                                $wc.DownloadFile( $captionFileLink, $captionVTTFile) 
-                                                Write-Host ('Downloaded caption file {0}' -f $captionVTTFile) -ForegroundColor Green
-
-                                                $FileObj= Get-ChildItem -Path $captionVTTFile
-                                                Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $captionVTTFile)
-                                                $FileObj.CreationTime= $SessionTime
-                                                $FileObj.LastWriteTime= $SessionTime
-                                            }
-                                            Catch {
-                                                Write-Host ('Problem downloading caption file') -ForegroundColor Red
-                                            }
-                                        }
-                                        Else {
-                                            Write-Warning "Subtitles requested, but no Caption URL found"
-                                        }
-                                    }
                                 }
                                 Else {
                                     # Check for embedded YouTube 
@@ -1246,6 +1219,66 @@ param(
                             $DeckInfo[ $InfoPlaceholder]++
                         }
                     }
+
+                    If( $Captions) {
+                        $captionVTTFile= $vidFullFile -replace '.mp4', '.vtt'
+                        If(! $OnDemandPage) {
+                            Try {
+                                $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                            }
+                            Catch {
+                                $DownloadedPage= $null
+                            }
+                            If( $DownloadedPage) {                        
+                                $OnDemandPage= $DownloadedPage.RawContent
+                            }
+                            Else {
+                                $onDemandPage= $null
+                            } 
+                        }
+                        Else {
+                            # Reuse one from video download
+                        }
+
+                        If ((Test-Path -Path $captionVTTFile) -and -not $Overwrite) {
+                            Write-Host ('Caption file exists {0}' -f $captionVTTFile) -ForegroundColor Gray
+                        }
+                        Else {
+                            # Caption file in AMS needs seperate download
+                            $captionFileLink= $SessionToGet.captionFileLink
+                            If( ! $captionFileLink) {
+                                If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\.vtt\?.*?)"') {
+                                    $captionFileLink= $matches.AzureCaptionURL
+                                }
+                                If( ! $captionFileLink) {
+                                    $captionFileLink= $captionURL -f $SessionToGet.SessionCode
+                                }
+                            }
+                            If( $captionFileLink) {
+                                Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
+                                Try {
+                                    $wc = New-Object System.Net.WebClient
+                                    $wc.Encoding = [System.Text.Encoding]::UTF8
+                                    $wc.DownloadFile( $captionFileLink, $captionVTTFile) 
+                                    Write-Host ('Downloaded caption file {0}' -f $captionVTTFile) -ForegroundColor Green
+
+                                    $FileObj= Get-ChildItem -Path $captionVTTFile
+                                    If($SessionTime) {
+                                         Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $captionVTTFile)
+                                         $FileObj.CreationTime= $SessionTime
+                                         $FileObj.LastWriteTime= $SessionTime
+                                     }
+                                 }
+                                 Catch {
+                                     Write-Host ('Problem downloading caption file') -ForegroundColor Red
+                                 }
+                             }
+                             Else {
+                                 Write-Warning "Subtitles requested, but no Caption URL found"
+                             }
+                        }
+                    }
+                    $OnDemandPage= $null
                 }
               }
 
