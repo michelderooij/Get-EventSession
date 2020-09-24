@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.41, September 24th, 2020
+    Version 3.42, September 24th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -332,6 +332,7 @@
           Fixed Azure Media Services video scraping for Ignite2020
     3.41  Fixed: Error message for timeless sessions after downloading caption file
           Fixed: Downloading of caption files when video file is already downloaded
+    3.42  Changed source location of ffmpeg. Download will now fetch current static x64 release.
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -497,7 +498,7 @@ param(
     $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $Event)
 
     $YTlink = 'https://github.com/ytdl-org/youtube-dl/releases/download/2019.11.05/youtube-dl.exe'
-    $FFMPEGlink = 'https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip'
+    $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
 
     # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
     [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls" 
