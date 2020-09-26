@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.42, September 24th, 2020
+    Version 3.43, September 26th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -333,6 +333,7 @@
     3.41  Fixed: Error message for timeless sessions after downloading caption file
           Fixed: Downloading of caption files when video file is already downloaded
     3.42  Changed source location of ffmpeg. Download will now fetch current static x64 release.
+    3.43  Fixed Ignite 2020 slidedeck 'trial & error' URL
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -764,9 +765,9 @@ param(
             $Event= 'Ignite2020'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG20-{0}?mhid=myignite'
+            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG20-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG20-{0}'
-            $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2020/{0}.pptx'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG20-{0}'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
@@ -797,16 +798,16 @@ param(
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP20-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP20-{0}'
-            $SlidedeckUrl= ''
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP20-{0}'
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
         }
         {'Inspire2019' -contains $_} {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP20-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP20-{0}'
-            $SlidedeckUrl= ''
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP19-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP19-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP19-{0}'
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
         }
@@ -816,16 +817,16 @@ param(
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B20-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B20-{0}'
-            $SlidedeckUrl= ''
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B20-{0}'
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
         {'Build2019' -contains $_} {
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B20-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B20-{0}'
-            $SlidedeckUrl= ''
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B19-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B19-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B19-{0}'
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
         }
@@ -1262,9 +1263,8 @@ param(
                                     $wc.Encoding = [System.Text.Encoding]::UTF8
                                     $wc.DownloadFile( $captionFileLink, $captionVTTFile) 
                                     Write-Host ('Downloaded caption file {0}' -f $captionVTTFile) -ForegroundColor Green
-
-                                    $FileObj= Get-ChildItem -Path $captionVTTFile
                                     If($SessionTime) {
+                                         $FileObj= Get-ChildItem -Path $captionVTTFile
                                          Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $captionVTTFile)
                                          $FileObj.CreationTime= $SessionTime
                                          $FileObj.LastWriteTime= $SessionTime
@@ -1302,13 +1302,13 @@ param(
                     $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
 
                     Try {
-                       $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                       $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -TimeoutSec 10 -ErrorAction SilentlyContinue
                     }
                     Catch {
                         $ValidUrl= $false
                     }
 
-                    If( $ValidURL) {
+                    If( $ValidUrl -icontains $res.statusCode) {
                         If( $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
                             # Slidedeck offered is PDF format
                             $slidedeckFile = '{0}.pdf' -f $FileName
