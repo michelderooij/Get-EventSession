@@ -1303,13 +1303,13 @@ param(
                     $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
 
                     Try {
-                       $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
+                       $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
                     }
                     Catch {
                         $ValidUrl= $false
                     }
 
-                    If( $ValidUrl) {
+                    If( $ValidUrl -and $ValidURL.Headers.'Content-Type' -inotlike 'text/html;*' -and $ValidURL.Headers.'Content-Length' -gt 0) {
                         If( $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
                             # Slidedeck offered is PDF format
                             $slidedeckFile = '{0}.pdf' -f $FileName
