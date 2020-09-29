@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.43, September 26th, 2020
+    Version 3.44, September 29th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -334,6 +334,7 @@
           Fixed: Downloading of caption files when video file is already downloaded
     3.42  Changed source location of ffmpeg. Download will now fetch current static x64 release.
     3.43  Fixed Ignite 2020 slidedeck 'trial & error' URL
+    3.44  Fixed downloading of non-PDF slidedecks
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1302,13 +1303,13 @@ param(
                     $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
 
                     Try {
-                       $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -TimeoutSec 10 -ErrorAction SilentlyContinue
+                       $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -ErrorAction SilentlyContinue
                     }
                     Catch {
                         $ValidUrl= $false
                     }
 
-                    If( $ValidUrl -icontains $res.statusCode) {
+                    If( $ValidUrl) {
                         If( $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
                             # Slidedeck offered is PDF format
                             $slidedeckFile = '{0}.pdf' -f $FileName
