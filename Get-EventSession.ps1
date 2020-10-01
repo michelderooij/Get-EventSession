@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.44, September 29th, 2020
+    Version 3.45, October 1st, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -169,7 +169,17 @@
     Item number to start crawling with - useful for restarts.
 
     .PARAMETER Event
-    Specify what event to download sessions for. Valid values are Ignite (Default), Inspire and Build.
+    Specify what event to download sessions for. 
+    Options are:
+    - Ignite                             : Ignite events (2020)
+    - Ignite2020, Ignite2019, Ignite2018 : Ignite contents from that year
+    - Inspire                            : Most recent Inspire contents (2020)
+    - Inspire2020                        : Inspire contents from that year
+    - Build                              : Most recent Build contents (2020)
+    - Build2020                          : Build contents from that year
+
+    [ValidateSet('Ignite', 'Inspire','Build','Build2020','Inspire2020','Ignite2020','Ignite2019','Ignite2018')]
+
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -335,6 +345,7 @@
     3.42  Changed source location of ffmpeg. Download will now fetch current static x64 release.
     3.43  Fixed Ignite 2020 slidedeck 'trial & error' URL
     3.44  Fixed downloading of non-PDF slidedecks
+    3.45  Help updated for -Event
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
