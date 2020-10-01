@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.45, October 1st, 2020
+    Version 3.46, October 1st, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -346,6 +346,8 @@
     3.43  Fixed Ignite 2020 slidedeck 'trial & error' URL
     3.44  Fixed downloading of non-PDF slidedecks
     3.45  Help updated for -Event
+    3.46  Changed downloading of caption files in background jobs as well
+          Optimized caption downloading preventing unnecessary page downloads 
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -561,12 +563,16 @@ param(
         $Temp= @()
         $progressId= 3
         ForEach( $job in $script:BackgroundDownloadJobs) {
+
             switch( $job.Type) {
                 1 {
                     $isJobRunning= $job.job.State -eq 'Running'
                 }
                 2 {
                     $isJobRunning= -not $job.job.hasExited
+                }
+                3 {
+                    $isJobRunning= $job.job.State -eq 'Running'
                 }
                 default {
                     $isJobRunning= $false
@@ -576,7 +582,7 @@ param(
                 $Temp+= $job
             }
             Else {
-                # Job finished, process outcome
+                # Job finished, process result
                 switch( $job.Type) {
                     1 {
                         $isJobSuccess= $job.job.State -eq 'Completed'
@@ -587,10 +593,14 @@ param(
                         $VideoInfo[ $InfoDownload]++
                         Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                     }
+                    3 {
+                        $isJobSuccess= $job.job.State -eq 'Completed'
+                    }
                     default {
                         $isJobSuccess= $false
                     }
                 }
+
 		If( $isJobSuccess -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
                     # Do we need to adjust timestamp
@@ -602,6 +612,7 @@ param(
                        $FileObj.LastWriteTime= $job.Timestamp
                     }
                     If( $job.Type -eq 2) {
+                        # Clean video leftovers
                         Clean-VideoLeftovers $job.file
                     }
                 }
@@ -616,6 +627,11 @@ param(
                             $LastLine= (Get-Content -Path $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select -Last 1
                             Write-Host ('Problem downloading {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
                             Remove-Item -Path $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
+                        }
+                        3 {
+                            Write-Host ('Problem downloading {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
+                            $job.job.ChildJobs | Stop-Job | Out-Null
+                            $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
                         }
                         default {
                         }
@@ -633,6 +649,7 @@ param(
         $Num=0
         $NumDeck= 0
         $NumVid= 0
+        $NumVtt= 0
         ForEach( $BGJob in $script:BackgroundDownloadJobs) {
             $Num++
             Switch( $BGJob.Type) {
@@ -642,13 +659,18 @@ param(
                 2 {
                      $NumVid++
                 }
+                3 {
+                     $NumVtt++
+                }
             }
         }
-        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedecks, {2} videos)' -f $Num, $NumDeck, $NumVid)
+        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedeck, {2} video and {3} caption files)' -f $Num, $NumDeck, $NumVid, $NumVtt)
 
         $noticeShown= $false
         ForEach( $job in $script:BackgroundDownloadJobs) {
             If( $Job.Type -eq 2) {
+
+                # Get last line of YT log to display for video downloads
                 $LastLine= (Get-Content -Path $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select -Last 1
                 If(!( $LastLine)) {
                     $LastLine= 'Evaluating..'
@@ -673,6 +695,10 @@ param(
                     Start-Sleep -Seconds 5
                     Remove-Item -Path $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
                 }
+                3 {
+                    $BGJob.Job.ChildJobs | Stop-Job -PassThru 
+	            $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+                }
             }
             Write-Warning ('Stopped downloading {0} {1}' -f $BGJob.scheduleCode, $BGJob.title) 
 	}
@@ -694,7 +720,7 @@ param(
             Write-Host ('Maximum background download jobs reached ({0}), waiting for free slot - press Ctrl-C once to abort..' -f $JobsRunning)
             While ( $JobsRunning -ge $MaxDownloadJobs) {
                 if ([system.console]::KeyAvailable) { 
-                    Start-Sleep 5
+                    Start-Sleep 1
                     $key = [system.console]::readkey($true)
                     if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
                         Write-Host "TERMINATING" -ForegroundColor Red
@@ -705,45 +731,59 @@ param(
                 $JobsRunning= Get-BackgroundDownloadJobs
             }
         }
-        Write-Host ('Initiating download of {0}' -f $title)
-        If( $Type -eq 1) {
-            # Slidedeck
-            $job= Start-Job -ScriptBlock { 
-                param( $url, $file) 
-                $wc = New-Object System.Net.WebClient
-                $wc.Encoding = [System.Text.Encoding]::UTF8
-                $wc.DownloadFile( $url, $file) 
-            } -ArgumentList $DownloadUrl, $FilePath
-            $stdOutTempFile = $null
-            $stdErrTempFile = $null
-        }
-        Else {
-            # Video
-            $TempFile= Join-Path ($env:TEMP) (New-Guid).Guid
-            $stdOutTempFile = '{0}-Out.log' -f $TempFile
-            $stdErrTempFile = '{0}-Err.log' -f $TempFile
-            $ProcessParam= @{
-                FilePath= $FilePath
-                ArgumentList= $ArgumentList
-                RedirectStandardError= $stdErrTempFile 
-                RedirectStandardOutput= $stdOutTempFile 
-                Wait= $false
-                Passthru= $true
-                NoNewWindow= $true
-                #WindowStyle= [System.Diagnostics.ProcessWindowStyle]::Normal
+        Switch( $Type) {
+            1 {
+                # Slidedeck
+                $job= Start-Job -ScriptBlock { 
+                    param( $url, $file) 
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Encoding = [System.Text.Encoding]::UTF8
+                    $wc.DownloadFile( $url, $file) 
+                } -ArgumentList $DownloadUrl, $FilePath
+                $stdOutTempFile = $null
+                $stdErrTempFile = $null
             }
-            $job= Start-Process @ProcessParam
+            2 {
+                # Video
+                $TempFile= Join-Path ($env:TEMP) (New-Guid).Guid
+                $stdOutTempFile = '{0}-Out.log' -f $TempFile
+                $stdErrTempFile = '{0}-Err.log' -f $TempFile
+                $ProcessParam= @{
+                    FilePath= $FilePath
+                    ArgumentList= $ArgumentList
+                    RedirectStandardError= $stdErrTempFile 
+                    RedirectStandardOutput= $stdOutTempFile 
+                    Wait= $false
+                    Passthru= $true
+                    NoNewWindow= $true
+                    #WindowStyle= [System.Diagnostics.ProcessWindowStyle]::Normal
+                }
+                $job= Start-Process @ProcessParam
+            }
+            3 {
+                # Caption
+                $job= Start-Job -ScriptBlock { 
+                    param( $url, $file) 
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Encoding = [System.Text.Encoding]::UTF8
+                    $wc.DownloadFile( $url, $file) 
+                } -ArgumentList $DownloadUrl, $FilePath
+                $stdOutTempFile = $null
+                $stdErrTempFile = $null
+            }
         }
         $object= New-Object -TypeName PSObject -Property @{
             Type= $Type
             job= $job
             file= $file
             title= $Title
+            url= $DownloadUrl
             scheduleCode= $ScheduleCode
             timestamp= $timestamp
             stdOutTempFile= $stdOutTempFile
             stdErrTempFile= $stdErrTempFile
         }
+
         $script:BackgroundDownloadJobs+= $object
         Show-BackgroundDownloadJobs
     }
@@ -1132,14 +1172,6 @@ param(
 
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
                         Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
-                        If( $SessionTime) {
-                            #Set timestamp
-                            $FileObj= Get-ChildItem -Path $vidFullFile
-                            Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $vidFullFile)
-                            $FileObj.CreationTime= $SessionTime
-                            $FileObj.LastWriteTime= $SessionTime
-                        }
-                        Clean-VideoLeftovers $vidFullFile
                         $VideoInfo[ $InfoExist]++
                     }
                     else {
@@ -1236,23 +1268,6 @@ param(
 
                     If( $Captions) {
                         $captionVTTFile= $vidFullFile -replace '.mp4', '.vtt'
-                        If(! $OnDemandPage) {
-                            Try {
-                                $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                            }
-                            Catch {
-                                $DownloadedPage= $null
-                            }
-                            If( $DownloadedPage) {                        
-                                $OnDemandPage= $DownloadedPage.RawContent
-                            }
-                            Else {
-                                $onDemandPage= $null
-                            } 
-                        }
-                        Else {
-                            # Reuse one from video download
-                        }
 
                         If ((Test-Path -Path $captionVTTFile) -and -not $Overwrite) {
                             Write-Host ('Caption file exists {0}' -f $captionVTTFile) -ForegroundColor Gray
@@ -1261,6 +1276,22 @@ param(
                             # Caption file in AMS needs seperate download
                             $captionFileLink= $SessionToGet.captionFileLink
                             If( ! $captionFileLink) {
+
+                                If(! $OnDemandPage) {
+                                    # Try if there is caption file reference on page
+                                    Try {
+                                        $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                        $OnDemandPage= $DownloadedPage.RawContent
+                                    }
+                                    Catch {
+                                        $DownloadedPage= $null
+                                        $onDemandPage= $null
+                                    } 
+                                }
+                                Else {
+                                    # Reuse one from video download
+                                }
+
                                 If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\.vtt\?.*?)"') {
                                     $captionFileLink= $matches.AzureCaptionURL
                                 }
@@ -1270,21 +1301,11 @@ param(
                             }
                             If( $captionFileLink) {
                                 Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
-                                Try {
-                                    $wc = New-Object System.Net.WebClient
-                                    $wc.Encoding = [System.Text.Encoding]::UTF8
-                                    $wc.DownloadFile( $captionFileLink, $captionVTTFile) 
-                                    Write-Host ('Downloaded caption file {0}' -f $captionVTTFile) -ForegroundColor Green
-                                    If($SessionTime) {
-                                         $FileObj= Get-ChildItem -Path $captionVTTFile
-                                         Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $captionVTTFile)
-                                         $FileObj.CreationTime= $SessionTime
-                                         $FileObj.LastWriteTime= $SessionTime
-                                     }
-                                 }
-                                 Catch {
-                                     Write-Host ('Problem downloading caption file') -ForegroundColor Red
-                                 }
+
+                                 $captionFullFile= $captionVTTFile
+                                 Write-Verbose ('Downloading {0} to {1}' -f $captionFileLink,  $captionFullFile)
+                                 Add-BackgroundDownloadJob -Type 3 -FilePath $captionVTTFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+
                              }
                              Else {
                                  Write-Warning "Subtitles requested, but no Caption URL found"
@@ -1334,23 +1355,15 @@ param(
 
                         if ((Test-Path -Path  $slidedeckFullFile) -and ((Get-ChildItem -Path $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
                             Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
-                            If( $SessionTime) {
-                                #Set timestamp
-                                $FileObj= Get-ChildItem -Path $slidedeckFullFile
-                                Write-Verbose ('Applying timestamp {0} to {1}' -f $SessionTime, $slidedeckFullFile)
-                                $FileObj.CreationTime= $SessionTime
-                                $FileObj.LastWriteTime= $SessionTime
-                            }
                             $DeckInfo[ $InfoExist]++
                         }
                         Else {
-
                             Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
                             Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
                         }
                     }
                     Else {
-                        Write-Warning ('Skipping: Unavailable {0}' -f $DownloadURL)
+                        Write-Warning ('Skipping: Slidedeck unavailable {0}' -f $DownloadURL)
                         $DeckInfo[ $InfoPlaceholder]++
                     }
                 }
@@ -1380,7 +1393,7 @@ param(
             Write-Host ('Waiting for download jobs to finish - press Ctrl-C once to abort)' -f $JobsRunning)
             While  ( $JobsRunning -gt 0) {
                 if ([system.console]::KeyAvailable) { 
-                    Start-Sleep 5
+                    Start-Sleep 1
                     $key = [system.console]::readkey($true)
                     if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
                         Write-Host "TERMINATING" -ForegroundColor Red
