@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.46, October 1st, 2020
+    Version 3.47, October 12th, 2020
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -347,7 +347,8 @@
     3.44  Fixed downloading of non-PDF slidedecks
     3.45  Help updated for -Event
     3.46  Changed downloading of caption files in background jobs as well
-          Optimized caption downloading preventing unnecessary page downloads 
+          Optimized caption downloading preventing unnecessary page downloads
+    3.47  Added Captions to PreferDirect command set
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -498,6 +499,7 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$Captions,
 
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
