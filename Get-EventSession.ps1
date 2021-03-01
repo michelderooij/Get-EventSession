@@ -14,8 +14,8 @@
     Michel de Rooij 	        http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	        http://deploywindows.info
-    Scott Ladewig 	        http://ladewig.com
+    Mattias Fors 	            http://deploywindows.info
+    Scott Ladewig 	            http://ladewig.com
     Tim Pringle                 http://www.powershell.amsterdam
     Andy Race                   https://github.com/AndyRace
     Richard van Nieuwenhuizen
@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.47, October 12th, 2020
+    Version 3.5, March 1st, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -171,12 +171,12 @@
     .PARAMETER Event
     Specify what event to download sessions for. 
     Options are:
-    - Ignite                             : Ignite events (2020)
-    - Ignite2020, Ignite2019, Ignite2018 : Ignite contents from that year
-    - Inspire                            : Most recent Inspire contents (2020)
-    - Inspire2020                        : Inspire contents from that year
-    - Build                              : Most recent Build contents (2020)
-    - Build2020                          : Build contents from that year
+    - Ignite                                            : Ignite events (current)
+    - Ignite2021, Ignite2020, Ignite2019, Ignite2018    : Ignite contents from that year
+    - Inspire                                           : Inspire contents (current)
+    - Inspire2020                                       : Inspire contents from that year
+    - Build                                             : Build contents (current)
+    - Build2020                                         : Build contents from that year
 
     [ValidateSet('Ignite', 'Inspire','Build','Build2020','Inspire2020','Ignite2020','Ignite2019','Ignite2018')]
 
@@ -349,6 +349,8 @@
     3.46  Changed downloading of caption files in background jobs as well
           Optimized caption downloading preventing unnecessary page downloads
     3.47  Added Captions to PreferDirect command set
+    3.50  Updated for Ignite 2021
+          Small cleanup
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -461,7 +463,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('Ignite', 'Inspire','Build','Build2020','Inspire2020','Ignite2020','Ignite2019','Ignite2018')]
+    [ValidateSet('Ignite', 'Inspire','Build','Build2020','Inspire2020','Ignite2021', 'Ignite2020','Ignite2019','Ignite2018')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -552,18 +554,17 @@ param(
 
     Function Clean-VideoLeftovers ( $videofile) {
         $masks= '.mp4.*.part', '.mp4.f*.ytdl'
-	ForEach( $mask in $masks) {
+	    ForEach( $mask in $masks) {
             $FileMask= $videofile -replace '.mp4', $mask
-            $files= Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach {
+            Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach-Object {
                 Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
-		Remove-Item -Path $_.fullname -Force -ErrorAction SilentlyContinue
+		        Remove-Item -Path $_.fullname -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
     Function Get-BackgroundDownloadJobs {
         $Temp= @()
-        $progressId= 3
         ForEach( $job in $script:BackgroundDownloadJobs) {
 
             switch( $job.Type) {
@@ -603,7 +604,7 @@ param(
                     }
                 }
 
-		If( $isJobSuccess -and (Test-Path -Path $job.file)) {
+		        If( $isJobSuccess -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
                     # Do we need to adjust timestamp
                     If( $job.Timestamp) {
@@ -626,7 +627,7 @@ param(
                             $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
                         }
                         2 {
-                            $LastLine= (Get-Content -Path $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select -Last 1
+                            $LastLine= (Get-Content -Path $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
                             Write-Host ('Problem downloading {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
                             Remove-Item -Path $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
                         }
@@ -668,12 +669,11 @@ param(
         }
         Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedeck, {2} video and {3} caption files)' -f $Num, $NumDeck, $NumVid, $NumVtt)
 
-        $noticeShown= $false
         ForEach( $job in $script:BackgroundDownloadJobs) {
             If( $Job.Type -eq 2) {
 
                 # Get last line of YT log to display for video downloads
-                $LastLine= (Get-Content -Path $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select -Last 1
+                $LastLine= (Get-Content -Path $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
                 If(!( $LastLine)) {
                     $LastLine= 'Evaluating..'
                 }
@@ -684,7 +684,8 @@ param(
     }
 
     Function Stop-BackgroundDownloadJobs {
-        $JobsRunning= Get-BackgroundDownloadJobs
+        # Trigger update jobs running data
+        $null= Get-BackgroundDownloadJobs
         # Stop all slidedeck background jobs
         ForEach( $BGJob in $script:BackgroundDownloadJobs ) { 
             Switch( $BGJob.Type) {
@@ -703,7 +704,7 @@ param(
                 }
             }
             Write-Warning ('Stopped downloading {0} {1}' -f $BGJob.scheduleCode, $BGJob.title) 
-	}
+	    }
     }
 
     Function Add-BackgroundDownloadJob {
@@ -815,7 +816,18 @@ param(
 
     # Determine what event URLs to use
     Switch( $Event) {
-        {'Ignite','Ignite2020' -contains $_} {
+        {'Ignite','Ignite2021' -contains $_} {
+            $Event= 'Ignite2021'
+            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG21-{0}'
+            $Method= 'Post'
+            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}}'
+        }
+        {'Ignite2020' -contains $_} {
             $Event= 'Ignite2020'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -1044,7 +1056,7 @@ param(
             $sessiondata = ConvertFrom-Json -InputObject $searchResults
             ForEach ( $Item in $sessiondata.data) {
                 $object = $Item -as [PSCustomObject]
-                $object.PSObject.Properties | % {
+                $object.PSObject.Properties | ForEach-Object {
                     if ($_.Name -eq 'speakerNames') { $object.($_.Name) = @($_.Value) }
                     if ($_.Name -eq 'products') { $object.($_.Name) = @($_.Value -replace [char]9, '/') }
                     if ($_.Name -eq 'contentCategory') { $object.($_.Name) = @(($_.Value -replace [char]9, '/') -replace ' / ', '/') }
@@ -1347,11 +1359,9 @@ param(
                         If( $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
                             # Slidedeck offered is PDF format
                             $slidedeckFile = '{0}.pdf' -f $FileName
-                            $DeckType= 1
                         }
                         Else {
                             $slidedeckFile = '{0}.pptx' -f $FileName
-                            $DeckType= 0
                         }
                         $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
 
