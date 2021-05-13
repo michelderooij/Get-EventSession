@@ -14,8 +14,8 @@
     Michel de Rooij 	        http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	            http://deploywindows.info
-    Scott Ladewig 	            http://ladewig.com
+    Mattias Fors 	        http://deploywindows.info
+    Scott Ladewig 	        http://ladewig.com
     Tim Pringle                 http://www.powershell.amsterdam
     Andy Race                   https://github.com/AndyRace
     Richard van Nieuwenhuizen
@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.5, March 1st, 2021
+    Version 3.51, May 14th, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -351,6 +351,7 @@
     3.47  Added Captions to PreferDirect command set
     3.50  Updated for Ignite 2021
           Small cleanup
+    3.51  Updated for Build 2021
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -463,7 +464,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('Ignite', 'Inspire','Build','Build2020','Inspire2020','Ignite2021', 'Ignite2020','Ignite2019','Ignite2018')]
+    [ValidateSet('Ignite', 'Ignite2021', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2020', 'Build', 'Build2021', 'Build2020')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -877,7 +878,17 @@ param(
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
         }
-        {'Build', 'Build2020' -contains $_} {
+        {'Build', 'Build2021' -contains $_} {
+            $Event= 'Build2021'
+            $EventAPIUrl= 'https://api.mybuild.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B21-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B21-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B21-{0}'
+            $Method= 'Post'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
+        }
+        {'Build2020' -contains $_} {
             $Event= 'Build2020'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -885,7 +896,7 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B20-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B20-{0}'
             $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
         }
         {'Build2019' -contains $_} {
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
