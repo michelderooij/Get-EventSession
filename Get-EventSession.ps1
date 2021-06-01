@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.51, May 14th, 2021
+    Version 3.52, June 1st, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -110,6 +110,12 @@
     When specified, for YouTube contents, downloads subtitles in provided languages by specifying one 
     or more 2-letter language codes seperated by a comma, e.g. en,fr,de,nl. Downloaded subtitles may be
     in VTT or SRT format. Again, the subtitles might not always be accurate due to machine translation.
+
+    .PARAMETER Language
+    When specified, for Azure Media hosted contents, downloads videos with specified audio stream where
+    available. Note that if you mix this with specifying your own Format parameter, you need to
+    add the language in the filter yourself, e.g. bestaudio[format_id*=German]. Default value 
+    is English, as otherwise YouTube will download the last specified audio stream from the manifest.
 
     .PARAMETER Keyword
     Only retrieve sessions with this keyword in their session description.
@@ -352,6 +358,8 @@
     3.50  Updated for Ignite 2021
           Small cleanup
     3.51  Updated for Build 2021
+    3.52  Updated NoRepeats maximum repeat check
+          Added Language parameter to support Azure Media Services hosted videos containing multiple audio tracks
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -499,6 +507,10 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [string[]]$Subs,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [string]$Language='English',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -1136,7 +1148,7 @@ param(
 
     If ($NoRepeats) {
         Write-Verbose ('Skipping repeated sessions')
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[1-3]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$'}
+        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[1-9]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$'}
     }
 
     If ($Keyword) {
@@ -1238,7 +1250,42 @@ param(
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
                                     $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-                                    If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format worstvideo+bestaudio/best') }
+
+                                    # Construct Format for this specific video, language and audio languages available
+                                    If ( $Format) {
+                                        $ThisFormat= $Format
+                                    } 
+                                    Else { 
+                                        $ThisFormat= 'worstvideo+bestaudio'
+                                    }
+ 
+                                    If( $SessionToGet.audioLanguage) {
+                                        # Session has multiple audio tracks
+                                        If( $SessionToGet.audioLanguage -icontains $Language) {
+                                            Write-Warning ('Multiple audio languages available; will download {0} audio stream' -f $Language)
+                                            $ThisLanguage= $Language
+                                        }
+                                        Else {
+                                            Write-Warning ('Requested language {0} not available; will use default stream {1}' -f $Language, $audioLanguage[0])
+                                            $ThisLanguage= $SessionToGet.audioLangue[0]
+                                        }
+
+                                        # Take specified Format apart so we can insert the language filter
+                                        If( $ThisFormat -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
+                                            If( $matches.audioparam) {
+                                                $ThisFormat= '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $audioparam, $matches.post
+                                            }
+                                            Else {
+                                                $ThisFormat= '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
+                                            }
+                                        }
+                                        Else {
+                                            Write-Warning ('Problem determining where to add language criteria in {0}, will leave filter as-is' -f $ThisFormat)
+                                        }
+                                    }
+
+                                    $Arg += ('--format {0}' -f $ThisFormat) 
+
                                 }
                                 Else {
                                     # Check for embedded YouTube 
