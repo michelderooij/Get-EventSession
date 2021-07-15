@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.52, June 1st, 2021
+    Version 3.54, July 15th, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -114,8 +114,8 @@
     .PARAMETER Language
     When specified, for Azure Media hosted contents, downloads videos with specified audio stream where
     available. Note that if you mix this with specifying your own Format parameter, you need to
-    add the language in the filter yourself, e.g. bestaudio[format_id*=German]. Default value 
-    is English, as otherwise YouTube will download the last specified audio stream from the manifest.
+    add the language in the filter yourself, e.g. bestaudio[format_id*=German]. Default value is English, 
+    as otherwise YouTube will download the last audio stream from the manifest (which often is Spanish).
 
     .PARAMETER Keyword
     Only retrieve sessions with this keyword in their session description.
@@ -360,6 +360,8 @@
     3.51  Updated for Build 2021
     3.52  Updated NoRepeats maximum repeat check
           Added Language parameter to support Azure Media Services hosted videos containing multiple audio tracks
+    3.53  Updated for Inspire 2021 
+    3.54  Fixed adding Language filter when complex Format is specified
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -472,7 +474,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('Ignite', 'Ignite2021', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2020', 'Build', 'Build2021', 'Build2020')]
+    [ValidateSet('Ignite', 'Ignite2021', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2021', 'Inspire2020', 'Build', 'Build2021', 'Build2020')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -871,7 +873,17 @@ param(
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2018-01-01T08:00:00-05:00","endDateTime":"2018-12-31T19:00:00-05:00"}}]}}'
         }
-        {'Inspire', 'Inspire2020' -contains $_} {
+        {'Inspire', 'Inspire2021' -contains $_} {
+            $Event= 'Inspire2021'
+            $EventAPIUrl= 'https://api.myinspire.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP21-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP21-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP21-{0}'
+            $Method= 'Post'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}}'
+        }
+        {'Inspire2020' -contains $_} {
             $Event= 'Inspire2020'
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -1270,18 +1282,25 @@ param(
                                             $ThisLanguage= $SessionToGet.audioLangue[0]
                                         }
 
-                                        # Take specified Format apart so we can insert the language filter
-                                        If( $ThisFormat -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
-                                            If( $matches.audioparam) {
-                                                $ThisFormat= '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $audioparam, $matches.post
+                                        # Take specified Format apart so we can insert the language filter per specification
+                                        $ThisFormatElem= $ThisFormat -Split ','
+                                        $NewFormat= [System.Collections.ArrayList]@()
+                                        ForEach( $Elem in $ThisFormatElem) {
+                                            If( $Elem -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
+                                                If( $matches.audioparam) {
+                                                    $NewFormatElem= '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $matches.audioparam, $matches.post
+                                                }
+                                                Else {
+                                                    $NewFormatElem= '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
+                                                }
                                             }
                                             Else {
-                                                $ThisFormat= '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
+                                                $NewFormatElem= $Elem
+                                                Write-Warning ('Problem determining where to add language criteria in {0}, will leave filter as-is' -f $NewFormat)
                                             }
+                                            $null= $NewFormat.Add( $NewFormatElem)
                                         }
-                                        Else {
-                                            Write-Warning ('Problem determining where to add language criteria in {0}, will leave filter as-is' -f $ThisFormat)
-                                        }
+                                        $ThisFormat= $NewFormat -Join ','
                                     }
 
                                     $Arg += ('--format {0}' -f $ThisFormat) 
