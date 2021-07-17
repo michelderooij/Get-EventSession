@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.54, July 15th, 2021
+    Version 3.55, July 17th, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -362,6 +362,7 @@
           Added Language parameter to support Azure Media Services hosted videos containing multiple audio tracks
     3.53  Updated for Inspire 2021 
     3.54  Fixed adding Language filter when complex Format is specified
+    3.55  Fixed audio stream selection when requested language is not available or only single audio stream is present
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1272,37 +1273,47 @@ param(
                                     }
  
                                     If( $SessionToGet.audioLanguage) {
-                                        # Session has multiple audio tracks
-                                        If( $SessionToGet.audioLanguage -icontains $Language) {
-                                            Write-Warning ('Multiple audio languages available; will download {0} audio stream' -f $Language)
-                                            $ThisLanguage= $Language
-                                        }
-                                        Else {
-                                            Write-Warning ('Requested language {0} not available; will use default stream {1}' -f $Language, $audioLanguage[0])
-                                            $ThisLanguage= $SessionToGet.audioLangue[0]
-                                        }
 
-                                        # Take specified Format apart so we can insert the language filter per specification
-                                        $ThisFormatElem= $ThisFormat -Split ','
-                                        $NewFormat= [System.Collections.ArrayList]@()
-                                        ForEach( $Elem in $ThisFormatElem) {
-                                            If( $Elem -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
-                                                If( $matches.audioparam) {
-                                                    $NewFormatElem= '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $matches.audioparam, $matches.post
-                                                }
-                                                Else {
-                                                    $NewFormatElem= '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
-                                                }
+                                        If( $SessionToGet.audioLanguage.Count -gt 1) {
+                                            # Session has multiple audio tracks
+                                            If( $SessionToGet.audioLanguage -icontains $Language) {
+                                                Write-Warning ('Multiple audio languages available; will download {0} audio stream' -f $Language)
+                                                $ThisLanguage= $Language
                                             }
                                             Else {
-                                                $NewFormatElem= $Elem
-                                                Write-Warning ('Problem determining where to add language criteria in {0}, will leave filter as-is' -f $NewFormat)
+                                                Write-Warning ('Requested language {0} not available; will use default stream' -f $Language, $SessionToGet.audioLanguage[0])
+                                                $ThisLanguage= $SessionToGet.audioLanguage[0]
                                             }
-                                            $null= $NewFormat.Add( $NewFormatElem)
-                                        }
-                                        $ThisFormat= $NewFormat -Join ','
-                                    }
 
+                                            # Take specified Format apart so we can insert the language filter per specification
+                                            $ThisFormatElem= $ThisFormat -Split ','
+                                            $NewFormat= [System.Collections.ArrayList]@()
+                                            ForEach( $Elem in $ThisFormatElem) {
+                                                If( $Elem -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
+                                                    If( $matches.audioparam) {
+                                                        $NewFormatElem= '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $matches.audioparam, $matches.post
+                                                    }
+                                                    Else {
+                                                        $NewFormatElem= '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
+                                                    }
+                                                }
+                                                Else {
+                                                    $NewFormatElem= $Elem
+                                                    Write-Warning ('Problem determining where to add language criteria in {0}, leaving criteria as-is' -f $NewFormat)
+                                                }
+                                                $null= $NewFormat.Add( $NewFormatElem)
+                                            }
+                                            $ThisFormat= $NewFormat -Join ','
+                                        }
+                                        Else {
+                                            # Only 1 Language available, so use default audio stream
+                                            Write-Warning ('Only single audio stream available, will use default audio stream')
+                                        }
+                                    }
+                                    Else {
+                                        # No multiple audio languages, use default audio stream
+                                        Write-Warning ('Multiple audio streams not available, will use default audio stream')
+                                    }
                                     $Arg += ('--format {0}' -f $ThisFormat) 
 
                                 }
