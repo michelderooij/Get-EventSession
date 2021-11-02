@@ -1260,7 +1260,7 @@ param(
                             }
                         }
 
-                        If( $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com)' ) {
+                        If( $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com|mediastream\.microsoft\.com)' ) {
                             Write-Verbose ('Checking hosted video link {0}' -f $downloadLink)
                             Try {
                                 $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
