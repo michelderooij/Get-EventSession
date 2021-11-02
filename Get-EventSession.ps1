@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.55, July 17th, 2021
+    Version 3.6, November 2nd, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -177,15 +177,12 @@
     .PARAMETER Event
     Specify what event to download sessions for. 
     Options are:
-    - Ignite                                            : Ignite events (current)
-    - Ignite2021, Ignite2020, Ignite2019, Ignite2018    : Ignite contents from that year
-    - Inspire                                           : Inspire contents (current)
-    - Inspire2020                                       : Inspire contents from that year
-    - Build                                             : Build contents (current)
-    - Build2020                                         : Build contents from that year
-
-    [ValidateSet('Ignite', 'Inspire','Build','Build2020','Inspire2020','Ignite2020','Ignite2019','Ignite2018')]
-
+    - Ignite                                                          : Ignite events (current)
+    - Ignite2021H2, Ignite2021H1, Ignite2020, Ignite2019, Ignite2018  : Ignite contents from that year/time
+    - Inspire                                                         : Inspire contents (current)
+    - Inspire2021, Inspire2020                                        : Inspire contents from that year
+    - Build                                                           : Build contents (current)
+    - Build2021,Build2020                                             : Build contents from that year
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -363,6 +360,7 @@
     3.53  Updated for Inspire 2021 
     3.54  Fixed adding Language filter when complex Format is specified
     3.55  Fixed audio stream selection when requested language is not available or only single audio stream is present
+    3.60  Added support for Ignite 2021; specify individual event using Ignite2021H1 or Ignite2021H2
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -475,7 +473,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('Ignite', 'Ignite2021', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2021', 'Inspire2020', 'Build', 'Build2021', 'Build2020')]
+    [ValidateSet('Ignite', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2021', 'Inspire2020', 'Build', 'Build2021', 'Build2020')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -832,8 +830,8 @@ param(
 
     # Determine what event URLs to use
     Switch( $Event) {
-        {'Ignite','Ignite2021' -contains $_} {
-            $Event= 'Ignite2021'
+        {'Ignite','Ignite2021H2' -contains $_} {
+            $Event= 'Ignite2021H2'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
@@ -841,7 +839,18 @@ param(
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG21-{0}'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}}'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}}'
+        }
+        {'Ignite2021H1' -contains $_} {
+            $Event= 'Ignite2021H1'
+            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG21-{0}'
+            $Method= 'Post'
+            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-03-01T08:00:00-05:00","endDateTime":"2021-03-31T19:00:00-05:00"}}]}}'
         }
         {'Ignite2020' -contains $_} {
             $Event= 'Ignite2020'
