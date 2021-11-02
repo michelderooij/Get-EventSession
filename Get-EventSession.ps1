@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.6, November 2nd, 2021
+    Version 3.61, November 2nd, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -360,7 +360,8 @@
     3.53  Updated for Inspire 2021 
     3.54  Fixed adding Language filter when complex Format is specified
     3.55  Fixed audio stream selection when requested language is not available or only single audio stream is present
-    3.60  Added support for Ignite 2021; specify individual event using Ignite2021H1 or Ignite2021H2
+    3.60  Added support for Ignite 2021; specify individual event using Ignite2021H1 (Spring) or Ignite2021H2 (Fall)
+    3.61  Added support for (direct) downloading of Ignite Fall 2021 videos
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -828,7 +829,8 @@ param(
         Write-Host "No proxy setting detected, using direct connection"
     }
 
-    # Determine what event URLs to use
+    # Determine what event URLs to use. 
+    # Use {0} for session code
     Switch( $Event) {
         {'Ignite','Ignite2021H2' -contains $_} {
             $Event= 'Ignite2021H2'
@@ -1234,6 +1236,7 @@ param(
                         $VideoInfo[ $InfoExist]++
                     }
                     else {
+                        $downloadLink= $null
                         If ( !( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) ) {
                             If( $PreferDirect -and (!( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)))) {
                                 $downloadLink = $SessionToGet.downloadVideoLink
@@ -1256,7 +1259,8 @@ param(
                                 }
                             }
                         }
-                        If( $downloadLink -match 'medius\.studios\.ms\/Embed\/Video' ) {
+
+                        If( $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com)' ) {
                             Write-Verbose ('Checking hosted video link {0}' -f $downloadLink)
                             Try {
                                 $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
