@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.62, November 3rd, 2021
+    Version 3.62, November 5th, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -364,6 +364,7 @@
     3.61  Added support for (direct) downloading of Ignite Fall 2021 videos
     3.62  Added Cleanup video leftover files if video file exists (to remove clutter)
           Changed lifetime of cached session information to 8 hours
+          Fixed post-download counts
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1122,6 +1123,7 @@ param(
     }
 
     $SessionsToGet = $data
+    $TotalNumberOfSessions= ($SessionsToGet | Measure-Object).Count
 
     If ($scheduleCode) {
         Write-Verbose ('Session code(s) specified: {0}' -f ($ScheduleCode -join ','))
@@ -1381,7 +1383,7 @@ param(
                         }
                         Else {
                             # Video not available or no link found
-                            $DeckInfo[ $InfoPlaceholder]++
+                            $VideoInfo[ $InfoPlaceholder]++
                         }
                     }
 
@@ -1503,6 +1505,8 @@ param(
                    
         }
 
+        $ProcessedSessions= $i
+
         Write-Progress -Id 1 -Completed -Activity "Finished processing session information"
 
         $JobsRunning= Get-BackgroundDownloadJobs
@@ -1528,9 +1532,10 @@ param(
 
         Write-Progress -Id 2 -Completed -Activity "Download jobs finished"  
 
+        Write-Host ('Selected {0} sessions out of a total of {1}' -f $ProcessedSessions, $TotalNumberOfSessions)
         Write-Host ('Downloaded {0} slide decks and {1} videos.' -f $DeckInfo[ $InfoDownload], $VideoInfo[ $InfoDownload])
-        Write-Host ('{0} slide decks and {1} videos are not yet available.' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
-        Write-Host ('{0} slide decks and {1} videos were skipped as they are already present.' -f $DeckInfo[ $InfoExist], $VideoInfo[ $InfoExist])
+        Write-Host ('Not (yet) available: {0} slide decks and {1} videos' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
+        Write-Host ('Skipped {0} slide decks and {1} videos as they were already downloaded.' -f $DeckInfo[ $InfoExist], $VideoInfo[ $InfoExist])
     }
 
 
