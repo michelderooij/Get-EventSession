@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.61, November 2nd, 2021
+    Version 3.62, November 3rd, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -362,6 +362,8 @@
     3.55  Fixed audio stream selection when requested language is not available or only single audio stream is present
     3.60  Added support for Ignite 2021; specify individual event using Ignite2021H1 (Spring) or Ignite2021H2 (Fall)
     3.61  Added support for (direct) downloading of Ignite Fall 2021 videos
+    3.62  Added Cleanup video leftover files if video file exists (to remove clutter)
+          Changed lifetime of cached session information to 8 hours
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -524,8 +526,8 @@ param(
 
 )
 
-    # Max age for cache, older than this # days will force info refresh
-    $MaxCacheAge = 1
+    # Max age for cache, older than this # hours will force info refresh
+    $MaxCacheAge = 8
 
     $YouTubeDL = Join-Path $PSScriptRoot 'youtube-dl.exe'
     $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
@@ -568,12 +570,12 @@ param(
     }
 
     Function Clean-VideoLeftovers ( $videofile) {
-        $masks= '.mp4.*.part', '.mp4.f*.ytdl'
-	    ForEach( $mask in $masks) {
+        $masks= '.*.mp4.part', '.*.mp4.ytdl'
+	ForEach( $mask in $masks) {
             $FileMask= $videofile -replace '.mp4', $mask
             Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach-Object {
                 Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
-		        Remove-Item -Path $_.fullname -Force -ErrorAction SilentlyContinue
+	        Remove-Item -Path $_.fullname -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -619,7 +621,7 @@ param(
                     }
                 }
 
-		        If( $isJobSuccess -and (Test-Path -Path $job.file)) {
+		If( $isJobSuccess -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
                     # Do we need to adjust timestamp
                     If( $job.Timestamp) {
@@ -830,7 +832,7 @@ param(
     }
 
     # Determine what event URLs to use. 
-    # Use {0} for session code
+    # Use {0} for session code (eg BRK123), {1} for session id (guid)
     Switch( $Event) {
         {'Ignite','Ignite2021H2' -contains $_} {
             $Event= 'Ignite2021H2'
@@ -838,7 +840,7 @@ param(
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG21-{0}'
+            $SlidedeckUrl= 'hhttps://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}}'
@@ -1049,7 +1051,7 @@ param(
     $SessionCacheValid = $false
     If ( Test-Path $SessionCache) {
         Try {
-            If ( (Get-childItem -Path $SessionCache).LastWriteTime -ge (Get-Date).AddDays( - $MaxCacheAge)) {
+            If ( (Get-childItem -Path $SessionCache).LastWriteTime -ge (Get-Date).AddHours( - $MaxCacheAge)) {
                 Write-Host 'Session cache file found, reading session information'
                 $data = Import-CliXml -Path $SessionCache -ErrorAction SilentlyContinue
                 $SessionCacheValid = $true
@@ -1234,6 +1236,8 @@ param(
                     if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
                         Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
                         $VideoInfo[ $InfoExist]++
+                        # Clean video leftovers
+                        Clean-VideoLeftovers $vidFullFile
                     }
                     else {
                         $downloadLink= $null
