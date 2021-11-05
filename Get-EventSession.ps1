@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.62, November 5th, 2021
+    Version 3.63, November 5th, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -365,6 +365,7 @@
     3.62  Added Cleanup video leftover files if video file exists (to remove clutter)
           Changed lifetime of cached session information to 8 hours
           Fixed post-download counts
+    3.63  Fixed keyword filtering
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1181,7 +1182,7 @@ param(
 
     If ($Keyword) {
         $SessionsToGetTemp= [System.Collections.ArrayList]@()
-        ForEach( $item in $Title) {
+        ForEach( $item in $Keyword) {
             Write-Verbose ('Description keyword(s) specified: {0}' -f $item)
             $SessionsToGet | Where-Object {$_.description -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
         }
