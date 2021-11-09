@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.63, November 5th, 2021
+    Version 3.64, November 9th, 2021
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -366,6 +366,7 @@
           Changed lifetime of cached session information to 8 hours
           Fixed post-download counts
     3.63  Fixed keyword filtering
+    3.64  Changed filter so that default language is picked when specified language is not available
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -525,7 +526,6 @@ param(
 
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
     [switch]$PreferDirect
-
 )
 
     # Max age for cache, older than this # hours will force info refresh
@@ -1297,7 +1297,7 @@ param(
                                         If( $SessionToGet.audioLanguage.Count -gt 1) {
                                             # Session has multiple audio tracks
                                             If( $SessionToGet.audioLanguage -icontains $Language) {
-                                                Write-Warning ('Multiple audio languages available; will download {0} audio stream' -f $Language)
+                                                Write-Warning ('Multiple audio languages available; will try downloading {0} audio stream' -f $Language)
                                                 $ThisLanguage= $Language
                                             }
                                             Else {
@@ -1323,7 +1323,10 @@ param(
                                                 }
                                                 $null= $NewFormat.Add( $NewFormatElem)
                                             }
-                                            $ThisFormat= $NewFormat -Join ','
+
+                                            # With language filters determined, recreate filter and add whole non-language specific qualifiers as next best 
+                                            $ThisFormat= ($NewFormat -Join ','), $ThisFormat -Join ','
+
                                         }
                                         Else {
                                             # Only 1 Language available, so use default audio stream
