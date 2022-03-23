@@ -842,7 +842,7 @@ param(
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
-            $SlidedeckUrl= 'hhttps://medius.microsoft.com/video/asset/PPT/{0}'
+            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}}'
