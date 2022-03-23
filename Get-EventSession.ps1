@@ -870,7 +870,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
         }
         {'Ignite2019' -contains $_} {
-            $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
+            $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG19-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG19-{0}'
@@ -880,7 +880,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
         }
         'Ignite2018' {
-            $EventAPIUrl= 'https://api-myignite.techcommunity.microsoft.com'
+            $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/videos/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG18-{0}'
