@@ -1,4 +1,4 @@
-# Get-IgniteSession
+# Get-EventSession
 
 ## Getting Started
 
