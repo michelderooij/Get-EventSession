@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.64, November 9th, 2021
+    Version 3.65, May 25th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -182,7 +182,7 @@
     - Inspire                                                         : Inspire contents (current)
     - Inspire2021, Inspire2020                                        : Inspire contents from that year
     - Build                                                           : Build contents (current)
-    - Build2021,Build2020                                             : Build contents from that year
+    - Build2022,Build2021,Build2020                                   : Build contents from that year
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -202,6 +202,10 @@
     .PARAMETER Timestamp
     Tells script to change the timestamp of the downloaded media files to match the original 
     session timestamp, when available.
+
+    .PARAMETER Locale
+    Specifies language locale to filter localized sessions on. When omitted, all sessions are processed. 
+    For Build 2022, the following locales are available: en-US, de-DE, fr-FR, es-CO, ja-JP, zh-CN.
 
     .REVISION
     2.0   Initial (Mattias Fors)
@@ -367,6 +371,9 @@
           Fixed post-download counts
     3.63  Fixed keyword filtering
     3.64  Changed filter so that default language is picked when specified language is not available
+    3.65  Updated for Build 2022
+          Added Locale parameter to filter local content
+          Fixed applying timestamp due to DateTime formatting changes
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -479,7 +486,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('Ignite', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2021', 'Inspire2020', 'Build', 'Build2021', 'Build2020')]
+    [ValidateSet('Ignite', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2021', 'Inspire2020', 'Build', 'Build2022', 'Build2021', 'Build2020')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -518,6 +525,12 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [string]$Language='English',
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [ValidateSet('en-US', 'de-DE', 'fr-FR', 'es-CO', 'ja-JP', 'zh-CN')]
+    [string]$Locale='',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -630,8 +643,8 @@ param(
                        #Set timestamp
                        $FileObj= Get-ChildItem -Path $job.file
                        Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
-                       $FileObj.CreationTime= $job.Timestamp
-                       $FileObj.LastWriteTime= $job.Timestamp
+                       $FileObj.CreationTime= Get-Date -Date $job.Timestamp
+                       $FileObj.LastWriteTime= Get-Date -Date $job.Timestamp
                     }
                     If( $job.Type -eq 2) {
                         # Clean video leftovers
@@ -918,7 +931,17 @@ param(
             $Method= 'Post'
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
         }
-        {'Build', 'Build2021' -contains $_} {
+        {'Build', 'Build2022' -contains $_} {
+            $Event= 'Build2022'
+            $EventAPIUrl= 'https://api.mybuild.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B21-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B21-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B21-{0}'
+            $Method= 'Post'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
+        }
+        {'Build2021' -contains $_} {
             $Event= 'Build2021'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -1164,6 +1187,11 @@ param(
     If ($Topic) {
         Write-Verbose ('Topic specified: {0}' -f $Topic)
         $SessionsToGet = $SessionsToGet | Where-Object { $_.topic | Where-Object {$_ -ilike $Topic }}
+    }
+
+    If ($Locale) {
+        Write-Verbose ('Locale specified: {0}' -f $Locale)
+        $SessionsToGet = $SessionsToGet | Where-Object { $_.LangLocale | Where-Object {$_ -ilike $Locale }}
     }
 
     If ($Title) {
