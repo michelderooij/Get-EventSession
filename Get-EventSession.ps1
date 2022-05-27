@@ -378,6 +378,7 @@
           Default Locale set to en-US
     3.67  Added removal of placeholder deck/video/vtt files
     3.68  Fixed caching when specifying Event without year tag, eg. Build vs Build2022
+          Removed default Locale as that would mess things up for Events where data does not contain that information (yet).
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -534,7 +535,7 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [ValidateSet('de-DE','zh-CN','en-US','ja-JP','es-CO','fr-FR')]
-    [string[]]$Locale='en-US',
+    [string[]]$Locale='',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
