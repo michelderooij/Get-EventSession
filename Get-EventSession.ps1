@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.65, May 25th, 2022
+    Version 3.67, May 27th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -204,8 +204,8 @@
     session timestamp, when available.
 
     .PARAMETER Locale
-    Specifies language locale to filter localized sessions on. When omitted, all sessions are processed. 
-    For Build 2022, the following locales are available: en-US, de-DE, fr-FR, es-CO, ja-JP, zh-CN.
+    Specifies local events to filter sessions on. When omitted, all sessions are processed. 
+    For Build 2022, the following locales are available: Global, Germany, LATAM, France, UK and Japan.
 
     .REVISION
     2.0   Initial (Mattias Fors)
@@ -374,6 +374,9 @@
     3.65  Updated for Build 2022
           Added Locale parameter to filter local content
           Fixed applying timestamp due to DateTime formatting changes
+    3.66  Fixed filtering on langLocale
+          Default Locale set to en-US
+    3.67  Added removal of placeholder deck/video/vtt files
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -529,8 +532,8 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
-    [ValidateSet('en-US', 'de-DE', 'fr-FR', 'es-CO', 'ja-JP', 'zh-CN')]
-    [string]$Locale='',
+    [ValidateSet('de-DE','zh-CN','en-US','ja-JP','es-CO','fr-FR')]
+    [string[]]$Locale='en-US',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -638,14 +641,41 @@ param(
 
 		If( $isJobSuccess -and (Test-Path -Path $job.file)) {
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
-                    # Do we need to adjust timestamp
-                    If( $job.Timestamp) {
-                       #Set timestamp
-                       $FileObj= Get-ChildItem -Path $job.file
-                       Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
-                       $FileObj.CreationTime= Get-Date -Date $job.Timestamp
-                       $FileObj.LastWriteTime= Get-Date -Date $job.Timestamp
+                    $FileObj= Get-ChildItem -Path $job.file
+                    If( $FileObj.Length -eq 42) {
+                        If( (Get-Content -Path $job.File) -eq 'No resource file is available for download') {
+                            Write-Warning ('Removing {0} placeholder file {1}' -f $job.scheduleCode, $job.file)
+                            Remove-Item -Path $job.file -Force
+                            Switch( $job.Type) {
+                                1 {
+                                    # Placeholder Deck file downloaded
+                                    $DeckInfo[ $InfoDownload]--
+                                    $DeckInfo[ $InfoPlaceholder]++
+                                }
+                                2 {
+                                    # Placeholder Video file downloaded
+                                    $VideoInfo[ $InfoDownload]--
+                                    $VideoInfo[ $InfoPlaceholder]++
+                                }
+                                3 {
+                                    # Placeholder VTT file downloaded
+                                }
+                            }
+                        }
+                        Else {
+                            # Placeholder different text?
+                        }
                     }
+                    Else {
+                        # Do we need to adjust timestamp
+                        If( $job.Timestamp) {
+                            #Set timestamp
+                            Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
+                            $FileObj.CreationTime= Get-Date -Date $job.Timestamp
+                            $FileObj.LastWriteTime= Get-Date -Date $job.Timestamp
+                        }
+                    }
+
                     If( $job.Type -eq 2) {
                         # Clean video leftovers
                         Clean-VideoLeftovers $job.file
@@ -1190,8 +1220,12 @@ param(
     }
 
     If ($Locale) {
-        Write-Verbose ('Locale specified: {0}' -f $Locale)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.LangLocale | Where-Object {$_ -ilike $Locale }}
+        Write-Verbose ('Locale(s) specified: {0}' -f ($Locale -join ','))
+        $SessionsToGetTemp= [System.Collections.ArrayList]@()
+        ForEach( $item in $Locale) {
+            $SessionsToGet | Where-Object {$_.langLocale -ieq $item } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
+        }
+        $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
     }
 
     If ($Title) {
