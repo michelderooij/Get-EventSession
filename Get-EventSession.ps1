@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.67, May 27th, 2022
+    Version 3.68, May 27th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -377,6 +377,7 @@
     3.66  Fixed filtering on langLocale
           Default Locale set to en-US
     3.67  Added removal of placeholder deck/video/vtt files
+    3.68  Fixed caching when specifying Event without year tag, eg. Build vs Build2022
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -549,7 +550,6 @@ param(
 
     $YouTubeDL = Join-Path $PSScriptRoot 'youtube-dl.exe'
     $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
-    $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $Event)
 
     $YTlink = 'https://github.com/ytdl-org/youtube-dl/releases/download/2019.11.05/youtube-dl.exe'
     $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
@@ -1107,6 +1107,7 @@ param(
         }
     }
 
+    $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $Event)
     $SessionCacheValid = $false
     If ( Test-Path $SessionCache) {
         Try {
