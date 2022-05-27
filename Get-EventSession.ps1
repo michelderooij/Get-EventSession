@@ -640,9 +640,10 @@ param(
                 }
 
 		If( $isJobSuccess -and (Test-Path -Path $job.file)) {
-                    Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
                     $FileObj= Get-ChildItem -Path $job.file
                     If( $FileObj.Length -eq 42) {
+
+                        # Placeholder downloaded
                         If( (Get-Content -Path $job.File) -eq 'No resource file is available for download') {
                             Write-Warning ('Removing {0} placeholder file {1}' -f $job.scheduleCode, $job.file)
                             Remove-Item -Path $job.file -Force
@@ -667,6 +668,9 @@ param(
                         }
                     }
                     Else {
+
+                        Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
+
                         # Do we need to adjust timestamp
                         If( $job.Timestamp) {
                             #Set timestamp
@@ -1286,7 +1290,7 @@ param(
             Else {
                 $SessionTime= $null
             }
-            Write-Host ('Processing info session {0} ({1})' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'))
+            Write-Host ('Processing info session {0} from {1} [{2}]' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'), $SessionToGet.langLocale)
             If(!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
                 Write-Verbose ('Skipping session {0}: Didn''t take place yet' -f $SessionToGet.sessioncode)
             }
