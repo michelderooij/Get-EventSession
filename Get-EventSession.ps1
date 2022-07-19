@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.68, May 27th, 2022
+    Version 3.69, July 19th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire and Build session information and available 
@@ -379,6 +379,7 @@
     3.67  Added removal of placeholder deck/video/vtt files
     3.68  Fixed caching when specifying Event without year tag, eg. Build vs Build2022
           Removed default Locale as that would mess things up for Events where data does not contain that information (yet).
+    3.69  Updated for Inspire 2022
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -491,7 +492,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('Ignite', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2021', 'Inspire2020', 'Build', 'Build2022', 'Build2021', 'Build2020')]
+    [ValidateSet('Ignite', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2022', 'Inspire2021', 'Inspire2020', 'Build', 'Build2022', 'Build2021', 'Build2020')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -937,7 +938,17 @@ param(
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2018-01-01T08:00:00-05:00","endDateTime":"2018-12-31T19:00:00-05:00"}}]}}'
         }
-        {'Inspire', 'Inspire2021' -contains $_} {
+        {'Inspire', 'Inspire2022' -contains $_} {
+            $Event= 'Inspire2022'
+            $EventAPIUrl= 'https://api.inspire.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP22-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP22-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP22-{0}'
+            $Method= 'Post'
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2022-07-19T08:00:00-05:00","endDateTime":"2022-07-20T19:00:00-05:00"}}]}}'
+        }
+        {'Inspire2021' -contains $_} {
             $Event= 'Inspire2021'
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
