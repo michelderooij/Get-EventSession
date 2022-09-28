@@ -1,6 +1,6 @@
 ﻿<#
     .SYNOPSIS
-    Script to assist in downloading Microsoft Ignite, Inspire or Build contents or return 
+    Script to assist in downloading Microsoft Ignite, Inspire, Build or MEC contents, or return 
     session information for easier digesting. Video downloads will leverage external utilities, 
     depending on the used video format. To prevent retrieving session information for every run,
     the script will cache session information.
@@ -23,10 +23,10 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.69, July 19th, 2022
+    Version 3.7, September 28th, 2022
 
     .DESCRIPTION
-    This script can download Microsoft Ignite, Inspire and Build session information and available 
+    This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
     slidedecks and videos using MyIgnite/MyInspire/MyBuild techcommunity portal.
 
     Video downloads will leverage one or more utilities:
@@ -38,8 +38,10 @@
       The utility is used to bind the seperate video and audio streams of Azure Media Services files 
       in single files.
 
-    When you are interested in retrieving session information only, you can use
-    the InfoOnly switch.
+    When you are interested in retrieving session information only, you can use the InfoOnly switch.
+
+    Note: MEC sessions are not published through the usual API, so I worked around it by digesting its playlist as
+    if it were a catalog. Consequence is that filtering might be limited, eg. no Category or Product etc.
 
     .REQUIREMENTS
     The youtube-dl.exe utility requires Visual C++ 2010 redist package
@@ -180,9 +182,10 @@
     - Ignite                                                          : Ignite events (current)
     - Ignite2021H2, Ignite2021H1, Ignite2020, Ignite2019, Ignite2018  : Ignite contents from that year/time
     - Inspire                                                         : Inspire contents (current)
-    - Inspire2021, Inspire2020                                        : Inspire contents from that year
+    - Inspire2022,Inspire2021, Inspire2020                            : Inspire contents from that year
     - Build                                                           : Build contents (current)
     - Build2022,Build2021,Build2020                                   : Build contents from that year
+    - MEC                                                             : MEC contents
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -380,6 +383,7 @@
     3.68  Fixed caching when specifying Event without year tag, eg. Build vs Build2022
           Removed default Locale as that would mess things up for Events where data does not contain that information (yet).
     3.69  Updated for Inspire 2022
+    3.70  Added MEC
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -492,7 +496,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('Ignite', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2022', 'Inspire2021', 'Inspire2020', 'Build', 'Build2022', 'Build2021', 'Build2020')]
+    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2022', 'Inspire2021', 'Inspire2020', 'Build', 'Build2022', 'Build2021', 'Build2020')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -548,7 +552,7 @@ param(
 )
 
     # Max age for cache, older than this # hours will force info refresh
-    $MaxCacheAge = 8
+    $MaxCacheAge = 24
 
     $YouTubeDL = Join-Path $PSScriptRoot 'youtube-dl.exe'
     $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
@@ -885,61 +889,80 @@ param(
     # Determine what event URLs to use. 
     # Use {0} for session code (eg BRK123), {1} for session id (guid)
     Switch( $Event) {
-        {'Ignite','Ignite2021H2' -contains $_} {
+        {'MEC','MEC2022' -contains $_} {
+            $Event= 'MEC2022'
+            $EventType='YT'
+            $EventYTUrl= 'https://www.youtube.com/playlist?list=PLxdTT6-7g--2POisC5XcDQxUXHhWsoZc9'
+            $EventLocale= 'en-us'
+        }
+        {'Ignite','Ignite2022' -contains $_} {
+            $Event= 'Ignite2022'
+            $EventType='API'
+            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG22-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG22-{0}'
+            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
+            $Method= 'Post'
+            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2022-10-12T08:00:00-05:00","endDateTime":"2022-10-14T19:00:00-05:00"}}]}}'
+        }
+        {'Ignite2021H2' -contains $_} {
             $Event= 'Ignite2021H2'
+            $EventType='API'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
             $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}}'
         }
         {'Ignite2021H1' -contains $_} {
             $Event= 'Ignite2021H1'
+            $EventType='API'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG21-{0}'
             $Method= 'Post'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-03-01T08:00:00-05:00","endDateTime":"2021-03-31T19:00:00-05:00"}}]}}'
         }
         {'Ignite2020' -contains $_} {
             $Event= 'Ignite2020'
+            $EventType='API'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG20-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG20-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG20-{0}'
             $Method= 'Post'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
         }
         {'Ignite2019' -contains $_} {
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventType='API'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG19-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG19-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2019/{0}.pptx'
             $Method= 'Post'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
         }
         'Ignite2018' {
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventType='API'
             $EventSearchURI= 'api/videos/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG18-{0}'
             $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
             $Method= 'Post'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2018-01-01T08:00:00-05:00","endDateTime":"2018-12-31T19:00:00-05:00"}}]}}'
         }
         {'Inspire', 'Inspire2022' -contains $_} {
             $Event= 'Inspire2022'
+            $EventType='API'
             $EventAPIUrl= 'https://api.inspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP22-{0}'
@@ -950,6 +973,7 @@ param(
         }
         {'Inspire2021' -contains $_} {
             $Event= 'Inspire2021'
+            $EventType='API'
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP21-{0}'
@@ -960,6 +984,7 @@ param(
         }
         {'Inspire2020' -contains $_} {
             $Event= 'Inspire2020'
+            $EventType='API'
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP20-{0}'
@@ -970,6 +995,7 @@ param(
         }
         {'Inspire2019' -contains $_} {
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
+            $EventType='API'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP19-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP19-{0}'
@@ -979,6 +1005,7 @@ param(
         }
         {'Build', 'Build2022' -contains $_} {
             $Event= 'Build2022'
+            $EventType='API'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B21-{0}'
@@ -989,6 +1016,7 @@ param(
         }
         {'Build2021' -contains $_} {
             $Event= 'Build2021'
+            $EventType='API'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B21-{0}'
@@ -999,6 +1027,7 @@ param(
         }
         {'Build2020' -contains $_} {
             $Event= 'Build2020'
+            $EventType='API'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B20-{0}'
@@ -1009,6 +1038,7 @@ param(
         }
         {'Build2019' -contains $_} {
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
+            $EventType='API'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B19-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B19-{0}'
@@ -1139,58 +1169,138 @@ param(
 
     If ( -not( $SessionCacheValid)) {
 
-        Write-Host 'Reading session catalog'
-        $web = @{
-            contentType = 'application/json; charset=utf-8'
-            userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
-            requestUri  = [uri]('{0}/{1}' -f $EventAPIUrl, $EventSearchURI)
-            itemsPerPage= 100
-        }
+      Switch($EventType) {
+        'API' {
 
-        Try {
-            $SearchBody= $EventSearchBody -f '12', '1'
-            Write-Verbose ('Using URI {0}' -f $web.requestUri)
-            $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
-            $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
-        }
-        Catch {
-            Throw ('Problem retrieving session catalog: {0}' -f $error[0])
-        }
-        $sessiondata = ConvertFrom-Json -InputObject $searchResults
-        [int32] $sessionCount = $sessiondata.total
-        [int32] $remainder = 0
- 
-        $PageCount = [System.Math]::DivRem($sessionCount, $web.itemsPerPage, [ref]$remainder)
-        If ($remainder -gt 0) {
-            $PageCount ++
-        }
+            Write-Host ('Reading {0} session catalog' -f $Event)
+            $web = @{
+                contentType = 'application/json; charset=utf-8'
+                userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
+                requestUri  = [uri]('{0}/{1}' -f $EventAPIUrl, $EventSearchURI)
+                itemsPerPage= 100
+            }
 
-        Write-Host ('Reading information for {0} sessions' -f $sessionCount)
-        $data = @()
-        $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
-        $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
-        For ($page = 1; $page -le $PageCount; $page++) {
-            Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
-            $SearchBody= $EventSearchBody -f $web.itemsPerPage, $page
-            $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
-            $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
+            Try {
+                $SearchBody= $EventSearchBody -f '12', '1'
+                Write-Verbose ('Using URI {0}' -f $web.requestUri)
+                $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
+                $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
+            }
+            Catch {
+                Throw ('Problem retrieving session catalog: {0}' -f $error[0])
+            }
             $sessiondata = ConvertFrom-Json -InputObject $searchResults
-            ForEach ( $Item in $sessiondata.data) {
-                $object = $Item -as [PSCustomObject]
-                $object.PSObject.Properties | ForEach-Object {
-                    if ($_.Name -eq 'speakerNames') { $object.($_.Name) = @($_.Value) }
-                    if ($_.Name -eq 'products') { $object.($_.Name) = @($_.Value -replace [char]9, '/') }
-                    if ($_.Name -eq 'contentCategory') { $object.($_.Name) = @(($_.Value -replace [char]9, '/') -replace ' / ', '/') }
+            [int32] $sessionCount = $sessiondata.total
+            [int32] $remainder = 0
+ 
+            $PageCount = [System.Math]::DivRem($sessionCount, $web.itemsPerPage, [ref]$remainder)
+            If ($remainder -gt 0) {
+                $PageCount++
+            }
+
+            Write-Host ('Reading information for {0} sessions' -f $sessionCount)
+            $data = [System.Collections.ArrayList]@()
+            $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
+            $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
+            For ($page = 1; $page -le $PageCount; $page++) {
+                Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
+                $SearchBody= $EventSearchBody -f $web.itemsPerPage, $page
+                $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
+                $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
+                $sessiondata = ConvertFrom-Json -InputObject $searchResults
+                ForEach ( $Item in $sessiondata.data) {
+                    $object = $Item -as [PSCustomObject]
+                    $object.PSObject.Properties | ForEach-Object {
+                        if ($_.Name -eq 'speakerNames') { $object.($_.Name) = @($_.Value) }
+                        if ($_.Name -eq 'products') { $object.($_.Name) = @($_.Value -replace [char]9, '/') }
+                        if ($_.Name -eq 'contentCategory') { $object.($_.Name) = @(($_.Value -replace [char]9, '/') -replace ' / ', '/') }
+                    }
+                    Write-Verbose ('Adding info for session {0}' -f $Object.sessionCode)
+                    $object.PSObject.TypeNames.Insert(0, 'Session.Information')
+                    $object | Add-Member MemberSet PSStandardMembers $PSStandardMembers
+                    $data.Add( $object) | Out-Null
                 }
-                Write-Verbose ('Adding info for session {0}' -f $Object.sessionCode)
-                $object.PSObject.TypeNames.Insert(0, 'Session.Information')
-                $object | Add-Member MemberSet PSStandardMembers $PSStandardMembers
-                [array]$data += $object
+            }
+
+            Write-Progress -Id 1 -Completed -Activity "Finished retrieval of catalog" 
+        }
+            
+        'YT' {
+            # YouTube published - Use youtube-dl to download the playlist as JSON so we can parse it to 'expected format'
+            Write-Host ('Reading {0} playlist information (might take a while) ..' -f $Event)
+            $data = [System.Collections.ArrayList]@()
+            $Arg= [System.Collections.ArrayList]@()
+            If ( $ProxyURL) { 
+                $Arg.Add( '--proxy "{0}"' -f $ProxyURL) | Out-Null
+            }
+            $Arg.Add( '--socket-timeout 90') | Out-Null
+            $Arg.Add( '--retries 15') | Out-Null
+            $Arg.Add( '--dump-json') | Out-Null
+            $Arg.Add( ('"{0}"' -f $EventYTUrl)) | Out-Null
+
+            $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+            $pinfo.FileName = $YouTubeDL
+            $pinfo.RedirectStandardError = $true
+            $pinfo.RedirectStandardOutput = $true
+            $pinfo.UseShellExecute = $false
+            $pinfo.Arguments = $Arg
+            $p = New-Object System.Diagnostics.Process
+            $p.StartInfo = $pinfo
+            $p.Start() | Out-Null
+            $stdout = $p.StandardOutput.ReadToEnd()
+            $stderr = $p.StandardError.ReadToEnd()
+            $p.WaitForExit()
+
+            If ($p.ExitCode -ne 0) {
+                Throw ('Problem running youtube-dl.exe: {0}' -f $stderr)
+            }
+
+            Try {
+                Write-Host ('Converting from Json ..')
+                # Trim any trailing empty lines, convert single string with line-breaks to array for JSON conversion
+                $JsonData= ($stdout.Trim([System.Environment]::Newline) -Split "`n") | ConvertFrom-Json
+            }
+            Catch {
+                Throw( 'Output does not seem to be proper JSON format, see {0}' -f $TempJsonFile)
+            }
+
+            ForEach( $Item in $JsonData) {
+
+                $Item.Description -match '^(?<Description>.*)([\r\n]+(Speakers):(?<Speakers>.*))?$' | Out-Null
+
+                $object = [PSCustomObject]@{
+                    sessionCode= [string]($Item.playlist_index)
+                    SessionType= 'On-Demand'
+                    Title= $Item.Title
+                    description= $matches.Description.Trim()
+                    onDemand= $Item.webpage_url
+                    Views= $Item.view_count
+                    Likes= $Item.like_count
+                    Duration= $Item.duration
+                    langLocale= $EventLocale
+                    SolutionArea= $Item.Tags
+                    contentCategory= $Item.categories
+                    startDateTime= [Datetime]::ParseExact( $Item.upload_date, 'yyyyMMdd', $null)
+                    onDemandThumbnail= $Item.thumbnail
+                }
+                If( $matches.Speakers) {
+                    $TempSpeakers= [System.Collections.ArrayList]@()
+                    $matches.Speakers -Split ';' | ForEach-Object { $TempSpeakers.Add( $_.Trim() ) |Out-Null }
+                    $object | Add-Member -Name Speakers -MemberType NoteProperty -Value $TempSpeakers
+                }
+                Write-Verbose ('Adding info for session {0}' -f $Item.Title)
+                $data.Add( $object) | Out-Null
             }
         }
-        Write-Progress -Id 1 -Completed -Activity "Finished retrieval of Ignite Session Catalog" 
-        Write-Host 'Storing session information'
-        $data | Sort-Object -Property sessionCode -Unique | Export-CliXml -Encoding Unicode -Force -Path $SessionCache
+
+        default {
+          Throw( 'Unknown event catalog type {0}' -f $EventType)
+        }
+      }
+
+      Write-Host 'Storing session information'
+      $data | Sort-Object -Property sessionCode -Unique | Export-CliXml -Encoding Unicode -Force -Path $SessionCache
+
     }
 
     $SessionsToGet = $data
@@ -1295,7 +1405,12 @@ param(
 
             $i++
             Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
-            $FileName = Fix-FileName ('{0} - {1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
+            If( $SessionToGet.sessionCode) {
+                $FileName = Fix-FileName ('{0}-{1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
+            }
+            Else {
+                $FileName = Fix-FileName ('{0}' -f $SessionToGet.title.Trim())
+            }
             If( $Timestamp -and !([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
                 # Get session localized timestamp, undoing TZ adjustments
                 $SessionTime= [System.TimeZoneInfo]::ConvertTime((Get-Date -Date $SessionToGet.startDateTime).ToUniversalTime(), $myTimeZone ).toString('g')
