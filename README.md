@@ -2,7 +2,7 @@
 
 ## Getting Started
 
-Script to assist in downloading Microsoft Ignite, Inspire or Build contents or return 
+Script to assist in downloading Microsoft Ignite, Inspire, Build or MEC contents or return 
 session information for easier digesting. 
 
 Video downloads will leverage a utility which can be downloaded
