@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.71, September 29th, 2022
+    Version 3.72, September 29th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
@@ -385,6 +385,7 @@
     3.69  Updated for Inspire 2022
     3.70  Added MEC support
     3.71  Fixed MEC description & speaker parsing
+    3.72  Fixed usage of format & subs arguments for direct YouTube downloads
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1580,6 +1581,9 @@ param(
                             $Arg+= '--socket-timeout 90'
                             $Arg+= '--no-check-certificate'                            
                             $Arg+= '--retries 15'
+
+                            If ( $Format) { $Arg += ('--format {0}' -f $Format) } 
+                            If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
 
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
                             Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
