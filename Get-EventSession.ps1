@@ -14,8 +14,8 @@
     Michel de Rooij 	        http://eightwone.com
 
     Special thanks to:
-    Mattias Fors 	        http://deploywindows.info
-    Scott Ladewig 	        http://ladewig.com
+    Mattias Fors 	            http://deploywindows.info
+    Scott Ladewig 	            http://ladewig.com
     Tim Pringle                 http://www.powershell.amsterdam
     Andy Race                   https://github.com/AndyRace
     Richard van Nieuwenhuizen
@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.73, September 29th, 2022
+    Version 3.74, September 29th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
@@ -388,6 +388,7 @@
     3.72  Fixed usage of format & subs arguments for direct YouTube downloads
     3.73  Added MEC slide deck support
           Fixed MEC parsing of description
+    3.74  Fixed MEC processing of multi-line descriptions 
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -894,13 +895,13 @@ param(
     # Use {0} for session code (eg BRK123), {1} for session id (guid)
     Switch( $Event) {
         {'MEC','MEC2022' -contains $_} {
-            $Event= 'MEC2022'
+            $EventName= 'MEC2022'
             $EventType='YT'
             $EventYTUrl= 'https://www.youtube.com/playlist?list=PLxdTT6-7g--2POisC5XcDQxUXHhWsoZc9'
             $EventLocale= 'en-us'
         }
         {'Ignite','Ignite2022' -contains $_} {
-            $Event= 'Ignite2022'
+            $EventName= 'Ignite2022'
             $EventType='API'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -912,7 +913,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2022-10-12T08:00:00-05:00","endDateTime":"2022-10-14T19:00:00-05:00"}}]}}'
         }
         {'Ignite2021H2' -contains $_} {
-            $Event= 'Ignite2021H2'
+            $EventName= 'Ignite2021H2'
             $EventType='API'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -923,7 +924,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}}'
         }
         {'Ignite2021H1' -contains $_} {
-            $Event= 'Ignite2021H1'
+            $EventName= 'Ignite2021H1'
             $EventType='API'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -934,7 +935,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-03-01T08:00:00-05:00","endDateTime":"2021-03-31T19:00:00-05:00"}}]}}'
         }
         {'Ignite2020' -contains $_} {
-            $Event= 'Ignite2020'
+            $EventName= 'Ignite2020'
             $EventType='API'
             $EventAPIUrl= 'https://api.myignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -965,7 +966,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2018-01-01T08:00:00-05:00","endDateTime":"2018-12-31T19:00:00-05:00"}}]}}'
         }
         {'Inspire', 'Inspire2022' -contains $_} {
-            $Event= 'Inspire2022'
+            $EventName= 'Inspire2022'
             $EventType='API'
             $EventAPIUrl= 'https://api.inspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -976,7 +977,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2022-07-19T08:00:00-05:00","endDateTime":"2022-07-20T19:00:00-05:00"}}]}}'
         }
         {'Inspire2021' -contains $_} {
-            $Event= 'Inspire2021'
+            $EventName= 'Inspire2021'
             $EventType='API'
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -987,7 +988,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}}'
         }
         {'Inspire2020' -contains $_} {
-            $Event= 'Inspire2020'
+            $EventName= 'Inspire2020'
             $EventType='API'
             $EventAPIUrl= 'https://api.myinspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -1008,7 +1009,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
         }
         {'Build', 'Build2022' -contains $_} {
-            $Event= 'Build2022'
+            $EventName= 'Build2022'
             $EventType='API'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -1019,7 +1020,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
         {'Build2021' -contains $_} {
-            $Event= 'Build2021'
+            $EventName= 'Build2021'
             $EventType='API'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -1030,7 +1031,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
         }
         {'Build2020' -contains $_} {
-            $Event= 'Build2020'
+            $EventName= 'Build2020'
             $EventType='API'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -1041,6 +1042,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
         }
         {'Build2019' -contains $_} {
+            $EventName= 'Build2019'
             $EventAPIUrl= 'https://api.mybuild.microsoft.com'
             $EventType='API'
             $EventSearchURI= 'api/session/search'
@@ -1060,7 +1062,7 @@ param(
 
         # If no download folder set, use system drive with event subfolder
         If( -not( $DownloadFolder)) {
-            $DownloadFolder= '{0}\{1}' -f $ENV:SystemDrive, $Event
+            $DownloadFolder= '{0}\{1}' -f $ENV:SystemDrive, $EventName
         }
 
         Add-Type -AssemblyName System.Web
@@ -1091,6 +1093,7 @@ param(
                 $pinfo.RedirectStandardOutput = $true
                 $pinfo.UseShellExecute = $false
                 $pinfo.Arguments = $Arg
+                Write-Verbose ('Running {0} using {1}' -f $pinfo.FileName, ($pinfo.Arguments -join ' '))
                 $p = New-Object System.Diagnostics.Process
                 $p.StartInfo = $pinfo
                 $p.Start() | Out-Null
@@ -1153,7 +1156,7 @@ param(
         }
     }
 
-    $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $Event)
+    $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $EventName)
     $SessionCacheValid = $false
     If ( Test-Path $SessionCache) {
         Try {
@@ -1176,7 +1179,7 @@ param(
       Switch($EventType) {
         'API' {
 
-            Write-Host ('Reading {0} session catalog' -f $Event)
+            Write-Host ('Reading {0} session catalog' -f $EventName)
             $web = @{
                 contentType = 'application/json; charset=utf-8'
                 userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
@@ -1231,7 +1234,7 @@ param(
             
         'YT' {
             # YouTube published - Use youtube-dl to download the playlist as JSON so we can parse it to 'expected format'
-            Write-Host ('Reading {0} playlist information (might take a while) ..' -f $Event)
+            Write-Host ('Reading {0} playlist information (might take a while) ..' -f $EventName)
             $data = [System.Collections.ArrayList]@()
             $Arg= [System.Collections.ArrayList]@()
             If ( $ProxyURL) { 
@@ -1248,6 +1251,8 @@ param(
             $pinfo.RedirectStandardOutput = $true
             $pinfo.UseShellExecute = $false
             $pinfo.Arguments = $Arg
+            Write-Verbose ('Running {0} using {1}' -f $pinfo.FileName, ($pinfo.Arguments -join ' '))
+
             $p = New-Object System.Diagnostics.Process
             $p.StartInfo = $pinfo
             $p.Start() | Out-Null
@@ -1260,7 +1265,7 @@ param(
             }
 
             Try {
-                Write-Host ('Converting from Json ..')
+                Write-Verbose ('Converting from Json ..')
                 # Trim any trailing empty lines, convert single string with line-breaks to array for JSON conversion
                 $JsonData= ($stdout.Trim([System.Environment]::Newline) -Split "`n") | ConvertFrom-Json
             }
@@ -1273,7 +1278,8 @@ param(
                 $SpeakerNames= [System.Collections.ArrayList]@()
 
                 # Description match pattern? Set Desc+Speakers, otherwise Desc=Description, assume no Speakers defined
-                If($Item.Description -match '^(?<Description>.*)[\n]*(Download the slide deck from (?<Slidedeck>.*)(\.)+)?[\n]*((Speaker(s)?):(?<Speakers>.*))?$') {
+
+                If($Item.Description -match '^(?<Description>[\s\S]*?)(\s)*(Download the slide deck from (?<Slidedeck>https:\/\/.*?)[\.]?)?(\s)*(Speaker(s)?:(\s)?(?<Speakers>.*))?(\s)*$') {
                     $Description= $Matches.Description
                     $Matches.Speakers -Split ';' | ForEach-Object { $SpeakerNames.Add( $_.Trim() ) |Out-Null }
                     $SlidedeckUrl= $Matches.Slidedeck
@@ -1314,7 +1320,7 @@ param(
                     SpeakerNames= $SpeakerNames
                     Slidedeck= $Slidedeck
                     startDateTime= [Datetime]::ParseExact( $Item.upload_date, 'yyyyMMdd', $null)
-                    onDemandThumbnail= ($Item.thumbnails | Sort-Object Id | Select -First 1).Url
+                    onDemandThumbnail= ($Item.thumbnails | Sort-Object -Property Id | Select-Object -First 1).Url
                 }
                 Write-Verbose ('Adding info for session {0}' -f $Item.Title)
                 $data.Add( $object) | Out-Null
