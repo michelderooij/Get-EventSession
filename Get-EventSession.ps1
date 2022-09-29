@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.72, September 29th, 2022
+    Version 3.73, September 29th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
@@ -386,6 +386,8 @@
     3.70  Added MEC support
     3.71  Fixed MEC description & speaker parsing
     3.72  Fixed usage of format & subs arguments for direct YouTube downloads
+    3.73  Added MEC slide deck support
+          Fixed MEC parsing of description
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1271,26 +1273,46 @@ param(
                 $SpeakerNames= [System.Collections.ArrayList]@()
 
                 # Description match pattern? Set Desc+Speakers, otherwise Desc=Description, assume no Speakers defined
-                If($Item.Description -match '^(?<Description>.*)([\r\n]+(Speaker(s)?):(?<Speakers>.*))?$') {
-                    $description= $Matches.Description
+                If($Item.Description -match '^(?<Description>.*)[\n]*(Download the slide deck from (?<Slidedeck>.*)(\.)+)?[\n]*((Speaker(s)?):(?<Speakers>.*))?$') {
+                    $Description= $Matches.Description
                     $Matches.Speakers -Split ';' | ForEach-Object { $SpeakerNames.Add( $_.Trim() ) |Out-Null }
+                    $SlidedeckUrl= $Matches.Slidedeck
                 }
                 Else {
-                    $description= $Item.Description
+                    $Description= $Item.Description
+                    $SlidedeckUrl= $null
+                }
+
+                # Slidedeck url, construct real link:
+                If( $SlidedeckUrl) {
+                    # https://www.microsoft.com/en-us/download/details.aspx?id=104608 -> https://www.microsoft.com/en-us/download/confirmation.aspx?id=104608
+
+                    If( $SlidedeckUrl -match '^(?<host>https:\/\/www\.microsoft\.com).*id=(?<id>[\d]+)$') {
+                        $SlideDeck= '{0}/en-us/download/confirmation.aspx?id={1}' -f $Matches.host, $Matches.id
+                    }
+                    Else {
+                        Write-Warning ('Unexpected slide deck URL format: {0}' -f $SlidedeckUrl)
+                        $Slidedeck= $null
+                    }
+                }
+                Else {
+                    $SlideDeck= $null
                 }
 
                 $object = [PSCustomObject]@{
                     sessionCode= [string]($Item.playlist_index)
                     SessionType= 'On-Demand'
                     Title= $Item.Title
+                    Description= $Description
                     onDemand= $Item.webpage_url
                     Views= $Item.view_count
                     Likes= $Item.like_count
-                    Duration= $Item.duration
+                    Duration= [timespan]::FromSeconds( $Item.duration).ToString()
                     langLocale= $EventLocale
                     SolutionArea= $Item.Tags
                     contentCategory= $Item.categories
                     SpeakerNames= $SpeakerNames
+                    Slidedeck= $Slidedeck
                     startDateTime= [Datetime]::ParseExact( $Item.upload_date, 'yyyyMMdd', $null)
                     onDemandThumbnail= ($Item.thumbnails | Sort-Object Id | Select -First 1).Url
                 }
@@ -1417,7 +1439,7 @@ param(
             Else {
                 $FileName = Fix-FileName ('{0}' -f $SessionToGet.title.Trim())
             }
-            If( $Timestamp -and !([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
+            If(! ([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
                 # Get session localized timestamp, undoing TZ adjustments
                 $SessionTime= [System.TimeZoneInfo]::ConvertTime((Get-Date -Date $SessionToGet.startDateTime).ToUniversalTime(), $myTimeZone ).toString('g')
             }
@@ -1658,19 +1680,31 @@ param(
                     }
                 }
 
-                If ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius') {
+                If ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius' -or $downloadLink -match 'confirmation\.aspx') {
 
                     $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
-
                     Try {
-                       $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                       If( $downloadLink -notmatch 'confirmation\.aspx') {
+                           $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                       }
+                       Else {
+                           $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method GET -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                       }
                     }
                     Catch {
                         $ValidUrl= $false
                     }
 
-                    If( $ValidUrl -and $ValidURL.Headers.'Content-Type' -inotlike 'text/html;*' -and $ValidURL.Headers.'Content-Length' -gt 0) {
-                        If( $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
+                    If( $downloadLink -match 'confirmation\.aspx' -and $ValidURL.Headers.'Content-Type' -ilike 'text/html') {
+                        # Extra parsing for MS downloads
+                        If( $ValidUrl.RawContent -match 'href="(?<Url>https:\/\/download\.microsoft\.com\/download[\/0-9\-]*\/.*(pdf|pptx))".*click here to download manually') {
+                            $DownloadURL= [System.Web.HttpUtility]::UrlDecode( $Matches.Url)
+                            $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                        }
+                    }
+
+                    If( $ValidUrl ) {
+                        If( $DownloadURL -like '*.pdf' -or $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
                             # Slidedeck offered is PDF format
                             $slidedeckFile = '{0}.pdf' -f $FileName
                         }
@@ -1678,7 +1712,6 @@ param(
                             $slidedeckFile = '{0}.pptx' -f $FileName
                         }
                         $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
-
                         if ((Test-Path -Path  $slidedeckFullFile) -and ((Get-ChildItem -Path $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
                             Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
                             $DeckInfo[ $InfoExist]++
