@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.7, September 28th, 2022
+    Version 3.71, September 29th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
@@ -383,7 +383,8 @@
     3.68  Fixed caching when specifying Event without year tag, eg. Build vs Build2022
           Removed default Locale as that would mess things up for Events where data does not contain that information (yet).
     3.69  Updated for Inspire 2022
-    3.70  Added MEC
+    3.70  Added MEC support
+    3.71  Fixed MEC description & speaker parsing
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1266,13 +1267,21 @@ param(
 
             ForEach( $Item in $JsonData) {
 
-                $Item.Description -match '^(?<Description>.*)([\r\n]+(Speakers):(?<Speakers>.*))?$' | Out-Null
+                $SpeakerNames= [System.Collections.ArrayList]@()
+
+                # Description match pattern? Set Desc+Speakers, otherwise Desc=Description, assume no Speakers defined
+                If($Item.Description -match '^(?<Description>.*)([\r\n]+(Speaker(s)?):(?<Speakers>.*))?$') {
+                    $description= $Matches.Description
+                    $Matches.Speakers -Split ';' | ForEach-Object { $SpeakerNames.Add( $_.Trim() ) |Out-Null }
+                }
+                Else {
+                    $description= $Item.Description
+                }
 
                 $object = [PSCustomObject]@{
                     sessionCode= [string]($Item.playlist_index)
                     SessionType= 'On-Demand'
                     Title= $Item.Title
-                    description= $matches.Description.Trim()
                     onDemand= $Item.webpage_url
                     Views= $Item.view_count
                     Likes= $Item.like_count
@@ -1280,13 +1289,9 @@ param(
                     langLocale= $EventLocale
                     SolutionArea= $Item.Tags
                     contentCategory= $Item.categories
+                    SpeakerNames= $SpeakerNames
                     startDateTime= [Datetime]::ParseExact( $Item.upload_date, 'yyyyMMdd', $null)
-                    onDemandThumbnail= $Item.thumbnail
-                }
-                If( $matches.Speakers) {
-                    $TempSpeakers= [System.Collections.ArrayList]@()
-                    $matches.Speakers -Split ';' | ForEach-Object { $TempSpeakers.Add( $_.Trim() ) |Out-Null }
-                    $object | Add-Member -Name Speakers -MemberType NoteProperty -Value $TempSpeakers
+                    onDemandThumbnail= ($Item.thumbnails | Sort-Object Id | Select -First 1).Url
                 }
                 Write-Verbose ('Adding info for session {0}' -f $Item.Title)
                 $data.Add( $object) | Out-Null
