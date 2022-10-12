@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.74, September 29th, 2022
+    Version 3.75, October 12th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
@@ -388,7 +388,8 @@
     3.72  Fixed usage of format & subs arguments for direct YouTube downloads
     3.73  Added MEC slide deck support
           Fixed MEC parsing of description
-    3.74  Fixed MEC processing of multi-line descriptions 
+    3.74  Fixed MEC processing of multi-line descriptions
+    3.75  Added Ignite 2022 support
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -501,7 +502,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2022', 'Inspire2021', 'Inspire2020', 'Build', 'Build2022', 'Build2021', 'Build2020')]
+    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2022', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2022', 'Inspire2021', 'Inspire2020', 'Build', 'Build2022', 'Build2021', 'Build2020')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -903,7 +904,7 @@ param(
         {'Ignite','Ignite2022' -contains $_} {
             $EventName= 'Ignite2022'
             $EventType='API'
-            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventAPIUrl= 'https://api.ignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG22-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG22-{0}'
@@ -1306,7 +1307,7 @@ param(
                 }
 
                 $object = [PSCustomObject]@{
-                    sessionCode= [string]($Item.playlist_index)
+                    sessionCode= [string]('{0:d2}' -f $Item.playlist_index)
                     SessionType= 'On-Demand'
                     Title= $Item.Title
                     Description= $Description
