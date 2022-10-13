@@ -207,8 +207,9 @@
     session timestamp, when available.
 
     .PARAMETER Locale
-    When supported by the event, filters sessions on localization. When omitted, all sessions are processed. 
-    Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR
+    When supported by the event, filters sessions on localization. 
+    Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR. 
+    When omitted, defaults to en-US.
 
     .REVISION
     2.0   Initial (Mattias Fors)
