@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.75, October 12th, 2022
+    Version 3.76, October 13th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
@@ -207,8 +207,8 @@
     session timestamp, when available.
 
     .PARAMETER Locale
-    Specifies local events to filter sessions on. When omitted, all sessions are processed. 
-    For Build 2022, the following locales are available: Global, Germany, LATAM, France, UK and Japan.
+    When supported by the event, filters sessions on localization. When omitted, all sessions are processed. 
+    Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR
 
     .REVISION
     2.0   Initial (Mattias Fors)
@@ -390,6 +390,7 @@
           Fixed MEC parsing of description
     3.74  Fixed MEC processing of multi-line descriptions
     3.75  Added Ignite 2022 support
+    3.76  Removed session code uniqueness when storing session data, as session data now can contain multiple entries per language using the same code
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -546,7 +547,7 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [ValidateSet('de-DE','zh-CN','en-US','ja-JP','es-CO','fr-FR')]
-    [string[]]$Locale='',
+    [string[]]$Locale='en-US',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -1334,7 +1335,7 @@ param(
       }
 
       Write-Host 'Storing session information'
-      $data | Sort-Object -Property sessionCode -Unique | Export-CliXml -Encoding Unicode -Force -Path $SessionCache
+      $data | Export-CliXml -Encoding Unicode -Force -Path $SessionCache
 
     }
 
@@ -1383,18 +1384,29 @@ param(
 
     If ($Locale) {
         Write-Verbose ('Locale(s) specified: {0}' -f ($Locale -join ','))
+        Write-Verbose ('Sessions Pre: {0}'  -f ($SessionsToGet.Count))
         $SessionsToGetTemp= [System.Collections.ArrayList]@()
         ForEach( $item in $Locale) {
-            $SessionsToGet | Where-Object {$_.langLocale -ieq $item } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
+            $SessionsToGet | Where-Object {$item -ieq $_.langLocale} | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
+        }
+        $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
+        Write-Verbose ('Sessions Post: {0}'  -f ($SessionsToGet.Count))
+    }
+
+    If ($Title) {
+        Write-Verbose ('Title keyword(s) specified: {0}' -f ( $Title -join ','))
+        $SessionsToGetTemp= [System.Collections.ArrayList]@()
+        ForEach( $item in $Title) {
+            $SessionsToGet | Where-Object {$_.title -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
         }
         $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
     }
 
-    If ($Title) {
+    If ($Keyword) {
+        Write-Verbose ('Description keyword(s) specified: {0}' -f ( $Keyword -join ','))
         $SessionsToGetTemp= [System.Collections.ArrayList]@()
-        ForEach( $item in $Title) {
-            Write-Verbose ('Title keyword(s) specified: {0}' -f $item)
-            $SessionsToGet | Where-Object {$_.title -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
+        ForEach( $item in $Keyword) {
+            $SessionsToGet | Where-Object {$_.description -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
         }
         $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
     }
@@ -1402,15 +1414,6 @@ param(
     If ($NoRepeats) {
         Write-Verbose ('Skipping repeated sessions')
         $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[1-9]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$'}
-    }
-
-    If ($Keyword) {
-        $SessionsToGetTemp= [System.Collections.ArrayList]@()
-        ForEach( $item in $Keyword) {
-            Write-Verbose ('Description keyword(s) specified: {0}' -f $item)
-            $SessionsToGet | Where-Object {$_.description -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
-        }
-        $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
     }
 
     If ( $InfoOnly) {
