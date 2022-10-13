@@ -10,20 +10,18 @@
     downloads will each open in their own (minimized) window so you can track progress. Finally, CTRL-C
     is catched by the script because we need to stop download jobs when aborting the script.
 
-    .AUTHOR
-    Michel de Rooij 	        http://eightwone.com
-
-    Special thanks to:
-    Mattias Fors 	            http://deploywindows.info
-    Scott Ladewig 	            http://ladewig.com
-    Tim Pringle                 http://www.powershell.amsterdam
-    Andy Race                   https://github.com/AndyRace
-    Richard van Nieuwenhuizen
-
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.77, October 13th, 2022
+    Michel de Rooij 	        http://eightwone.com
+    Version 3.78, October 13th, 2022
+
+    Special thanks to:
+    Mattias Fors 	        http://deploywindows.info
+    Scott Ladewig 	        http://ladewig.com
+    Tim Pringle                 http://www.powershell.amsterdam
+    Andy Race                   https://github.com/AndyRace
+    Richard van Nieuwenhuizen
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
@@ -43,15 +41,10 @@
     Note: MEC sessions are not published through the usual API, so I worked around it by digesting its playlist as
     if it were a catalog. Consequence is that filtering might be limited, eg. no Category or Product etc.
 
-    .REQUIREMENTS
-    The youtube-dl.exe utility requires Visual C++ 2010 redist package
-    https://www.microsoft.com/en-US/download/details.aspx?id=5555
-
     .PARAMETER DownloadFolder
     Specifies location to download sessions to. When omitted, will use 'systemdrive'\'Event'.
 
     .PARAMETER Format
-
     The Format specified depends on the media hosting the source videos:
     - Direct Downloads
     - Azure Media Services
@@ -100,7 +93,7 @@
     https://github.com/ytdl-org/youtube-dl/blob/master/README.md#format-selection-examples
 
     Direct Downloads
-    ================ 
+    ================
     Direct Downloads are downloaded directly from the provided downloadVideoLink source.
 
     .PARAMETER Captions
@@ -179,13 +172,13 @@
     .PARAMETER Event
     Specify what event to download sessions for. 
     Options are:
-    - Ignite                                                          : Ignite events (current)
-    - Ignite2021H2, Ignite2021H1, Ignite2020, Ignite2019, Ignite2018  : Ignite contents from that year/time
-    - Inspire                                                         : Inspire contents (current)
-    - Inspire2022,Inspire2021, Inspire2020                            : Inspire contents from that year
-    - Build                                                           : Build contents (current)
-    - Build2022,Build2021,Build2020                                   : Build contents from that year
-    - MEC                                                             : MEC contents
+    - Ignite                                                                     : Ignite events (current)
+    - Ignite2022,Ignite2021H2, Ignite2021H1, Ignite2020, Ignite2019, Ignite2018  : Ignite contents from that year/time
+    - Inspire                                                                    : Inspire contents (current)
+    - Inspire2022,Inspire2021, Inspire2020                                       : Inspire contents from that year
+    - Build                                                                      : Build contents (current)
+    - Build2022,Build2021,Build2020                                              : Build contents from that year
+    - MEC                                                                        : MEC contents
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -211,7 +204,12 @@
     Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR. 
     When omitted, defaults to en-US.
 
-    .REVISION
+    .NOTES
+    The youtube-dl.exe utility requires Visual C++ 2010 redist package
+    https://www.microsoft.com/en-US/download/details.aspx?id=5555
+
+    Changelog
+    =========
     2.0   Initial (Mattias Fors)
     2.1   Added video downloading, reformatting code (Michel de Rooij)
     2.11  Fixed titles with apostrophes
@@ -393,6 +391,7 @@
     3.75  Added Ignite 2022 support
     3.76  Removed session code uniqueness when storing session data, as session data now can contain multiple entries per language using the same code
     3.77  Corrected API endpoints for some of the older events
+    3.78  Fixed content-based help
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -413,7 +412,7 @@
     .EXAMPLE
     Get all available sessions, display them in a GridView to select multiple at once, and download them to D:\Ignite
     .\Get-EventSession.ps1 -ScheduleCode (.\Get-EventSession.ps1 -InfoOnly | Out-GridView -Title 'Select Videos to Download, or Cancel for all Videos' -PassThru).SessionCode -MaxDownloadJobs 10 -DownloadFolder 'D:\Ignite'
-    #>
+#>
 [cmdletbinding( DefaultParameterSetName = 'Default' )]
 param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -1789,5 +1788,3 @@ param(
         Write-Host ('Not (yet) available: {0} slide decks and {1} videos' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
         Write-Host ('Skipped {0} slide decks and {1} videos as they were already downloaded.' -f $DeckInfo[ $InfoExist], $VideoInfo[ $InfoExist])
     }
-
-
