@@ -23,7 +23,7 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Version 3.76, October 13th, 2022
+    Version 3.77, October 13th, 2022
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
@@ -392,6 +392,7 @@
     3.74  Fixed MEC processing of multi-line descriptions
     3.75  Added Ignite 2022 support
     3.76  Removed session code uniqueness when storing session data, as session data now can contain multiple entries per language using the same code
+    3.77  Corrected API endpoints for some of the older events
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -918,7 +919,7 @@ param(
         {'Ignite2021H2' -contains $_} {
             $EventName= 'Ignite2021H2'
             $EventType='API'
-            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventAPIUrl= 'https://api.ignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
@@ -929,7 +930,7 @@ param(
         {'Ignite2021H1' -contains $_} {
             $EventName= 'Ignite2021H1'
             $EventType='API'
-            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventAPIUrl= 'https://api.ignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
@@ -940,7 +941,7 @@ param(
         {'Ignite2020' -contains $_} {
             $EventName= 'Ignite2020'
             $EventType='API'
-            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventAPIUrl= 'https://api.ignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG20-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG20-{0}'
@@ -949,7 +950,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
         }
         {'Ignite2019' -contains $_} {
-            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventAPIUrl= 'https://api.ignite.microsoft.com'
             $EventType='API'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG19-{0}'
@@ -959,7 +960,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
         }
         'Ignite2018' {
-            $EventAPIUrl= 'https://api.myignite.microsoft.com'
+            $EventAPIUrl= 'https://api.ignite.microsoft.com'
             $EventType='API'
             $EventSearchURI= 'api/videos/search'
             $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
@@ -982,7 +983,7 @@ param(
         {'Inspire2021' -contains $_} {
             $EventName= 'Inspire2021'
             $EventType='API'
-            $EventAPIUrl= 'https://api.myinspire.microsoft.com'
+            $EventAPIUrl= 'https://api.inspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP21-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP21-{0}'
@@ -993,7 +994,7 @@ param(
         {'Inspire2020' -contains $_} {
             $EventName= 'Inspire2020'
             $EventType='API'
-            $EventAPIUrl= 'https://api.myinspire.microsoft.com'
+            $EventAPIUrl= 'https://api.inspire.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP20-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP20-{0}'
@@ -1002,7 +1003,7 @@ param(
             $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
         }
         {'Inspire2019' -contains $_} {
-            $EventAPIUrl= 'https://api.myinspire.microsoft.com'
+            $EventAPIUrl= 'https://api.inspire.microsoft.com'
             $EventType='API'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP19-{0}'
