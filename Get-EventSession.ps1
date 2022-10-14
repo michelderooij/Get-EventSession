@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.78, October 13th, 2022
+    Version 3.79, October 14th, 2022
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -392,6 +392,9 @@
     3.76  Removed session code uniqueness when storing session data, as session data now can contain multiple entries per language using the same code
     3.77  Corrected API endpoints for some of the older events
     3.78  Fixed content-based help
+    3.79  Fixed issue with placeholder detection
+          Fixed path handling, fixes file detection and timestamping a.o.
+          Added PowerShell 5.1 requirement (tested with)
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -601,13 +604,17 @@ param(
         }
     }
 
+    Function Test-ResolvedPath( $Path) {
+        $null -ne (Get-ChildItem -LiteralPath $Path -ErrorAction SilentlyContinue)
+    }
+
     Function Clean-VideoLeftovers ( $videofile) {
         $masks= '.*.mp4.part', '.*.mp4.ytdl'
 	ForEach( $mask in $masks) {
             $FileMask= $videofile -replace '.mp4', $mask
-            Get-Item -Path $FileMask -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-Item -LiteralPath $FileMask -ErrorAction SilentlyContinue | ForEach-Object {
                 Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
-	        Remove-Item -Path $_.fullname -Force -ErrorAction SilentlyContinue
+	        Remove-Item -LiteralPath $_.fullname -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -641,7 +648,7 @@ param(
                         $DeckInfo[ $InfoDownload]++
                     }
                     2 {
-                        $isJobSuccess= (Test-Path -Path $job.file)
+                        $isJobSuccess= Test-ResolvedPath -Path $job.file
                         $VideoInfo[ $InfoDownload]++
                         Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                     }
@@ -653,14 +660,17 @@ param(
                     }
                 }
 
-		If( $isJobSuccess -and (Test-Path -Path $job.file)) {
-                    $FileObj= Get-ChildItem -Path $job.file
+                # Test if file is placeholder
+                $isPlaceholder= $false
+		If( Test-ResolvedPath -Path $job.file) {
+                    $FileObj= Get-ChildItem -LiteralPath $job.file
                     If( $FileObj.Length -eq 42) {
 
-                        # Placeholder downloaded
-                        If( (Get-Content -Path $job.File) -eq 'No resource file is available for download') {
+                        If( (Get-Content -LiteralPath $job.File) -eq 'No resource file is available for download') {
                             Write-Warning ('Removing {0} placeholder file {1}' -f $job.scheduleCode, $job.file)
-                            Remove-Item -Path $job.file -Force
+                            Remove-Item -LiteralPath $job.file -Force
+                            $isPlaceholder= $true
+
                             Switch( $job.Type) {
                                 1 {
                                     # Placeholder Deck file downloaded
@@ -681,17 +691,19 @@ param(
                             # Placeholder different text?
                         }
                     }
-                    Else {
+                }
 
-                        Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
+		If( $isJobSuccess -and -not $isPlaceholder) {
 
-                        # Do we need to adjust timestamp
-                        If( $job.Timestamp) {
-                            #Set timestamp
-                            Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
-                            $FileObj.CreationTime= Get-Date -Date $job.Timestamp
-                            $FileObj.LastWriteTime= Get-Date -Date $job.Timestamp
-                        }
+                    Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
+
+                    # Do we need to adjust timestamp
+                    If( $job.Timestamp) {
+                        #Set timestamp
+                        Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
+                        $FileObj= Get-ChildItem -LiteralPath $job.file
+                        $FileObj.CreationTime= Get-Date -Date $job.Timestamp
+                        $FileObj.LastWriteTime= Get-Date -Date $job.Timestamp
                     }
 
                     If( $job.Type -eq 2) {
@@ -702,17 +714,17 @@ param(
                 Else {
                     switch( $job.Type) {
                         1 {
-                            Write-Host ('Problem downloading {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
+                            Write-Host ('Problem downloading slidedeck {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
                             $job.job.ChildJobs | Stop-Job | Out-Null
                             $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
                         }
                         2 {
-                            $LastLine= (Get-Content -Path $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
-                            Write-Host ('Problem downloading {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
-                            Remove-Item -Path $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
+                            $LastLine= (Get-Content -LiteralPath $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
+                            Write-Host ('Problem downloading video {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
+                            Remove-Item -LiteralPath $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
                         }
                         3 {
-                            Write-Host ('Problem downloading {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
+                            Write-Host ('Problem downloading captions {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
                             $job.job.ChildJobs | Stop-Job | Out-Null
                             $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
                         }
@@ -753,7 +765,7 @@ param(
             If( $Job.Type -eq 2) {
 
                 # Get last line of YT log to display for video downloads
-                $LastLine= (Get-Content -Path $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
+                $LastLine= (Get-Content -LiteralPath $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
                 If(!( $LastLine)) {
                     $LastLine= 'Evaluating..'
                 }
@@ -776,7 +788,7 @@ param(
                 2 {
                     Stop-Process -Id $BGJob.job.id -Force -ErrorAction SilentlyContinue
                     Start-Sleep -Seconds 5
-                    Remove-Item -Path $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
+                    Remove-Item -LiteralPath $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
                 }
                 3 {
                     $BGJob.Job.ChildJobs | Stop-Job -PassThru 
@@ -874,8 +886,7 @@ param(
 ##########
 # MAIN
 ##########
-
-#Requires -Version 3.0
+#Requires -Version 5.1
 
     If( $psISE) {
         Throw( 'Running from PowerShell ISE is not supported due to requirement to capture console input for proper termination of the script. Please run from a regular PowerShell session.')
@@ -1072,7 +1083,7 @@ param(
         Write-Host "Using download path: $DownloadFolder"
         # Create the local content path if not exists
         if ( (Test-Path $DownloadFolder) -eq $false ) {
-            New-Item -Path $DownloadFolder -ItemType Directory | Out-Null
+            New-Item -LiteralPath $DownloadFolder -ItemType Directory | Out-Null
         }
 
         If ( $NoVideos) {
@@ -1137,7 +1148,7 @@ param(
                         Try {
                             [System.IO.Compression.ZipFileExtensions]::ExtractToFile( $FFMPEGEntry, $FFMPEG)
                             $FFMPEGZip.Dispose()
-                            Remove-Item -Path $TempFile -Force
+                            Remove-Item -LiteralPath $TempFile -Force
                         }
                         Catch {
                             Throw ('Problem extracting ffmpeg.exe from {0}' -f $FFMPEGZip)
@@ -1163,9 +1174,9 @@ param(
     $SessionCacheValid = $false
     If ( Test-Path $SessionCache) {
         Try {
-            If ( (Get-childItem -Path $SessionCache).LastWriteTime -ge (Get-Date).AddHours( - $MaxCacheAge)) {
+            If ( (Get-childItem -LiteralPath $SessionCache).LastWriteTime -ge (Get-Date).AddHours( - $MaxCacheAge)) {
                 Write-Host 'Session cache file found, reading session information'
-                $data = Import-CliXml -Path $SessionCache -ErrorAction SilentlyContinue
+                $data = Import-CliXml -LiteralPath $SessionCache -ErrorAction SilentlyContinue
                 $SessionCacheValid = $true
             }
             Else {
@@ -1336,7 +1347,7 @@ param(
       }
 
       Write-Host 'Storing session information'
-      $data | Export-CliXml -Encoding Unicode -Force -Path $SessionCache
+      $data | Export-CliXml -Encoding Unicode -Force -LiteralPath $SessionCache
 
     }
 
@@ -1469,7 +1480,7 @@ param(
                     $vidfileName = ("$FileName.mp4")
                     $vidFullFile = '\\?\{0}' -f (Join-Path $DownloadFolder $vidfileName)
 
-                    if ((Test-Path -Path $vidFullFile) -and -not $Overwrite) {
+                    if ((Test-ResolvedPath -Path $vidFullFile) -and -not $Overwrite) {
                         Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
                         $VideoInfo[ $InfoExist]++
                         # Clean video leftovers
@@ -1630,7 +1641,7 @@ param(
                     If( $Captions) {
                         $captionVTTFile= $vidFullFile -replace '.mp4', '.vtt'
 
-                        If ((Test-Path -Path $captionVTTFile) -and -not $Overwrite) {
+                        If ((Test-ResolvedPath -Path $captionVTTFile) -and -not $Overwrite) {
                             Write-Host ('Caption file exists {0}' -f $captionVTTFile) -ForegroundColor Gray
                         }
                         Else {
@@ -1723,7 +1734,7 @@ param(
                             $slidedeckFile = '{0}.pptx' -f $FileName
                         }
                         $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
-                        if ((Test-Path -Path  $slidedeckFullFile) -and ((Get-ChildItem -Path $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
+                        if ((Test-ResolvedPath -Path $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
                             Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
                             $DeckInfo[ $InfoExist]++
                         }
