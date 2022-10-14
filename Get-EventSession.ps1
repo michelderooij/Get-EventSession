@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.79, October 14th, 2022
+    Version 3.80, October 14th, 2022
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -395,6 +395,7 @@
     3.79  Fixed issue with placeholder detection
           Fixed path handling, fixes file detection and timestamping a.o.
           Added PowerShell 5.1 requirement (tested with)
+    3.80  Fixed redundant passing of Format to YouTube-dl
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1545,8 +1546,8 @@ param(
                                                 $ThisLanguage= $Language
                                             }
                                             Else {
-                                                Write-Warning ('Requested language {0} not available; will use default stream' -f $Language, $SessionToGet.audioLanguage[0])
-                                                $ThisLanguage= $SessionToGet.audioLanguage[0]
+                                                $ThisLanguage= $SessionToGet.audioLanguage | Select -First 1
+                                                Write-Warning ('Requested language {0} not available; will use default stream ({1})' -f $Language, $ThisLanguage)
                                             }
 
                                             # Take specified Format apart so we can insert the language filter per specification
@@ -1581,8 +1582,7 @@ param(
                                         # No multiple audio languages, use default audio stream
                                         Write-Warning ('Multiple audio streams not available, will use default audio stream')
                                     }
-                                    $Arg += ('--format {0}' -f $ThisFormat) 
-
+                                    $Arg += ('--format {0}' -f $ThisFormat)
                                 }
                                 Else {
                                     # Check for embedded YouTube 
@@ -1626,7 +1626,6 @@ param(
                             $Arg+= '--no-check-certificate'                            
                             $Arg+= '--retries 15'
 
-                            If ( $Format) { $Arg += ('--format {0}' -f $Format) } 
                             If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
 
                             Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
