@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.80, October 14th, 2022
+    Version 3.81, March 14th, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -396,6 +396,7 @@
           Fixed path handling, fixes file detection and timestamping a.o.
           Added PowerShell 5.1 requirement (tested with)
     3.80  Fixed redundant passing of Format to YouTube-dl
+    3.81  Moved to using ytl-dl, a fork of Youtube-DL (not maintained any longer)
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -566,10 +567,10 @@ param(
     # Max age for cache, older than this # hours will force info refresh
     $MaxCacheAge = 24
 
-    $YouTubeDL = Join-Path $PSScriptRoot 'youtube-dl.exe'
+    $YouTubeDL = Join-Path $PSScriptRoot 'yt-dlp.exe'
     $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
 
-    $YTlink = 'https://github.com/ytdl-org/youtube-dl/releases/download/2019.11.05/youtube-dl.exe'
+    $YTlink = 'https://www.videohelp.com/download/yt-dlp.exe'
     $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
 
     # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
