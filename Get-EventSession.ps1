@@ -1085,7 +1085,7 @@ param(
         Write-Host "Using download path: $DownloadFolder"
         # Create the local content path if not exists
         if ( (Test-Path $DownloadFolder) -eq $false ) {
-            New-Item -LiteralPath $DownloadFolder -ItemType Directory | Out-Null
+            New-Item -Path $DownloadFolder -ItemType Directory | Out-Null
         }
 
         If ( $NoVideos) {
