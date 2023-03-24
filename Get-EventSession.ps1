@@ -1,4 +1,4 @@
-﻿<#
+<#
     .SYNOPSIS
     Script to assist in downloading Microsoft Ignite, Inspire, Build or MEC contents, or return 
     session information for easier digesting. Video downloads will leverage external utilities, 
@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.81, March 14th, 2023
+    Version 3.82, March 24th, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -397,6 +397,7 @@
           Added PowerShell 5.1 requirement (tested with)
     3.80  Fixed redundant passing of Format to YouTube-dl
     3.81  Moved to using ytl-dl, a fork of Youtube-DL (not maintained any longer)
+    3.82  Fixed new folder creation
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
