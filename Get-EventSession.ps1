@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.82, March 24th, 2023
+    Version 3.9, May 1st, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -172,13 +172,13 @@
     .PARAMETER Event
     Specify what event to download sessions for. 
     Options are:
-    - Ignite                                                                     : Ignite events (current)
-    - Ignite2022,Ignite2021H2, Ignite2021H1, Ignite2020, Ignite2019, Ignite2018  : Ignite contents from that year/time
-    - Inspire                                                                    : Inspire contents (current)
-    - Inspire2022,Inspire2021, Inspire2020                                       : Inspire contents from that year
-    - Build                                                                      : Build contents (current)
-    - Build2022,Build2021,Build2020                                              : Build contents from that year
-    - MEC                                                                        : MEC contents
+    - Ignite                  : Ignite events (current)
+    - Ignite2022,Ignite2021   : Ignite contents from that year/time
+    - Inspire                 : Inspire contents (current)
+    - Inspire2022,Inspire2021 : Inspire contents from that year
+    - Build                   : Build contents (current)
+    - Build2023,Build2022     : Build contents from that year
+    - MEC                     : MEC contents
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -203,6 +203,10 @@
     When supported by the event, filters sessions on localization. 
     Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR. 
     When omitted, defaults to en-US.
+
+    .PARAMETER Refresh
+    When specified, this switch will try fetch current catalog information from online, ignoring
+    any cached information which might be present.
 
     .NOTES
     The youtube-dl.exe utility requires Visual C++ 2010 redist package
@@ -398,7 +402,14 @@
     3.80  Fixed redundant passing of Format to YouTube-dl
     3.81  Moved to using ytl-dl, a fork of Youtube-DL (not maintained any longer)
     3.82  Fixed new folder creation
-
+    3.83  Updated for Build 2023
+          Removed Ignite 2018 and Ignite 2019
+    3.9   Fixed retrieval of API-based catalogs for events
+          Switched to using REST calls for those API-based catalogs
+          Added Refresh Switch
+          Removed archived events (<2021) as MS archives sessions selectively from previous years
+          Merged Ignite2021H1 and Ignite2021H2 to Ignite2021
+          
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
     .\Get-EventSession.ps1 -DownloadFolder D:\Ignite-Format 22 -Keyword 'Teams' -Event Ignite -ExcludecommunityTopic 'Fun and Wellness'
@@ -475,6 +486,7 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string[]]$ScheduleCode,
 
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
@@ -510,7 +522,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2022', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020', 'Ignite2019', 'Ignite2018', 'Inspire', 'Inspire2022', 'Inspire2021', 'Inspire2020', 'Build', 'Build2022', 'Build2021', 'Build2020')]
+    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2022', 'Ignite2021', 'Inspire', 'Inspire2022', 'Inspire2021', 'Build', 'Build2023','Build2022', 'Build2021')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -555,6 +567,12 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [ValidateSet('de-DE','zh-CN','en-US','ja-JP','es-CO','fr-FR')]
     [string[]]$Locale='en-US',
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [switch]$Refresh,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -927,10 +945,10 @@ param(
             $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2022-10-12T08:00:00-05:00","endDateTime":"2022-10-14T19:00:00-05:00"}}]}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-10-12T12:00:00.000Z","endDateTime":"2022-10-12T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
         }
-        {'Ignite2021H2' -contains $_} {
-            $EventName= 'Ignite2021H2'
+        {'Ignite2021' -contains $_} {
+            $EventName= 'Ignite2021'
             $EventType='API'
             $EventAPIUrl= 'https://api.ignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
@@ -938,49 +956,7 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
             $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}}'
-        }
-        {'Ignite2021H1' -contains $_} {
-            $EventName= 'Ignite2021H1'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.ignite.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG21-{0}'
-            $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-03-01T08:00:00-05:00","endDateTime":"2021-03-31T19:00:00-05:00"}}]}}'
-        }
-        {'Ignite2020' -contains $_} {
-            $EventName= 'Ignite2020'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.ignite.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG20-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG20-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/IG20-{0}'
-            $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
-        }
-        {'Ignite2019' -contains $_} {
-            $EventAPIUrl= 'https://api.ignite.microsoft.com'
-            $EventType='API'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG19-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG19-{0}'
-            $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2019/{0}.pptx'
-            $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
-        }
-        'Ignite2018' {
-            $EventAPIUrl= 'https://api.ignite.microsoft.com'
-            $EventType='API'
-            $EventSearchURI= 'api/videos/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/Video/IG18-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG18-{0}'
-            $SlidedeckUrl= 'https://mediusprodstatic.studios.ms/presentations/Ignite2018/{0}.pptx'
-            $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2018-01-01T08:00:00-05:00","endDateTime":"2018-12-31T19:00:00-05:00"}}]}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
         }
         {'Inspire', 'Inspire2022' -contains $_} {
             $EventName= 'Inspire2022'
@@ -991,7 +967,7 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP22-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP22-{0}'
             $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2022-07-19T08:00:00-05:00","endDateTime":"2022-07-20T19:00:00-05:00"}}]}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-07-19T08:00:00-05:00","endDateTime":"2022-07-20T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
         }
         {'Inspire2021' -contains $_} {
             $EventName= 'Inspire2021'
@@ -1002,72 +978,29 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP21-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP21-{0}'
             $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
         }
-        {'Inspire2020' -contains $_} {
-            $EventName= 'Inspire2020'
+        {'Build', 'Build2023' -contains $_} {
+            $EventName= 'Build2023'
             $EventType='API'
-            $EventAPIUrl= 'https://api.inspire.microsoft.com'
+            $EventAPIUrl= 'https://api.build.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP20-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP20-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP20-{0}'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
             $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
         }
-        {'Inspire2019' -contains $_} {
-            $EventAPIUrl= 'https://api.inspire.microsoft.com'
-            $EventType='API'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP19-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP19-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP19-{0}'
-            $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
-        }
-        {'Build', 'Build2022' -contains $_} {
+        {'Build2022' -contains $_} {
             $EventName= 'Build2022'
             $EventType='API'
-            $EventAPIUrl= 'https://api.mybuild.microsoft.com'
+            $EventAPIUrl= 'https://api.build.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B21-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B21-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B21-{0}'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B22-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B22-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B22-{0}'
             $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
-        }
-        {'Build2021' -contains $_} {
-            $EventName= 'Build2021'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.mybuild.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B21-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B21-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B21-{0}'
-            $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[]}}}}'
-        }
-        {'Build2020' -contains $_} {
-            $EventName= 'Build2020'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.mybuild.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B20-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B20-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B20-{0}'
-            $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2020-01-01T08:00:00-05:00","endDateTime":"2020-12-31T19:00:00-05:00"}}]}}'
-        }
-        {'Build2019' -contains $_} {
-            $EventName= 'Build2019'
-            $EventAPIUrl= 'https://api.mybuild.microsoft.com'
-            $EventType='API'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B19-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B19-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B19-{0}'
-            $Method= 'Post'
-            $EventSearchBody = '{{"itemsPerPage":{0},"searchText":"*","searchPage":{1},"sortOption":"None","searchFacets":{{"facets":[],"personalizationFacets":[],"dateFacet":[{{"startDateTime":"2019-01-01T08:00:00-05:00","endDateTime":"2019-12-31T19:00:00-05:00"}}]}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-01-01T08:00:00-05:00","endDateTime":"2022-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
         }
         default {
             Write-Host ('Unknown event: {0}' -f $Event) -ForegroundColor Red
@@ -1175,19 +1108,25 @@ param(
 
     $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $EventName)
     $SessionCacheValid = $false
-    If ( Test-Path $SessionCache) {
-        Try {
-            If ( (Get-childItem -LiteralPath $SessionCache).LastWriteTime -ge (Get-Date).AddHours( - $MaxCacheAge)) {
-                Write-Host 'Session cache file found, reading session information'
-                $data = Import-CliXml -LiteralPath $SessionCache -ErrorAction SilentlyContinue
-                $SessionCacheValid = $true
+
+    If( $Refresh) {
+        Write-Host 'Refresh specified, will read session information from the online catalog'
+    }
+    Else {
+        If ( Test-Path $SessionCache) {
+            Try {
+                If ( (Get-childItem -LiteralPath $SessionCache).LastWriteTime -ge (Get-Date).AddHours( - $MaxCacheAge)) {
+                    Write-Host 'Session cache file found, reading session information'
+                    $data = Import-CliXml -LiteralPath $SessionCache -ErrorAction SilentlyContinue
+                    $SessionCacheValid = $true
+                }
+                Else {
+                   Write-Warning 'Cache information expired, will re-read information from catalog'
+                }
             }
-            Else {
-                Write-Warning 'Cache information expired, will re-read information from catalog'
+            Catch {
+                Write-Host 'Error reading cache file or cache file invalid - will read from online catalog' -ForegroundColor Red
             }
-        }
-        Catch {
-            Write-Host 'Error reading cache file or cache file invalid - will read from online catalog' -ForegroundColor Red
         }
     }
 
@@ -1198,23 +1137,23 @@ param(
 
             Write-Host ('Reading {0} session catalog' -f $EventName)
             $web = @{
-                contentType = 'application/json; charset=utf-8'
                 userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
                 requestUri  = [uri]('{0}/{1}' -f $EventAPIUrl, $EventSearchURI)
+                headers     = @{'Content-Type'='application/json'}
                 itemsPerPage= 100
             }
 
             Try {
-                $SearchBody= $EventSearchBody -f '12', '1'
+                $SearchBody= $EventSearchBody -f '1', '1'
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
-                $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
-                $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
+                $searchResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
+                $searchResults= $searchResultsResponse.data
             }
             Catch {
                 Throw ('Problem retrieving session catalog: {0}' -f $error[0])
             }
-            $sessiondata = ConvertFrom-Json -InputObject $searchResults
-            [int32] $sessionCount = $sessiondata.total
+      
+            [int32] $sessionCount = $searchResultsResponse.total
             [int32] $remainder = 0
  
             $PageCount = [System.Math]::DivRem($sessionCount, $web.itemsPerPage, [ref]$remainder)
@@ -1229,23 +1168,19 @@ param(
             For ($page = 1; $page -le $PageCount; $page++) {
                 Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
                 $SearchBody= $EventSearchBody -f $web.itemsPerPage, $page
-                $searchResultsResponse = Invoke-WebRequest -Uri $web.requestUri -Body $searchbody -Method $Method -ContentType $web.contentType -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
-                $searchResults = [system.Text.Encoding]::UTF8.GetString($searchResultsResponse.RawContentStream.ToArray());
-                $sessiondata = ConvertFrom-Json -InputObject $searchResults
-                ForEach ( $Item in $sessiondata.data) {
-                    $object = $Item -as [PSCustomObject]
-                    $object.PSObject.Properties | ForEach-Object {
-                        if ($_.Name -eq 'speakerNames') { $object.($_.Name) = @($_.Value) }
-                        if ($_.Name -eq 'products') { $object.($_.Name) = @($_.Value -replace [char]9, '/') }
-                        if ($_.Name -eq 'contentCategory') { $object.($_.Name) = @(($_.Value -replace [char]9, '/') -replace ' / ', '/') }
+                $searchResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
+                ForEach ( $Item in $searchResultsResponse.data) {
+                    $Item.PSObject.Properties | ForEach-Object {
+                        if ($_.Name -eq 'speakerNames') { $Item.($_.Name) = @($_.Value) }
+                        if ($_.Name -eq 'products') { $Item.($_.Name) = @($_.Value -replace [char]9, '/') }
+                        if ($_.Name -eq 'contentCategory') { $Item.($_.Name) = @(($_.Value -replace [char]9, '/') -replace ' / ', '/') }
                     }
-                    Write-Verbose ('Adding info for session {0}' -f $Object.sessionCode)
-                    $object.PSObject.TypeNames.Insert(0, 'Session.Information')
-                    $object | Add-Member MemberSet PSStandardMembers $PSStandardMembers
-                    $data.Add( $object) | Out-Null
+                    Write-Verbose ('Adding info for session {0}' -f $Item.sessionCode)
+                    $Item.PSObject.TypeNames.Insert(0, 'Session.Information')
+                    $Item | Add-Member MemberSet PSStandardMembers $PSStandardMembers
+                    $data.Add( $Item) | Out-Null
                 }
             }
-
             Write-Progress -Id 1 -Completed -Activity "Finished retrieval of catalog" 
         }
             
