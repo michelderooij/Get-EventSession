@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.9, May 1st, 2023
+    Version 3.92, May 25th, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -409,6 +409,8 @@
           Added Refresh Switch
           Removed archived events (<2021) as MS archives sessions selectively from previous years
           Merged Ignite2021H1 and Ignite2021H2 to Ignite2021
+    3.91  Fixed output mentioning youtube-dl instead of actual tool (yt-dlp)
+    3.92  Added .docx caption support for Build2023
           
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -586,7 +588,8 @@ param(
     # Max age for cache, older than this # hours will force info refresh
     $MaxCacheAge = 24
 
-    $YouTubeDL = Join-Path $PSScriptRoot 'yt-dlp.exe'
+    $YouTubeEXE = 'yt-dlp.exe'
+    $YouTubeDL = Join-Path $PSScriptRoot $YouTubeEXE
     $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
 
     $YTlink = 'https://www.videohelp.com/download/yt-dlp.exe'
@@ -765,7 +768,7 @@ param(
         $Num=0
         $NumDeck= 0
         $NumVid= 0
-        $NumVtt= 0
+        $NumCaption= 0
         ForEach( $BGJob in $script:BackgroundDownloadJobs) {
             $Num++
             Switch( $BGJob.Type) {
@@ -776,11 +779,11 @@ param(
                      $NumVid++
                 }
                 3 {
-                     $NumVtt++
+                     $NumCaption++
                 }
             }
         }
-        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedeck, {2} video and {3} caption files)' -f $Num, $NumDeck, $NumVid, $NumVtt)
+        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedeck, {2} video and {3} caption files)' -f $Num, $NumDeck, $NumVid, $NumCaption)
 
         ForEach( $job in $script:BackgroundDownloadJobs) {
             If( $Job.Type -eq 2) {
@@ -934,6 +937,7 @@ param(
             $EventType='YT'
             $EventYTUrl= 'https://www.youtube.com/playlist?list=PLxdTT6-7g--2POisC5XcDQxUXHhWsoZc9'
             $EventLocale= 'en-us'
+            $CaptionExt= 'vtt'
         }
         {'Ignite','Ignite2022' -contains $_} {
             $EventName= 'Ignite2022'
@@ -946,6 +950,7 @@ param(
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-10-12T12:00:00.000Z","endDateTime":"2022-10-12T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
         }
         {'Ignite2021' -contains $_} {
             $EventName= 'Ignite2021'
@@ -957,6 +962,7 @@ param(
             $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
         }
         {'Inspire', 'Inspire2022' -contains $_} {
             $EventName= 'Inspire2022'
@@ -968,6 +974,7 @@ param(
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP22-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-07-19T08:00:00-05:00","endDateTime":"2022-07-20T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
         }
         {'Inspire2021' -contains $_} {
             $EventName= 'Inspire2021'
@@ -979,6 +986,7 @@ param(
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP21-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
         }
         {'Build', 'Build2023' -contains $_} {
             $EventName= 'Build2023'
@@ -990,6 +998,7 @@ param(
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'docx'
         }
         {'Build2022' -contains $_} {
             $EventName= 'Build2022'
@@ -1001,6 +1010,7 @@ param(
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B22-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-01-01T08:00:00-05:00","endDateTime":"2022-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
         }
         default {
             Write-Host ('Unknown event: {0}' -f $Event) -ForegroundColor Red
@@ -1028,11 +1038,11 @@ param(
         }
         Else {
             If (-not( Test-Path $YouTubeDL)) {
-                Write-Host ('youtube-dl.exe not found, will try to download from {0}' -f $YTLink)
+                Write-Host ('{0} not found, will try to download from {1}' -f $YouTubeEXE, $YTLink)
                 Invoke-WebRequest -Uri $YTLink -OutFile $YouTubeDL -Proxy $ProxyURL
             }
             If ( Test-Path $YouTubeDL) {
-                Write-Host ('Running self-update of youtube-dl.exe')
+                Write-Host ('Running self-update of {0}' -f $YouTubeEXE)
 
                 $Arg = @('-U')
                 If ( $ProxyURL) { $Arg += "--proxy $ProxyURL" }
@@ -1053,7 +1063,7 @@ param(
 
                 If ($p.ExitCode -ne 0) {
                     If ( $stderr -contains 'Error launching') {
-                        Throw 'Problem running youtube-dl.exe. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).'
+                        Throw ('Problem running {0}. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).' -f $YouTubeEXE)
                     }
                     Else {
                         Write-Host $stderr
@@ -1065,7 +1075,7 @@ param(
                 $DownloadVideos = $true
             }
             Else {
-                Write-Warning 'Unable to locate or download youtube-dl.exe, will skip downloading YouTube videos'
+                Write-Warning ('Unable to locate or download {0}, will skip downloading YouTube videos' -f $YouTubeEXE)
                 $DownloadVideos = $false
             }
 
@@ -1185,7 +1195,7 @@ param(
         }
             
         'YT' {
-            # YouTube published - Use youtube-dl to download the playlist as JSON so we can parse it to 'expected format'
+            # YouTube published - Use yt-dlp to download the playlist as JSON so we can parse it to 'expected format'
             Write-Host ('Reading {0} playlist information (might take a while) ..' -f $EventName)
             $data = [System.Collections.ArrayList]@()
             $Arg= [System.Collections.ArrayList]@()
@@ -1213,7 +1223,7 @@ param(
             $p.WaitForExit()
 
             If ($p.ExitCode -ne 0) {
-                Throw ('Problem running youtube-dl.exe: {0}' -f $stderr)
+                Throw ('Problem running {0}: {1}' -f $YouTubeEXE, $stderr)
             }
 
             Try {
@@ -1565,7 +1575,7 @@ param(
 
                             If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
 
-                            Write-Verbose ('Running: youtube-dl.exe {0}' -f ($Arg -join ' '))
+                            Write-Verbose ('Running: {0} {1}' -f $YouTubeEXE, ($Arg -join ' '))
                             Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
                         }
                         Else {
@@ -1575,10 +1585,10 @@ param(
                     }
 
                     If( $Captions) {
-                        $captionVTTFile= $vidFullFile -replace '.mp4', '.vtt'
+                        $captionExtFile= $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
 
-                        If ((Test-ResolvedPath -Path $captionVTTFile) -and -not $Overwrite) {
-                            Write-Host ('Caption file exists {0}' -f $captionVTTFile) -ForegroundColor Gray
+                        If ((Test-ResolvedPath -Path $captionExtFile) -and -not $Overwrite) {
+                            Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
                         }
                         Else {
                             # Caption file in AMS needs seperate download
@@ -1600,7 +1610,7 @@ param(
                                     # Reuse one from video download
                                 }
 
-                                If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\.vtt\?.*?)"') {
+                                If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\{0}\?.*?)"' -f $CaptionExt) {
                                     $captionFileLink= $matches.AzureCaptionURL
                                 }
                                 If( ! $captionFileLink) {
@@ -1610,9 +1620,9 @@ param(
                             If( $captionFileLink) {
                                 Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
 
-                                 $captionFullFile= $captionVTTFile
+                                 $captionFullFile= $captionExtFile
                                  Write-Verbose ('Downloading {0} to {1}' -f $captionFileLink,  $captionFullFile)
-                                 Add-BackgroundDownloadJob -Type 3 -FilePath $captionVTTFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                                 Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
 
                              }
                              Else {
