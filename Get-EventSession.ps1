@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.92, May 25th, 2023
+    Version 3.93, May 25th, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -102,9 +102,10 @@
     be accurate due to machine translation, but at least will help in following the story :)
 
     .PARAMETER Subs
-    When specified, for YouTube contents, downloads subtitles in provided languages by specifying one 
-    or more 2-letter language codes seperated by a comma, e.g. en,fr,de,nl. Downloaded subtitles may be
-    in VTT or SRT format. Again, the subtitles might not always be accurate due to machine translation.
+    When specified, for YouTube and Azure Media Services, downloads subtitles in provided languages by 
+    specifying one or more 2-letter language codes seperated by a comma, e.g. en,fr,de,nl. Downloaded 
+    subtitles may be in VTT or SRT format. Again, the subtitles might not always be accurate due to machine 
+    translation. Note: For Azure Media Services, will only download caption in first language specified
 
     .PARAMETER Language
     When specified, for Azure Media hosted contents, downloads videos with specified audio stream where
@@ -411,6 +412,8 @@
           Merged Ignite2021H1 and Ignite2021H2 to Ignite2021
     3.91  Fixed output mentioning youtube-dl instead of actual tool (yt-dlp)
     3.92  Added .docx caption support for Build2023
+    3.93  Fixed downloading from Azure Media Services for Build2023+
+          Reinstated caption downloading with VTT instead of docx (can use Sub to download alt. language)
           
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -998,7 +1001,7 @@ param(
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'docx'
+            $CaptionExt= 'vtt'
         }
         {'Build2022' -contains $_} {
             $EventName= 'Build2022'
@@ -1437,7 +1440,7 @@ param(
                     else {
                         $downloadLink= $null
                         If ( !( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) ) {
-                            If( $PreferDirect -and (!( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)))) {
+                            If( $PreferDirect -and !( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink))) {
                                 $downloadLink = $SessionToGet.downloadVideoLink
                             }
                             Else {
@@ -1458,20 +1461,30 @@ param(
                                 }
                             }
                         }
-
                         If( $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com|mediastream\.microsoft\.com)' ) {
                             Write-Verbose ('Checking hosted video link {0}' -f $downloadLink)
                             Try {
                                 $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
                             }
                             Catch {
-                                $DownloadedPage= $null
+                                Write-Warning ('Problem downloading from {0}' -f $downloadLink)
                             }
                             If( $DownloadedPage) {                        
                                 $OnDemandPage= $DownloadedPage.RawContent 
                                 
-                                # Check for embedded AMS 
-                                If( $OnDemandPage -match '<video (playsinline)? id="azuremediaplayer" class=".*?" data-id="(?<AzureStreamURL>.*?)"><\/video>') {
+
+                            If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
+                                $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
+                                If( $Subs) {
+                                    $captionFileLink= $CaptionConfig | Where-Object {$_.subs -eq $Subs}
+                                }
+                                If(! $captionFileLink) {
+                                    $captionFileLink= $CaptionConfig | Where-Object {$_.subs -eq 'en'}
+                                }
+                            }
+
+                                If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
+
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
                                     $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
@@ -1592,7 +1605,20 @@ param(
                         }
                         Else {
                             # Caption file in AMS needs seperate download
-                            $captionFileLink= $SessionToGet.captionFileLink
+
+                            # Check for vtt files before we check any direct caption file (likely docx now)
+                            If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
+                                $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
+                                If( $Subs) {
+                                    $captionFileLink= $CaptionConfig | Where-Object {$_.subs -eq $Subs}
+                                }
+                                If(! $captionFileLink) {
+                                    $captionFileLink= $CaptionConfig | Where-Object {$_.subs -eq 'en'}
+                                }
+                            }
+                            If( ! $CaptionFileLink) {
+                                $captionFileLink= $SessionToGet.captionFileLink
+                            }
                             If( ! $captionFileLink) {
 
                                 If(! $OnDemandPage) {
