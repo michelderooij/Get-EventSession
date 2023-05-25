@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.94, May 25th, 2023
+    Version 3.95, May 25th, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -415,7 +415,8 @@
     3.93  Fixed scraping streams from Azure Media Services for Build2023+
           Reinstated caption downloading with VTT instead of docx (can use Sub to download alt. language)
     3.94  Added ytp-dl's --concurrent-fragments support (default 4)
-          
+    3.95  Fixed localized VTT downloading for Build 2023+ from Azure Media Services
+
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
     .\Get-EventSession.ps1 -DownloadFolder D:\Ignite-Format 22 -Keyword 'Teams' -Event Ignite -ExcludecommunityTopic 'Fun and Wellness'
@@ -1478,17 +1479,6 @@ param(
                             If( $DownloadedPage) {                        
                                 $OnDemandPage= $DownloadedPage.RawContent 
                                 
-
-                            If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
-                                $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
-                                If( $Subs) {
-                                    $captionFileLink= $CaptionConfig | Where-Object {$_.subs -eq $Subs}
-                                }
-                                If(! $captionFileLink) {
-                                    $captionFileLink= $CaptionConfig | Where-Object {$_.subs -eq 'en'}
-                                }
-                            }
-
                                 If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
 
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
@@ -1612,16 +1602,30 @@ param(
                             Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
                         }
                         Else {
-                            # Caption file in AMS needs seperate download
-
+                            # Caption file in AMS needs seperate download, fetch onDemand page if not already downloaded for video
+                            If(! $OnDemandPage) {
+                                If( $SessionToGet.onDemand) {
+                                    Try {
+                            		Write-Host ('Fetching video page to retrieve transcript information from {0}' -f $SessionToGet.onDemand) 
+                                        $DownloadedPage= Invoke-WebRequest -Uri $SessionToGet.onDemand -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                        If( $DownloadedPage) {                        
+                                            $OnDemandPage= $DownloadedPage.RawContent 
+                                        }
+                                    }
+                                    Catch {
+                                        #Problem retrieving file, look for alternative options
+                                    }
+                                }
+                              
+                            }
                             # Check for vtt files before we check any direct caption file (likely docx now)
                             If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
                                 $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
                                 If( $Subs) {
-                                    $captionFileLink= $CaptionConfig | Where-Object {$_.subs -eq $Subs}
+                                    $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq $Subs}).src
                                 }
                                 If(! $captionFileLink) {
-                                    $captionFileLink= $CaptionConfig | Where-Object {$_.subs -eq 'en'}
+                                    $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq 'en'}).src
                                 }
                             }
                             If( ! $CaptionFileLink) {
