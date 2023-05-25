@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.93, May 25th, 2023
+    Version 3.94, May 25th, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -412,8 +412,9 @@
           Merged Ignite2021H1 and Ignite2021H2 to Ignite2021
     3.91  Fixed output mentioning youtube-dl instead of actual tool (yt-dlp)
     3.92  Added .docx caption support for Build2023
-    3.93  Fixed downloading from Azure Media Services for Build2023+
+    3.93  Fixed scraping streams from Azure Media Services for Build2023+
           Reinstated caption downloading with VTT instead of docx (can use Sub to download alt. language)
+    3.94  Added ytp-dl's --concurrent-fragments support (default 4)
           
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -585,7 +586,12 @@ param(
     [switch]$Captions,
 
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [switch]$PreferDirect
+    [switch]$PreferDirect,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    $ConcurrentFragments= 4
 )
 
     # Max age for cache, older than this # hours will force info refresh
@@ -1550,6 +1556,7 @@ param(
                                         $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
                                         Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
                                         $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
+                                        $Arg += ('--concurrent-fragments {0}' -f $ConcurrentFragments)
                                         If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
                                         If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
                                     }
@@ -1585,6 +1592,7 @@ param(
                             $Arg+= '--socket-timeout 90'
                             $Arg+= '--no-check-certificate'                            
                             $Arg+= '--retries 15'
+                            $Arg+= '--concurrent-fragments {0}' -f $ConcurrentFragments
 
                             If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
 
