@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.95, May 25th, 2023
+    Version 3.96, May 25th, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -416,6 +416,7 @@
           Reinstated caption downloading with VTT instead of docx (can use Sub to download alt. language)
     3.94  Added ytp-dl's --concurrent-fragments support (default 4)
     3.95  Fixed localized VTT downloading for Build 2023+ from Azure Media Services
+    3.96  Removed hidden character causing "Â : The term 'Â' is not recognized .." messages.
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -1172,10 +1173,9 @@ param(
             Catch {
                 Throw ('Problem retrieving session catalog: {0}' -f $error[0])
             }
-      
-            [int32] $sessionCount = $searchResultsResponse.total
-            [int32] $remainder = 0
- 
+            [int32]$sessionCount = $searchResultsResponse.total
+            [int32]$remainder = 0
+
             $PageCount = [System.Math]::DivRem($sessionCount, $web.itemsPerPage, [ref]$remainder)
             If ($remainder -gt 0) {
                 $PageCount++
