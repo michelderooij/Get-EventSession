@@ -14,7 +14,7 @@
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
     Michel de Rooij 	        http://eightwone.com
-    Version 3.96, May 25th, 2023
+    Version 3.97, July 14th, 2023
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -417,6 +417,8 @@
     3.94  Added ytp-dl's --concurrent-fragments support (default 4)
     3.95  Fixed localized VTT downloading for Build 2023+ from Azure Media Services
     3.96  Removed hidden character causing "Â : The term 'Â' is not recognized .." messages.
+    3.97  Added Inspire 2023
+    3.98  Fixed retrieval of Inspire 2023 catalog
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -530,7 +532,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2022', 'Ignite2021', 'Inspire', 'Inspire2022', 'Inspire2021', 'Build', 'Build2023','Build2022', 'Build2021')]
+    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2022', 'Ignite2021', 'Inspire', 'Inspire2023', 'Inspire2022', 'Inspire2021', 'Build', 'Build2023','Build2022', 'Build2021')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -975,7 +977,19 @@ param(
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
-        {'Inspire', 'Inspire2022' -contains $_} {
+        {'Inspire', 'Inspire2023' -contains $_} {
+            $EventName= 'Inspire2023'
+            $EventType='API'
+            $EventAPIUrl= 'https://api.inspire.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP23-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP23-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP23-{0}'
+            $Method= 'Post'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-07-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
+        }
+        {'Inspire2022' -contains $_} {
             $EventName= 'Inspire2022'
             $EventType='API'
             $EventAPIUrl= 'https://api.inspire.microsoft.com'
