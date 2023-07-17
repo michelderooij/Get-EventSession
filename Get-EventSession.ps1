@@ -13,12 +13,13 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Michel de Rooij 	        http://eightwone.com
-    Version 3.97, July 14th, 2023
+    Michel de Rooij 	        
+    http://eightwone.com
+    Version 3.99, July 17th, 2023
 
     Special thanks to:
-    Mattias Fors 	        http://deploywindows.info
-    Scott Ladewig 	        http://ladewig.com
+    Mattias Fors 	            http://deploywindows.info
+    Scott Ladewig 	            http://ladewig.com
     Tim Pringle                 http://www.powershell.amsterdam
     Andy Race                   https://github.com/AndyRace
     Richard van Nieuwenhuizen
@@ -419,6 +420,7 @@
     3.96  Removed hidden character causing "Â : The term 'Â' is not recognized .." messages.
     3.97  Added Inspire 2023
     3.98  Fixed retrieval of Inspire 2023 catalog
+    3.99  Fixed reporting of element when we cannot add language filter
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -699,7 +701,7 @@ param(
 
                 # Test if file is placeholder
                 $isPlaceholder= $false
-		If( Test-ResolvedPath -Path $job.file) {
+		        If( Test-ResolvedPath -Path $job.file) {
                     $FileObj= Get-ChildItem -LiteralPath $job.file
                     If( $FileObj.Length -eq 42) {
 
@@ -1182,7 +1184,6 @@ param(
                 $SearchBody= $EventSearchBody -f '1', '1'
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
                 $searchResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
-                $searchResults= $searchResultsResponse.data
             }
             Catch {
                 Throw ('Problem retrieving session catalog: {0}' -f $error[0])
@@ -1534,7 +1535,7 @@ param(
                                                 }
                                                 Else {
                                                     $NewFormatElem= $Elem
-                                                    Write-Warning ('Problem determining where to add language criteria in {0}, leaving criteria as-is' -f $NewFormat)
+                                                    Write-Warning ('Problem determining where to add language criteria in {0}, leaving criteria as-is' -f $Elem)
                                                 }
                                                 $null= $NewFormat.Add( $NewFormatElem)
                                             }
