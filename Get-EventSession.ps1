@@ -15,7 +15,7 @@
 
     Michel de Rooij 	        
     http://eightwone.com
-    Version 3.99, July 17th, 2023
+    Version 4.00, August 9th, 2023
 
     Special thanks to:
     Mattias Fors 	            http://deploywindows.info
@@ -421,6 +421,8 @@
     3.97  Added Inspire 2023
     3.98  Fixed retrieval of Inspire 2023 catalog
     3.99  Fixed reporting of element when we cannot add language filter
+    4.00  Updated yt-dlp download location
+          Chenged checking yt-dlp.exe presence & validity
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -607,7 +609,7 @@ param(
     $YouTubeDL = Join-Path $PSScriptRoot $YouTubeEXE
     $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
 
-    $YTlink = 'https://www.videohelp.com/download/yt-dlp.exe'
+    $YTlink = 'https://github.com/yt-dlp/yt-dlp/releases/download/2023.07.06/yt-dlp.exe'
     $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
 
     # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
@@ -1080,24 +1082,18 @@ param(
                 $pinfo.RedirectStandardOutput = $true
                 $pinfo.UseShellExecute = $false
                 $pinfo.Arguments = $Arg
-                Write-Verbose ('Running {0} using {1}' -f $pinfo.FileName, ($pinfo.Arguments -join ' '))
-                $p = New-Object System.Diagnostics.Process
-                $p.StartInfo = $pinfo
-                $p.Start() | Out-Null
-                $stdout = $p.StandardOutput.ReadToEnd()
-                $stderr = $p.StandardError.ReadToEnd()
-                $p.WaitForExit()
 
-                If ($p.ExitCode -ne 0) {
-                    If ( $stderr -contains 'Error launching') {
-                        Throw ('Problem running {0}. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).' -f $YouTubeEXE)
-                    }
-                    Else {
-                        Write-Host $stderr
-                    }
+                Write-Verbose ('Running {0} using {1}' -f $pinfo.FileName, ($pinfo.Arguments -join ' '))
+                Try {
+                    $p = New-Object System.Diagnostics.Process
+                    $p.StartInfo = $pinfo
+                    $p.Start() | Out-Null
+                    $stdout = $p.StandardOutput.ReadToEnd()
+                    $stderr = $p.StandardError.ReadToEnd()
+                    $p.WaitForExit()
                 }
-                Else {
-                    Write-Host $stdout
+                Catch {
+                    Throw ('Problem running {0}. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).' -f $YouTubeEXE)
                 }
                 $DownloadVideos = $true
             }
