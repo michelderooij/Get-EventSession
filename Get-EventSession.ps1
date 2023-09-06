@@ -15,7 +15,7 @@
 
     Michel de Rooij 	        
     http://eightwone.com
-    Version 4.00, August 9th, 2023
+    Version 4.01, September 6th, 2023
 
     Special thanks to:
     Mattias Fors 	            http://deploywindows.info
@@ -174,13 +174,14 @@
     .PARAMETER Event
     Specify what event to download sessions for. 
     Options are:
-    - Ignite                  : Ignite events (current)
-    - Ignite2022,Ignite2021   : Ignite contents from that year/time
-    - Inspire                 : Inspire contents (current)
-    - Inspire2022,Inspire2021 : Inspire contents from that year
-    - Build                   : Build contents (current)
-    - Build2023,Build2022     : Build contents from that year
-    - MEC                     : MEC contents
+    - Ignite                              : Ignite events (current)
+    - Ignite2022,Ignite2021               : Ignite contents from that year/time
+    - Inspire                             : Inspire contents (current)
+    - Inspire2023,Inspire2022,Inspire2021 : Inspire contents from that year
+    - Build                               : Build contents (current)
+    - Build2023,Build2022,Build2021       : Build contents from that year
+    - MEC                                 : MEC contents (current)
+    - MEC2022                             : MEC contents from that year
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -422,7 +423,8 @@
     3.98  Fixed retrieval of Inspire 2023 catalog
     3.99  Fixed reporting of element when we cannot add language filter
     4.00  Updated yt-dlp download location
-          Chenged checking yt-dlp.exe presence & validity
+          Changed checking yt-dlp.exe presence & validity
+    4.01  Updated Event parameter help
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
