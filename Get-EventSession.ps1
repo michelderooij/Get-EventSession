@@ -15,7 +15,7 @@
 
     Michel de Rooij 	        
     http://eightwone.com
-    Version 4.02, October 5th, 2023
+    Version 4.1, April 10th, 2024
 
     Special thanks to:
     Mattias Fors 	            http://deploywindows.info
@@ -426,6 +426,7 @@
           Changed checking yt-dlp.exe presence & validity
     4.01  Updated Event parameter help
     4.02  Added Ignite 2023
+    4.10  Added Build 2024
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -539,7 +540,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2023', 'Ignite2022', 'Ignite2021', 'Inspire', 'Inspire2023', 'Inspire2022', 'Inspire2021', 'Build', 'Build2023','Build2022', 'Build2021')]
+    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2023', 'Ignite2022', 'Ignite2021', 'Inspire', 'Inspire2023', 'Inspire2022', 'Inspire2021', 'Build', 'Build2024', 'Build2023','Build2022', 'Build2021')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -1033,16 +1034,16 @@ param(
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
-        {'Build', 'Build2023' -contains $_} {
-            $EventName= 'Build2023'
+        {'Build', 'Build2024' -contains $_} {
+            $EventName= 'Build2024'
             $EventType='API'
-            $EventAPIUrl= 'https://api.build.microsoft.com'
+            $EventAPIUrl= 'https://api-v2.build.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B24-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B24-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B24-{0}'
             $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-05-21T08:00:00-05:00","endDateTime":"2024-05-23T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         {'Build2022' -contains $_} {
@@ -1055,6 +1056,18 @@ param(
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B22-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-01-01T08:00:00-05:00","endDateTime":"2022-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
+        }
+        {'Build2023' -contains $_} {
+            $EventName= 'Build2023'
+            $EventType='API'
+            $EventAPIUrl= 'https://api.build.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
+            $Method= 'Post'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         default {
