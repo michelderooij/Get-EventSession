@@ -15,7 +15,7 @@
 
     Michel de Rooij 	        
     http://eightwone.com
-    Version 4.1, April 10th, 2024
+    Version 4.11, May 22th, 2024
 
     Special thanks to:
     Mattias Fors 	            http://deploywindows.info
@@ -427,6 +427,7 @@
     4.01  Updated Event parameter help
     4.02  Added Ignite 2023
     4.10  Added Build 2024
+    4.11  Fixed bug in downloading captions
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -707,7 +708,7 @@ param(
 
                 # Test if file is placeholder
                 $isPlaceholder= $false
-		        If( Test-ResolvedPath -Path $job.file) {
+		If( Test-ResolvedPath -Path $job.file) {
                     $FileObj= Get-ChildItem -LiteralPath $job.file
                     If( $FileObj.Length -eq 42) {
 
@@ -1049,7 +1050,7 @@ param(
         {'Build2022' -contains $_} {
             $EventName= 'Build2022'
             $EventType='API'
-            $EventAPIUrl= 'https://api.build.microsoft.com'
+            $EventAPIUrl= 'https://api-v2.build.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B22-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B22-{0}'
@@ -1061,7 +1062,7 @@ param(
         {'Build2023' -contains $_} {
             $EventName= 'Build2023'
             $EventType='API'
-            $EventAPIUrl= 'https://api.build.microsoft.com'
+            $EventAPIUrl= 'https://api-v2.build.microsoft.com'
             $EventSearchURI= 'api/session/search'
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
@@ -1659,6 +1660,7 @@ param(
                               
                             }
                             # Check for vtt files before we check any direct caption file (likely docx now)
+                            $captionFileLink= $Null
                             If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
                                 $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
                                 If( $Subs) {
