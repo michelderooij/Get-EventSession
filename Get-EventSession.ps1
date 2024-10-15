@@ -15,11 +15,11 @@
 
     Michel de Rooij 	        
     http://eightwone.com
-    Version 4.11, May 22th, 2024
+    Version 4.21, October 15th, 2024
 
     Special thanks to:
-    Mattias Fors 	            http://deploywindows.info
-    Scott Ladewig 	            http://ladewig.com
+    Mattias Fors 	        http://deploywindows.info
+    Scott Ladewig 	        http://ladewig.com
     Tim Pringle                 http://www.powershell.amsterdam
     Andy Race                   https://github.com/AndyRace
     Richard van Nieuwenhuizen
@@ -174,14 +174,14 @@
     .PARAMETER Event
     Specify what event to download sessions for. 
     Options are:
-    - Ignite                              : Ignite events (current)
-    - Ignite2023,Ignite2022,Ignite2021    : Ignite contents from that year/time
-    - Inspire                             : Inspire contents (current)
-    - Inspire2023,Inspire2022,Inspire2021 : Inspire contents from that year
-    - Build                               : Build contents (current)
-    - Build2023,Build2022,Build2021       : Build contents from that year
-    - MEC                                 : MEC contents (current)
-    - MEC2022                             : MEC contents from that year
+    - Ignite                                       : Ignite contents (current)
+    - Ignite2024,Ignite2023,Ignite2022,Ignite2021  : Ignite contents from that year/time
+    - Inspire                                      : Inspire contents (current)
+    - Inspire2023,Inspire2022,Inspire2021          : Inspire contents from that year
+    - Build                                        : Build contents (current)
+    - Build2023,Build2022,Build2021                : Build contents from that year
+    - MEC                                          : MEC contents (current)
+    - MEC2022                                      : MEC contents from that year
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
@@ -428,6 +428,8 @@
     4.02  Added Ignite 2023
     4.10  Added Build 2024
     4.11  Fixed bug in downloading captions
+    4.20  Added Ignite 2024
+    4.21  Fixed date-range for Ignite 2024 ao
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -541,7 +543,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2023', 'Ignite2022', 'Ignite2021', 'Inspire', 'Inspire2023', 'Inspire2022', 'Inspire2021', 'Build', 'Build2024', 'Build2023','Build2022', 'Build2021')]
+    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2024','Ignite2023', 'Ignite2022', 'Ignite2021', 'Inspire', 'Inspire2023', 'Inspire2022', 'Inspire2021', 'Build', 'Build2024', 'Build2023','Build2022', 'Build2021')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -608,7 +610,7 @@ param(
 )
 
     # Max age for cache, older than this # hours will force info refresh
-    $MaxCacheAge = 24
+    $MaxCacheAge = 8
 
     $YouTubeEXE = 'yt-dlp.exe'
     $YouTubeDL = Join-Path $PSScriptRoot $YouTubeEXE
@@ -961,7 +963,20 @@ param(
             $EventLocale= 'en-us'
             $CaptionExt= 'vtt'
         }
-        {'Ignite','Ignite2023' -contains $_} {
+        {'Ignite','Ignite2024' -contains $_} {
+            $EventName= 'Ignite2024'
+            $EventType='API'
+            $EventAPIUrl= 'https://api-v2.ignite.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG24-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG24-{0}'
+            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
+            $Method= 'Post'
+            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-11-19T12:00:00.000Z","endDateTime":"2024-11-22T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
+        }
+        {'Ignite2023' -contains $_} {
             $EventName= 'Ignite2023'
             $EventType='API'
             $EventAPIUrl= 'https://api.ignite.microsoft.com'
@@ -971,7 +986,7 @@ param(
             $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-11-13T12:00:00.000Z","endDateTime":"2023-11-17T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-11-13T12:00:00.000Z","endDateTime":"2023-11-18T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         {'Ignite2022' -contains $_} {
@@ -984,7 +999,7 @@ param(
             $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
             # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-10-12T12:00:00.000Z","endDateTime":"2022-10-12T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-10-12T12:00:00.000Z","endDateTime":"2022-10-13T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         {'Ignite2021' -contains $_} {
@@ -996,7 +1011,7 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
             $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-11-30T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-12-01T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         {'Inspire', 'Inspire2023' -contains $_} {
@@ -1008,7 +1023,7 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP23-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP23-{0}'
             $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-07-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-08-01T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         {'Inspire2022' -contains $_} {
@@ -1020,7 +1035,7 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP22-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP22-{0}'
             $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-07-19T08:00:00-05:00","endDateTime":"2022-07-20T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-07-19T08:00:00-05:00","endDateTime":"2022-07-21T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         {'Inspire2021' -contains $_} {
@@ -1044,7 +1059,7 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B24-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B24-{0}'
             $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-05-21T08:00:00-05:00","endDateTime":"2024-05-23T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-05-21T08:00:00-05:00","endDateTime":"2024-05-24T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         {'Build2022' -contains $_} {
