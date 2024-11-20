@@ -36,11 +36,11 @@ Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite
 
 ## FAQ
 
-<U>Why do downloads happen twice?</U>
+### Why do downloads happen twice?
 Depending on the source, the video and audio streams are seperate. First the video stream is fetched, then the audio stream.
 After fetching, the two are merged.
 
-<U>How to specify format?</U>
+### How to specify format?
 Depending on availability and source, the default format is worstvideo+bestaudio/best. This means the worst quality video and best audio 
 stream are fetched and merged. 'Best' is attempted if no selection could be made. You can also specify bestvideo+bestaudio to get the best 
 quality video, but these files can be substantially larger. You can also perform more complex filter, e.g.
