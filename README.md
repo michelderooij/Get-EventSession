@@ -34,12 +34,25 @@ Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite
 .\Get-EventSession.ps1 -DownloadFolder D:\Ignite -ScheduleCode BRK3248,BRK3186
 ```
 
+## FAQ
+
+<U>Why do downloads happen twice?</U>
+Depending on the source, the video and audio streams are seperate. First the video stream is fetched, then the audio stream.
+After fetching, the two are merged.
+
+<U>How to specify format?</U>
+Depending on availability and source, the default format is worstvideo+bestaudio/best. This means the worst quality video and best audio 
+stream are fetched and merged. 'Best' is attempted if no selection could be made. You can also specify bestvideo+bestaudio to get the best 
+quality video, but these files can be substantially larger. You can also perform more complex filter, e.g.
+bestvideo[height=540][filesize<384MB]+bestaudio,bestvideo[height=720][filesize<512MB]+bestaudio,bestvideo[height=360]+bestaudio,bestvideo+bestaudio
+1) This would first attempt to download the video of 540p if it is less than 384MB, and best audio.
+2) When not present, then attempt to downlod video of 720p less than 512MB.
+3) Thirdly, attempt to download video of 360p with best audio.
+4) If none of the previous filters found matches, just pick the best video and best audio streams
+
 ## Credits
 
-* Mattias Fors ([blog](http://deploywindows.info))
-* Scott Ladewig ([blog](http://ladewig.com))
-* Tim Pringle ([blog](http://www.powershell.amsterdam))
-* Andy Race ([GitHub](https://github.com/AndyRace))
+Special thanks to [Mattias Fors](http://deploywindows.info), [Scott Ladewig](http://ladewig.com), [Tim Pringle](http://www.powershell.amsterdam), and [Andy Race](https://github.com/AndyRace).
 
 ## License
 
