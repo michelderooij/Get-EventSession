@@ -17,12 +17,7 @@
     http://eightwone.com
     Version 4.22, November 20th, 2024
 
-    Special thanks to:
-    Mattias Fors 	        http://deploywindows.info
-    Scott Ladewig 	        http://ladewig.com
-    Tim Pringle                 http://www.powershell.amsterdam
-    Andy Race                   https://github.com/AndyRace
-    Richard van Nieuwenhuizen
+    Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
     .DESCRIPTION
     This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
