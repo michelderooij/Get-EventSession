@@ -15,7 +15,7 @@
 
     Michel de Rooij 	        
     http://eightwone.com
-    Version 4.21, October 15th, 2024
+    Version 4.22, November 20th, 2024
 
     Special thanks to:
     Mattias Fors 	        http://deploywindows.info
@@ -66,7 +66,14 @@
     For Azure Media Services, you could also use format tags, such as 1_V_video_1 or 1_V_video_3.
     Note that these formats might not be consistent for different streams, e.g. 1_V_video_1
     might represent 1280x720 in one stream, while corresponding to 960x540 in another. To 
-    prevent this, usage of filters is recommended.
+    prevent this, usage of filters is recommended. For Azure Streams, you can use the following format:
+    478        mp4 320x180     30 │ ~237.16MiB  478k m3u8  │ avc3.4d4016  478k video only
+    628        mp4 384x216     30 │ ~311.58MiB  628k m3u8  │ avc3.4d401e  628k video only
+    928        mp4 512x288     30 │ ~460.43MiB  928k m3u8  │ avc3.4d4020  928k video only
+    1428       mp4 640x360     30 │ ~708.50MiB 1428k m3u8  │ avc3.4d4020 1428k video only
+    2128       mp4 960x540     30 │ ~  1.03GiB 2128k m3u8  │ avc3.4d4020 2128k video only
+    3128       mp4 1280x720    30 │ ~  1.52GiB 3128k m3u8  │ avc3.640029 3128k video only
+    6128       mp4 1920x1080   30 │ ~  2.97GiB 6128k m3u8  │ avc3.64002a 6128k video only
 
     YouTube
     =======
@@ -430,6 +437,8 @@
     4.11  Fixed bug in downloading captions
     4.20  Added Ignite 2024
     4.21  Fixed date-range for Ignite 2024 ao
+    4.22  Fixed download locations for Ignite 2024 content
+          Added Azure Stream format guidance
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -460,6 +469,7 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$Format,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -710,7 +720,7 @@ param(
 
                 # Test if file is placeholder
                 $isPlaceholder= $false
-		If( Test-ResolvedPath -Path $job.file) {
+		        If( Test-ResolvedPath -Path $job.file) {
                     $FileObj= Get-ChildItem -LiteralPath $job.file
                     If( $FileObj.Length -eq 42) {
 
@@ -741,7 +751,7 @@ param(
                     }
                 }
 
-		If( $isJobSuccess -and -not $isPlaceholder) {
+		        If( $isJobSuccess -and -not $isPlaceholder) {
 
                     Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
 
@@ -968,7 +978,7 @@ param(
             $EventType='API'
             $EventAPIUrl= 'https://api-v2.ignite.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG24-{0}'
+            $SessionUrl= 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG24-{0}'
             $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
             $Method= 'Post'
@@ -1534,11 +1544,18 @@ param(
                             }
                             If( $DownloadedPage) {                        
                                 $OnDemandPage= $DownloadedPage.RawContent 
-                                
-                                If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
+                                $Endpoint= $null
 
+                                If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
                                     Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
                                     $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
+                                }
+                                If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://stream\.event\.microsoft\.com/.*master\.m3u8)";') {
+                                    Write-Verbose ('Using Azure Media Stream URL {0}' -f $matches.AzureStreamURL)
+                                    $Endpoint= '{0}?(format=mpd-time-csf)' -f $matches.AzureStreamURL
+                                }
+
+                                If ($Endpoint) {
                                     $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
 
                                     # Construct Format for this specific video, language and audio languages available
