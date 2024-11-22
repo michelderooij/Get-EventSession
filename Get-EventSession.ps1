@@ -15,7 +15,7 @@
 
     Michel de Rooij 	        
     http://eightwone.com
-    Version 4.22, November 20th, 2024
+    Version 4.23, November 22th, 2024
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -212,6 +212,14 @@
     .PARAMETER Refresh
     When specified, this switch will try fetch current catalog information from online, ignoring
     any cached information which might be present.
+
+    .PARAMETER ConcurrentFragments
+    Specifies the number of fragments for yt-dlp to download simultaneously when downloading videos.
+    Default is 4.
+
+    .PARAMETER TempPath
+    This will allow you to specify a folder for yt-dlp to store temporary files in, eg fragments. 
+    When omitted, the folder where the videos are saved to will be used.
 
     .NOTES
     The youtube-dl.exe utility requires Visual C++ 2010 redist package
@@ -434,6 +442,11 @@
     4.21  Fixed date-range for Ignite 2024 ao
     4.22  Fixed download locations for Ignite 2024 content
           Added Azure Stream format guidance
+    4.23  Added TempPath parameter to specifying yt-dlp temporary files location
+          Fixed overwrite mode when calling yt-dlp
+          Added parameter description for ConcurrentFragments
+          Fixed reporting of failed downloads
+          Some minor code cleanup
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -611,7 +624,13 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    $ConcurrentFragments= 4
+    $ConcurrentFragments= 4,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [ValidateScript({ Test-Path -Path $_ -PathType Container})]
+    [string]$TempPath
 )
 
     # Max age for cache, older than this # hours will force info refresh
@@ -657,17 +676,18 @@ param(
         }
     }
 
-    Function Test-ResolvedPath( $Path) {
-        $null -ne (Get-ChildItem -LiteralPath $Path -ErrorAction SilentlyContinue)
-    }
-
     Function Clean-VideoLeftovers ( $videofile) {
         $masks= '.*.mp4.part', '.*.mp4.ytdl'
-	ForEach( $mask in $masks) {
-            $FileMask= $videofile -replace '.mp4', $mask
+	    ForEach( $mask in $masks) {
+            If( $TempPath) {
+                $FileMask= (Join-Path -Path $TempPath -ChildPath (Split-Path -Path $videofile -Leaf)) -replace '.mp4', $mask
+            }
+            Else {
+                $FileMask= $videofile -replace '.mp4', $mask
+            }
             Get-Item -LiteralPath $FileMask -ErrorAction SilentlyContinue | ForEach-Object {
                 Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
-	        Remove-Item -LiteralPath $_.fullname -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $_.fullname -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -699,14 +719,16 @@ param(
                     1 {
                         $isJobSuccess= $job.job.State -eq 'Completed'
                         $DeckInfo[ $InfoDownload]++
+                        Write-Progress -Id $job.job.Id -Activity ('Slidedeck {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                     }
                     2 {
-                        $isJobSuccess= Test-ResolvedPath -Path $job.file
+                        $isJobSuccess= Test-Path -LiteralPath $job.file
                         $VideoInfo[ $InfoDownload]++
                         Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                     }
                     3 {
-                        $isJobSuccess= $job.job.State -eq 'Completed'
+                        $isJobSuccess= Test-Path -LiteralPath $job.file
+                        Write-Progress -Id $job.job.Id -Activity ('Captions {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                     }
                     default {
                         $isJobSuccess= $false
@@ -715,7 +737,7 @@ param(
 
                 # Test if file is placeholder
                 $isPlaceholder= $false
-		        If( Test-ResolvedPath -Path $job.file) {
+		        If( Test-Path -LiteralPath $job.file) {
                     $FileObj= Get-ChildItem -LiteralPath $job.file
                     If( $FileObj.Length -eq 42) {
 
@@ -752,11 +774,15 @@ param(
 
                     # Do we need to adjust timestamp
                     If( $job.Timestamp) {
-                        #Set timestamp
-                        Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
-                        $FileObj= Get-ChildItem -LiteralPath $job.file
-                        $FileObj.CreationTime= Get-Date -Date $job.Timestamp
-                        $FileObj.LastWriteTime= Get-Date -Date $job.Timestamp
+                        If( Test-Path -LiteralPath $job.file) {
+                            Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
+                            $FileObj= Get-ChildItem -LiteralPath $job.file
+                            $FileObj.CreationTime= Get-Date -Date $job.Timestamp
+                            $FileObj.LastWriteTime= Get-Date -Date $job.Timestamp
+                        }
+                        Else {
+                            Write-Warning ('File {0} not found for timestamp adjustment' -f $job.file)
+                        }
                     }
 
                     If( $job.Type -eq 2) {
@@ -767,17 +793,17 @@ param(
                 Else {
                     switch( $job.Type) {
                         1 {
-                            Write-Host ('Problem downloading slidedeck {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
+                            Write-Host ('Problem downloading or missing slidedeck of {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
                             $job.job.ChildJobs | Stop-Job | Out-Null
                             $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
                         }
                         2 {
                             $LastLine= (Get-Content -LiteralPath $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
-                            Write-Host ('Problem downloading video {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
+                            Write-Host ('Problem downloading or missing video of {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
                             Remove-Item -LiteralPath $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
                         }
                         3 {
-                            Write-Host ('Problem downloading captions {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
+                            Write-Host ('Problem downloading or missing captions of {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
                             $job.job.ChildJobs | Stop-Job | Out-Null
                             $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
                         }
@@ -836,7 +862,7 @@ param(
             Switch( $BGJob.Type) {
                 1 {
                     $BGJob.Job.ChildJobs | Stop-Job -PassThru 
-	            $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+	                $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
                 }
                 2 {
                     Stop-Process -Id $BGJob.job.id -Force -ErrorAction SilentlyContinue
@@ -845,7 +871,7 @@ param(
                 }
                 3 {
                     $BGJob.Job.ChildJobs | Stop-Job -PassThru 
-	            $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+	                $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
                 }
             }
             Write-Warning ('Stopped downloading {0} {1}' -f $BGJob.scheduleCode, $BGJob.title) 
@@ -1415,13 +1441,13 @@ param(
 
     If ($Locale) {
         Write-Verbose ('Locale(s) specified: {0}' -f ($Locale -join ','))
-        Write-Verbose ('Sessions Pre: {0}'  -f ($SessionsToGet.Count))
+        Write-Verbose ('Sessions Pre-Filtering: {0}'  -f ($SessionsToGet.Count))
         $SessionsToGetTemp= [System.Collections.ArrayList]@()
         ForEach( $item in $Locale) {
             $SessionsToGet | Where-Object {$item -ieq $_.langLocale} | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
         }
         $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
-        Write-Verbose ('Sessions Post: {0}'  -f ($SessionsToGet.Count))
+        Write-Verbose ('Sessions Post-Filtering: {0}'  -f ($SessionsToGet.Count))
     }
 
     If ($Title) {
@@ -1499,7 +1525,7 @@ param(
                     $vidfileName = ("$FileName.mp4")
                     $vidFullFile = '\\?\{0}' -f (Join-Path $DownloadFolder $vidfileName)
 
-                    if ((Test-ResolvedPath -Path $vidFullFile) -and -not $Overwrite) {
+                    if ((Test-Path -LiteralPath $vidFullFile) -and -not $Overwrite) {
                         Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
                         $VideoInfo[ $InfoExist]++
                         # Clean video leftovers
@@ -1614,7 +1640,6 @@ param(
                                         $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
                                         Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
                                         $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-                                        $Arg += ('--concurrent-fragments {0}' -f $ConcurrentFragments)
                                         If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
                                         If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
                                     }
@@ -1643,7 +1668,6 @@ param(
                         }
                         If( $Endpoint) {
                             # Direct, AMS or YT video found, attempt download but first define common parameters
-
                             If ( $ProxyURL) { 
                                 $Arg += ('--proxy "{0}"' -f $ProxyURL)
                             }
@@ -1651,8 +1675,20 @@ param(
                             $Arg+= '--no-check-certificate'                            
                             $Arg+= '--retries 15'
                             $Arg+= '--concurrent-fragments {0}' -f $ConcurrentFragments
-
                             If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
+
+                            If ( $TempPath) { 
+                                # When using temp path, we need to use relative path for file and use home for location
+                                $OutputTemp= ($Arg | Where { $_ -like '-o *'})
+                                $OutputTemp= $OutputTemp.substring(4, $OutputTemp.Length - 4 -1)
+                                $Arg= $Arg | Where { $_ -inotlike '-o *'}
+                                $Arg+= '-o "{0}"' -f (Split-Path -Path $OutputTemp -Leaf)
+                                $Arg+= '-P home:"{0}"' -f (Split-Path -Path $OutputTemp -Parent).TrimEnd('\')
+                                $Arg+= '-P temp:"{0}"' -f $TempPath.TrimEnd('\')
+                            }
+                            If( $Overwrite) {
+                                $Arg+= '--force-overwrites'                                
+                            }
 
                             Write-Verbose ('Running: {0} {1}' -f $YouTubeEXE, ($Arg -join ' '))
                             Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
@@ -1666,7 +1702,7 @@ param(
                     If( $Captions) {
                         $captionExtFile= $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
 
-                        If ((Test-ResolvedPath -Path $captionExtFile) -and -not $Overwrite) {
+                        If ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
                             Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
                         }
                         Else {
@@ -1728,7 +1764,7 @@ param(
                                 Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
 
                                  $captionFullFile= $captionExtFile
-                                 Write-Verbose ('Downloading {0} to {1}' -f $captionFileLink,  $captionFullFile)
+                                 Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink,  $captionFullFile)
                                  Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
 
                              }
@@ -1737,6 +1773,7 @@ param(
                              }
                         }
                     }
+                    $captionFileLink= $null
                     $OnDemandPage= $null
                 }
               }
@@ -1787,7 +1824,7 @@ param(
                             $slidedeckFile = '{0}.pptx' -f $FileName
                         }
                         $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
-                        if ((Test-ResolvedPath -Path $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
+                        if ((Test-Path -LiteralPath $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
                             Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
                             $DeckInfo[ $InfoExist]++
                         }
