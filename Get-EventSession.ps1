@@ -15,7 +15,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.31, May 21st, 2025
+    Version 4.32, May 21st, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -450,6 +450,7 @@
     4.3   Added Build 2025
           Rewrite for new catalog API endpoint and session hosting
     4.31  Fixed downloading Captions for direct video links
+    4.32  Fixed default format when downloading from YouTube
 
     TODO:
     - Add processing of archived events through new API endpoint (starting with Build)
@@ -1700,7 +1701,7 @@ param(
                                     $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
                                     Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
                                     $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-                                    If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
+                                    If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"') }
                                     If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
                                 }
                                 Else {
