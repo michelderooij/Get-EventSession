@@ -15,7 +15,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.3, May 20th, 2025
+    Version 4.31, May 21st, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -449,6 +449,7 @@
           Some minor code cleanup
     4.3   Added Build 2025
           Rewrite for new catalog API endpoint and session hosting
+    4.31  Fixed downloading Captions for direct video links
 
     TODO:
     - Add processing of archived events through new API endpoint (starting with Build)
@@ -1568,6 +1569,9 @@ param(
             Else {
 
               If( ! $NoVideos) {
+
+                $onDemandPage= $null
+
                 If ( $DownloadVideos -or $DownloadAMSVideos) {
 
                     $vidfileName = ("$FileName.mp4")
@@ -1748,84 +1752,84 @@ param(
                             # Video not available or no link found
                             $VideoInfo[ $InfoPlaceholder]++
                         }
+                    }
+                    If( $Captions) {
+                        $captionExtFile= $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
 
-                        If( $Captions) {
-                            $captionExtFile= $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
-
-                            If ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
+                        If ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
                                 Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
-                            }
-                            Else {
-                                # Caption file in AMS needs seperate download, fetch onDemand page if not already downloaded for video
-                                If(! $OnDemandPage) {
-                                    If( $SessionToGet.onDemand) {
-                                        Try {
+                        }
+                        Else {
+
+                            # Caption file in AMS needs seperate download, fetch onDemand page if not already downloaded for video
+                            If(! $OnDemandPage) {
+                                If( $SessionToGet.onDemand) {
+                                    Try {
                                         Write-Host ('Fetching video page to retrieve transcript information from {0}' -f $SessionToGet.onDemand)
-                                            $DownloadedPage= Invoke-WebRequest -Uri $SessionToGet.onDemand -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                                            If( $DownloadedPage) {
-                                                $OnDemandPage= $DownloadedPage.RawContent
-                                            }
-                                        }
-                                        Catch {
-                                            #Problem retrieving file, look for alternative options
-                                        }
-                                    }
-
-                                }
-                                # Check for vtt files before we check any direct caption file (likely docx now)
-                                $captionFileLink= $Null
-                                If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
-                                    $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
-                                    If( $Subs) {
-                                        $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq $Subs}).src
-                                    }
-                                    If(! $captionFileLink) {
-                                        $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq 'en'}).src
-                                    }
-                                }
-                                If( ! $CaptionFileLink) {
-                                    $captionFileLink= $SessionToGet.captionFileLink
-                                }
-                                If( ! $captionFileLink) {
-
-                                    If(! $OnDemandPage) {
-                                        # Try if there is caption file reference on page
-                                        Try {
-                                            $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                        $DownloadedPage= Invoke-WebRequest -Uri $SessionToGet.onDemand -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                        If( $DownloadedPage) {
                                             $OnDemandPage= $DownloadedPage.RawContent
                                         }
-                                        Catch {
-                                            $DownloadedPage= $null
-                                            $onDemandPage= $null
-                                        }
                                     }
-                                    Else {
-                                        # Reuse one from video download
-                                    }
-
-                                    If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\{0}\?.*?)"' -f $CaptionExt) {
-                                        $captionFileLink= $matches.AzureCaptionURL
-                                    }
-                                    If( ! $captionFileLink) {
-                                        $captionFileLink= $captionURL -f $SessionToGet.SessionCode
+                                    Catch {
+                                        #Problem retrieving file, look for alternative options
                                     }
                                 }
-                                If( $captionFileLink) {
-                                    Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
 
-                                    $captionFullFile= $captionExtFile
-                                    Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink,  $captionFullFile)
-                                    Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
-
+                            }
+                            # Check for vtt files before we check any direct caption file (likely docx now)
+                            $captionFileLink= $Null
+                            If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
+                                $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
+                                If( $Subs) {
+                                    $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq $Subs}).src
                                 }
-                                Else {
-                                    Write-Warning "Subtitles requested, but no Caption URL found"
+                                If(! $captionFileLink) {
+                                    $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq 'en'}).src
                                 }
                             }
+                            If( ! $CaptionFileLink) {
+                                $captionFileLink= $SessionToGet.captionFileLink
+                            }
+                            If( ! $captionFileLink) {
+
+                                If(! $OnDemandPage) {
+                                    # Try if there is caption file reference on page
+                                    Try {
+                                        $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                        $OnDemandPage= $DownloadedPage.RawContent
+                                    }
+                                    Catch {
+                                        $DownloadedPage= $null
+                                        $onDemandPage= $null
+                                    }
+                                }
+                                Else {
+                                    # Reuse one from video download
+                                }
+
+                                If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\{0}\?.*?)"' -f $CaptionExt) {
+                                    $captionFileLink= $matches.AzureCaptionURL
+                                }
+                                If( ! $captionFileLink) {
+                                    $captionFileLink= $captionURL -f $SessionToGet.SessionCode
+                                }
+                            }
+                            If( $captionFileLink) {
+                                Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
+
+                                $captionFullFile= $captionExtFile
+                                Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink,  $captionFullFile)
+                                Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+
+                            }
+                            Else {
+                                Write-Warning "Subtitles requested, but no Caption URL found"
+                            }
                         }
-                        $captionFileLink= $null
-                        $OnDemandPage= $null
                     }
+                    $captionFileLink= $null
+                    $OnDemandPage= $null
                 }
               }
 
