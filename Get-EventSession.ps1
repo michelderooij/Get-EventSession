@@ -1,7 +1,7 @@
 <#
     .SYNOPSIS
-    Script to assist in downloading Microsoft Ignite, Inspire, Build or MEC contents, or return 
-    session information for easier digesting. Video downloads will leverage external utilities, 
+    Script to assist in downloading Microsoft Ignite, Inspire, Build or MEC contents, or return
+    session information for easier digesting. Video downloads will leverage external utilities,
     depending on the used video format. To prevent retrieving session information for every run,
     the script will cache session information.
 
@@ -13,23 +13,23 @@
     THIS CODE IS MADE AVAILABLE AS IS, WITHOUT WARRANTY OF ANY KIND. THE ENTIRE
     RISK OF THE USE OR THE RESULTS FROM THE USE OF THIS CODE REMAINS WITH THE USER.
 
-    Michel de Rooij 	        
+    Michel de Rooij
     http://eightwone.com
-    Version 4.23, November 22th, 2024
+    Version 4.3, May 20th, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
     .DESCRIPTION
-    This script can download Microsoft Ignite, Inspire, Build and MEC session information and available 
+    This script can download Microsoft Ignite, Inspire, Build and MEC session information and available
     slidedecks and videos using MyIgnite/MyInspire/MyBuild techcommunity portal.
 
     Video downloads will leverage one or more utilities:
     - YouTube-dl, which can be downloaded from https://yt-dl.org/latest/youtube-dl.exe. This utility
-      needs to reside in the same folder as the script. The script itself will try to download this 
+      needs to reside in the same folder as the script. The script itself will try to download this
       utility when the utility is not present.
-    - ffmpeg, which can be downloaded from https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip. 
-      This utility needs to reside in the same folder as the script, or you need to specify its location using -FFMPEG. 
-      The utility is used to bind the seperate video and audio streams of Azure Media Services files 
+    - ffmpeg, which can be downloaded from https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip.
+      This utility needs to reside in the same folder as the script, or you need to specify its location using -FFMPEG.
+      The utility is used to bind the seperate video and audio streams of Azure Media Services files
       in single files.
 
     When you are interested in retrieving session information only, you can use the InfoOnly switch.
@@ -48,10 +48,10 @@
 
     Azure Media Services
     ====================
-    For Azure Media Services, default option is worstvideo+bestaudio/best. Alternatively, you can 
-    select other formats (when present), e.g. bestvideo+bestaudio. Note that the format requested 
-    needs to be present in the stream package. Storage required for bestvideo is significantly 
-    more than worstvideo. Note that you can also provide complex filter and preference, e.g. 
+    For Azure Media Services, default option is worstvideo+bestaudio/best. Alternatively, you can
+    select other formats (when present), e.g. bestvideo+bestaudio. Note that the format requested
+    needs to be present in the stream package. Storage required for bestvideo is significantly
+    more than worstvideo. Note that you can also provide complex filter and preference, e.g.
     bestvideo[height=540][filesize<384MB]+bestaudio,bestvideo[height=720][filesize<512MB]+bestaudio,bestvideo[height=360]+bestaudio,bestvideo+bestaudio
     1) This would first attempt to download the video of 540p if it is less than 384MB, and best audio.
     2) When not present, then attempt to downlod video of 720p less than 512MB.
@@ -60,7 +60,7 @@
 
     For Azure Media Services, you could also use format tags, such as 1_V_video_1 or 1_V_video_3.
     Note that these formats might not be consistent for different streams, e.g. 1_V_video_1
-    might represent 1280x720 in one stream, while corresponding to 960x540 in another. To 
+    might represent 1280x720 in one stream, while corresponding to 960x540 in another. To
     prevent this, usage of filters is recommended. For Azure Streams, you can use the following format:
     478        mp4 320x180     30 │ ~237.16MiB  478k m3u8  │ avc3.4d4016  478k video only
     628        mp4 384x216     30 │ ~311.58MiB  628k m3u8  │ avc3.4d401e  628k video only
@@ -83,16 +83,16 @@
     22           mp4        1280x720   hd720 , avc1.64001F,  mp4a.40.2@192k (best, default)
 
     You can use filters or priority when selecting the media:
-    - Filters allow you to put criteria on the media you select to download, e.g. 
-      "bestvideo[height<=540]+bestaudio" will download the video stream where video is 540p at 
-      most plus the audio stream (and ffmpeg will combine the two to a single MP4 file). It 
-      allows you also to do cool things like "bestvideo[filesize<200M]+bestaudio". 
-    - Priority allows you to provide additional criteria if the previous one fails, such as 
-      when a desired quality is not available, e.g. "bestvideo+bestaudio/worstvideo+bestaudio" 
-      will download worst video and best audio stream when the best video and audio streams 
+    - Filters allow you to put criteria on the media you select to download, e.g.
+      "bestvideo[height<=540]+bestaudio" will download the video stream where video is 540p at
+      most plus the audio stream (and ffmpeg will combine the two to a single MP4 file). It
+      allows you also to do cool things like "bestvideo[filesize<200M]+bestaudio".
+    - Priority allows you to provide additional criteria if the previous one fails, such as
+      when a desired quality is not available, e.g. "bestvideo+bestaudio/worstvideo+bestaudio"
+      will download worst video and best audio stream when the best video and audio streams
       are not present.
 
-    Format selection filter courtesey of Youtube-DL; for more examples, see 
+    Format selection filter courtesey of Youtube-DL; for more examples, see
     https://github.com/ytdl-org/youtube-dl/blob/master/README.md#format-selection-examples
 
     Direct Downloads
@@ -100,20 +100,20 @@
     Direct Downloads are downloaded directly from the provided downloadVideoLink source.
 
     .PARAMETER Captions
-    When specified, for Azure Media Services contents, downloads caption files where available. 
-    Files are usually in VTT format, and playable by VLC Player a.o. Note that captions might not always 
+    When specified, for Azure Media Services contents, downloads caption files where available.
+    Files are usually in VTT format, and playable by VLC Player a.o. Note that captions might not always
     be accurate due to machine translation, but at least will help in following the story :)
 
     .PARAMETER Subs
-    When specified, for YouTube and Azure Media Services, downloads subtitles in provided languages by 
-    specifying one or more 2-letter language codes seperated by a comma, e.g. en,fr,de,nl. Downloaded 
-    subtitles may be in VTT or SRT format. Again, the subtitles might not always be accurate due to machine 
+    When specified, for YouTube and Azure Media Services, downloads subtitles in provided languages by
+    specifying one or more 2-letter language codes seperated by a comma, e.g. en,fr,de,nl. Downloaded
+    subtitles may be in VTT or SRT format. Again, the subtitles might not always be accurate due to machine
     translation. Note: For Azure Media Services, will only download caption in first language specified
 
     .PARAMETER Language
     When specified, for Azure Media hosted contents, downloads videos with specified audio stream where
     available. Note that if you mix this with specifying your own Format parameter, you need to
-    add the language in the filter yourself, e.g. bestaudio[format_id*=German]. Default value is English, 
+    add the language in the filter yourself, e.g. bestaudio[format_id*=German]. Default value is English,
     as otherwise YouTube will download the last audio stream from the manifest (which often is Spanish).
 
     .PARAMETER Keyword
@@ -134,11 +134,11 @@
     by '/', e.g. 'M365/Admin, Identity & Mgmt'. Wildcards are allowed.
 
     .PARAMETER SolutionArea
-    Only retrieve sessions for this solution area. You need to specify the full 
+    Only retrieve sessions for this solution area. You need to specify the full
     name, e.g. 'Modern Workplace'. Wildcards are allowed.
 
     .PARAMETER LearningPath
-    Only retrieve sessions part of this this learningPath. You need to specify 
+    Only retrieve sessions part of this this learningPath. You need to specify
     the full name, e.g. 'Data Analyst'. Wildcards are allowed.
 
     .PARAMETER Topic
@@ -167,21 +167,21 @@
     Specifies the maximum number of concurrent downloads.
 
     .PARAMETER Proxy
-    Specify the URI of the proxy to use, e.g. http://proxy:8080. When omitted, the current 
+    Specify the URI of the proxy to use, e.g. http://proxy:8080. When omitted, the current
     system settings will be used.
 
     .PARAMETER Start
     Item number to start crawling with - useful for restarts.
 
     .PARAMETER Event
-    Specify what event to download sessions for. 
+    Specify what event to download sessions for.
     Options are:
     - Ignite                                       : Ignite contents (current)
-    - Ignite2024,Ignite2023,Ignite2022,Ignite2021  : Ignite contents from that year/time
+    - Ignite2024,Ignite2023,Ignite2022             : Ignite contents from that year/time
     - Inspire                                      : Inspire contents (current)
     - Inspire2023,Inspire2022,Inspire2021          : Inspire contents from that year
     - Build                                        : Build contents (current)
-    - Build2023,Build2022,Build2021                : Build contents from that year
+    - Build2025,Build2024,Build2023                : Build contents from that year
     - MEC                                          : MEC contents (current)
     - MEC2022                                      : MEC contents from that year
 
@@ -196,17 +196,17 @@
     Skips detecting existing files, overwriting them if they exist.
 
     .PARAMETER PreferDirect
-    Instructs script to prefer direct video downloads over Azure Media Services, when both are 
-    available. Note that direct downloads may be faster, but offer only single quality downloads, 
-    where AMS may offer multiple video qualities.
+    Instructs script to prefer direct video downloads over Azure Media Services, when both are
+    available. Note that direct downloads may be faster, but offer only single quality downloads,
+    where AMS may offer multiple video qualities. Direct downloads ignores Format parameter.
 
     .PARAMETER Timestamp
-    Tells script to change the timestamp of the downloaded media files to match the original 
+    Tells script to change the timestamp of the downloaded media files to match the original
     session timestamp, when available.
 
     .PARAMETER Locale
-    When supported by the event, filters sessions on localization. 
-    Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR. 
+    When supported by the event, filters sessions on localization.
+    Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR.
     When omitted, defaults to en-US.
 
     .PARAMETER Refresh
@@ -218,7 +218,7 @@
     Default is 4.
 
     .PARAMETER TempPath
-    This will allow you to specify a folder for yt-dlp to store temporary files in, eg fragments. 
+    This will allow you to specify a folder for yt-dlp to store temporary files in, eg fragments.
     When omitted, the folder where the videos are saved to will be used.
 
     .NOTES
@@ -380,7 +380,7 @@
     3.51  Updated for Build 2021
     3.52  Updated NoRepeats maximum repeat check
           Added Language parameter to support Azure Media Services hosted videos containing multiple audio tracks
-    3.53  Updated for Inspire 2021 
+    3.53  Updated for Inspire 2021
     3.54  Fixed adding Language filter when complex Format is specified
     3.55  Fixed audio stream selection when requested language is not available or only single audio stream is present
     3.60  Added support for Ignite 2021; specify individual event using Ignite2021H1 (Spring) or Ignite2021H2 (Fall)
@@ -447,6 +447,11 @@
           Added parameter description for ConcurrentFragments
           Fixed reporting of failed downloads
           Some minor code cleanup
+    4.3   Added Build 2025
+          Rewrite for new catalog API endpoint and session hosting
+
+    TODO:
+    - Add processing of archived events through new API endpoint (starting with Build)
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -548,7 +553,7 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [ValidateRange(1,128)] 
+    [ValidateRange(1,128)]
     [int]$MaxDownloadJobs=4,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -561,7 +566,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2024','Ignite2023', 'Ignite2022', 'Ignite2021', 'Inspire', 'Inspire2023', 'Inspire2022', 'Inspire2021', 'Build', 'Build2024', 'Build2023','Build2022', 'Build2021')]
+    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2024','Ignite2023', 'Ignite2022', 'Inspire', 'Inspire2023', 'Inspire2022', 'Inspire2021', 'Build', 'Build2025')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -644,7 +649,7 @@ param(
     $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
 
     # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
-    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls" 
+    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
 
     $script:BackgroundDownloadJobs= @()
 
@@ -815,7 +820,7 @@ param(
         }
         $Num= ($Temp| Measure-Object).Count
         $script:BackgroundDownloadJobs= $Temp
-        Show-BackgroundDownloadJobs 
+        Show-BackgroundDownloadJobs
         return $Num
     }
 
@@ -858,10 +863,10 @@ param(
         # Trigger update jobs running data
         $null= Get-BackgroundDownloadJobs
         # Stop all slidedeck background jobs
-        ForEach( $BGJob in $script:BackgroundDownloadJobs ) { 
+        ForEach( $BGJob in $script:BackgroundDownloadJobs ) {
             Switch( $BGJob.Type) {
                 1 {
-                    $BGJob.Job.ChildJobs | Stop-Job -PassThru 
+                    $BGJob.Job.ChildJobs | Stop-Job -PassThru
 	                $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
                 }
                 2 {
@@ -870,17 +875,17 @@ param(
                     Remove-Item -LiteralPath $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
                 }
                 3 {
-                    $BGJob.Job.ChildJobs | Stop-Job -PassThru 
+                    $BGJob.Job.ChildJobs | Stop-Job -PassThru
 	                $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
                 }
             }
-            Write-Warning ('Stopped downloading {0} {1}' -f $BGJob.scheduleCode, $BGJob.title) 
+            Write-Warning ('Stopped downloading {0} {1}' -f $BGJob.scheduleCode, $BGJob.title)
 	    }
     }
 
     Function Add-BackgroundDownloadJob {
         param(
-            $Type, 
+            $Type,
             $FilePath,
             $DownloadUrl,
             $ArgumentList,
@@ -893,7 +898,7 @@ param(
         If ( $JobsRunning -ge $MaxDownloadJobs) {
             Write-Host ('Maximum background download jobs reached ({0}), waiting for free slot - press Ctrl-C once to abort..' -f $JobsRunning)
             While ( $JobsRunning -ge $MaxDownloadJobs) {
-                if ([system.console]::KeyAvailable) { 
+                if ([system.console]::KeyAvailable) {
                     Start-Sleep 1
                     $key = [system.console]::readkey($true)
                     if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
@@ -908,11 +913,11 @@ param(
         Switch( $Type) {
             1 {
                 # Slidedeck
-                $job= Start-Job -ScriptBlock { 
-                    param( $url, $file) 
+                $job= Start-Job -ScriptBlock {
+                    param( $url, $file)
                     $wc = New-Object System.Net.WebClient
                     $wc.Encoding = [System.Text.Encoding]::UTF8
-                    $wc.DownloadFile( $url, $file) 
+                    $wc.DownloadFile( $url, $file)
                 } -ArgumentList $DownloadUrl, $FilePath
                 $stdOutTempFile = $null
                 $stdErrTempFile = $null
@@ -925,8 +930,8 @@ param(
                 $ProcessParam= @{
                     FilePath= $FilePath
                     ArgumentList= $ArgumentList
-                    RedirectStandardError= $stdErrTempFile 
-                    RedirectStandardOutput= $stdOutTempFile 
+                    RedirectStandardError= $stdErrTempFile
+                    RedirectStandardOutput= $stdOutTempFile
                     Wait= $false
                     Passthru= $true
                     NoNewWindow= $true
@@ -936,11 +941,11 @@ param(
             }
             3 {
                 # Caption
-                $job= Start-Job -ScriptBlock { 
-                    param( $url, $file) 
+                $job= Start-Job -ScriptBlock {
+                    param( $url, $file)
                     $wc = New-Object System.Net.WebClient
                     $wc.Encoding = [System.Text.Encoding]::UTF8
-                    $wc.DownloadFile( $url, $file) 
+                    $wc.DownloadFile( $url, $file)
                 } -ArgumentList $DownloadUrl, $FilePath
                 $stdOutTempFile = $null
                 $stdErrTempFile = $null
@@ -984,7 +989,7 @@ param(
         Write-Host "No proxy setting detected, using direct connection"
     }
 
-    # Determine what event URLs to use. 
+    # Determine what event URLs to use.
     # Use {0} for session code (eg BRK123), {1} for session id (guid)
     Switch( $Event) {
         {'MEC','MEC2022' -contains $_} {
@@ -1033,18 +1038,6 @@ param(
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-10-12T12:00:00.000Z","endDateTime":"2022-10-13T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
-        {'Ignite2021' -contains $_} {
-            $EventName= 'Ignite2021'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.ignite.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG21-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG21-{0}'
-            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
-            $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-11-01T08:00:00-05:00","endDateTime":"2021-12-01T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
         {'Inspire', 'Inspire2023' -contains $_} {
             $EventName= 'Inspire2023'
             $EventType='API'
@@ -1081,7 +1074,18 @@ param(
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
-        {'Build', 'Build2024' -contains $_} {
+        {'Build', 'Build2025' -contains $_} {
+            $EventName= 'Build2025'
+            $EventType='API2'
+            $EventAPIUrl= 'https://eventtools.event.microsoft.com/build2025-prod/fallback/session-all-en-us.json'
+            $SessionUrl= 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
+            $CaptionURL= 'https://medius.microsoft.com/video/asset/CAPTION/{0}'
+            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
+            $Method= 'GET'
+            $CaptionExt= 'vtt'
+            $PreferDirect= $True
+        }
+        {'Build2024' -contains $_} {
             $EventName= 'Build2024'
             $EventType='API'
             $EventAPIUrl= 'https://api-v2.build.microsoft.com'
@@ -1093,6 +1097,18 @@ param(
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-05-21T08:00:00-05:00","endDateTime":"2024-05-24T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
+        {'Build2023' -contains $_} {
+            $EventName= 'Build2023'
+            $EventType='API'
+            $EventAPIUrl= 'https://api-v2.build.microsoft.com'
+            $EventSearchURI= 'api/session/search'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
+            $Method= 'Post'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
+        }
         {'Build2022' -contains $_} {
             $EventName= 'Build2022'
             $EventType='API'
@@ -1102,17 +1118,17 @@ param(
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B22-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B22-{0}'
             $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-01-01T08:00:00-05:00","endDateTime":"2022-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
-        {'Build2023' -contains $_} {
-            $EventName= 'Build2023'
+        {'Build2021' -contains $_} {
+            $EventName= 'Build2021'
             $EventType='API'
             $EventAPIUrl= 'https://api-v2.build.microsoft.com'
             $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
+            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B21-{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B21-{0}'
+            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B21-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
@@ -1242,16 +1258,52 @@ param(
     If ( -not( $SessionCacheValid)) {
 
       Switch($EventType) {
+        'API2' {
+            Write-Host ('Reading {0} session catalog' -f $EventName)
+            $web = @{
+                userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
+                requestUri  = [uri]('{0}' -f $EventAPIUrl)
+                headers     = @{'Content-Type'='application/json; charset=utf-8'; 'Accept-Encoding'='deflate, gzip' }
+                Timeout     = 300
+            }
+            Try {
+                Write-Verbose ('Using URI {0}' -f $web.requestUri)
+                $ResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL -Timeout $web.Timeout
+            }
+            Catch {
+                Throw ('Problem retrieving session catalog: {0}' -f $error[0])
+            }
+            [int32]$sessionCount = ($ResultsResponse | Measure-Object ).Count
+            Write-Host ('Processing information for {0} sessions' -f $sessionCount)
+            $data = [System.Collections.ArrayList]@()
+            $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
+            $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
+            ForEach( $item in $ResultsResponse) {
+                $Item.PSObject.Properties | ForEach-Object {
+                    If( @('speakerNames') -icontains $_.Name ) {
+                        $Item.($_.Name) = @($_.Value)
+                    }
+                    If( @('products', 'contentCategory') -icontains $_.Name ) {
+                        $Item.($_.Name) = @($_.Value -replace [char]9, '/')
+                    }
+                    If( @('topic', 'sessionType', 'sessionLevel', 'audienceTypes', 'deliveryTypes', 'viewingOptions', 'event', 'programmingLanguages') -icontains $_.Name ) {
+                        $Item.($_.Name) = $_.Value.displayValue -join ','
+                    }
+                }
+                Write-Verbose ('Adding info for session {0}' -f $Item.sessionCode)
+                $Item.PSObject.TypeNames.Insert(0, 'Session.Information')
+                $Item | Add-Member MemberSet PSStandardMembers $PSStandardMembers
+                $data.Add( $Item) | Out-Null
+            }
+        }
         'API' {
-
             Write-Host ('Reading {0} session catalog' -f $EventName)
             $web = @{
                 userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
                 requestUri  = [uri]('{0}/{1}' -f $EventAPIUrl, $EventSearchURI)
-                headers     = @{'Content-Type'='application/json'}
+                headers     = @{'Content-Type'='application/json; charset=utf-8'; 'Accept-Encoding'='deflate, gzip'}
                 itemsPerPage= 100
             }
-
             Try {
                 $SearchBody= $EventSearchBody -f '1', '1'
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
@@ -1262,12 +1314,10 @@ param(
             }
             [int32]$sessionCount = $searchResultsResponse.total
             [int32]$remainder = 0
-
             $PageCount = [System.Math]::DivRem($sessionCount, $web.itemsPerPage, [ref]$remainder)
             If ($remainder -gt 0) {
                 $PageCount++
             }
-
             Write-Host ('Reading information for {0} sessions' -f $sessionCount)
             $data = [System.Collections.ArrayList]@()
             $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
@@ -1288,15 +1338,15 @@ param(
                     $data.Add( $Item) | Out-Null
                 }
             }
-            Write-Progress -Id 1 -Completed -Activity "Finished retrieval of catalog" 
+            Write-Progress -Id 1 -Completed -Activity "Finished retrieval of catalog"
         }
-            
+
         'YT' {
             # YouTube published - Use yt-dlp to download the playlist as JSON so we can parse it to 'expected format'
             Write-Host ('Reading {0} playlist information (might take a while) ..' -f $EventName)
             $data = [System.Collections.ArrayList]@()
             $Arg= [System.Collections.ArrayList]@()
-            If ( $ProxyURL) { 
+            If ( $ProxyURL) {
                 $Arg.Add( '--proxy "{0}"' -f $ProxyURL) | Out-Null
             }
             $Arg.Add( '--socket-timeout 90') | Out-Null
@@ -1441,13 +1491,11 @@ param(
 
     If ($Locale) {
         Write-Verbose ('Locale(s) specified: {0}' -f ($Locale -join ','))
-        Write-Verbose ('Sessions Pre-Filtering: {0}'  -f ($SessionsToGet.Count))
         $SessionsToGetTemp= [System.Collections.ArrayList]@()
         ForEach( $item in $Locale) {
             $SessionsToGet | Where-Object {$item -ieq $_.langLocale} | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
         }
         $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
-        Write-Verbose ('Sessions Post-Filtering: {0}'  -f ($SessionsToGet.Count))
     }
 
     If ($Title) {
@@ -1533,125 +1581,128 @@ param(
                     }
                     else {
                         $downloadLink= $null
-                        If ( !( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) ) {
-                            If( $PreferDirect -and !( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink))) {
-                                $downloadLink = $SessionToGet.downloadVideoLink
+                        If( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)) {
+                            If( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) {
+                                If( $NoGuessing) {
+                                    $downloadLink= $null
+                                }
+                                Else {
+                                    # Try session page, eg https://medius.studios.ms/Embed/Video/IG18-BRK2094
+                                    $downloadLink = $SessionUrl -f $SessionToGet.SessionCode
+                                }
                             }
                             Else {
                                 $downloadLink = $SessionToGet.onDemand
                             }
                         }
                         Else {
-                            If (!( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)) ) {
+                            If( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) {
                                 $downloadLink = $SessionToGet.downloadVideoLink
                             }
                             Else {
-                                If( $NoGuessing) {
-                                    $downloadLink= $null
+                                If( $PreferDirect) {
+                                    $downloadLink = $SessionToGet.downloadVideoLink
                                 }
-                                Else { 
-                                    # Try session page, eg https://medius.studios.ms/Embed/Video/IG18-BRK2094
-                                    $downloadLink = $SessionUrl -f $SessionToGet.SessionCode
+                                Else {
+                                    $downloadLink = $SessionToGet.onDemand
                                 }
                             }
                         }
-                        If( $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com|mediastream\.microsoft\.com)' ) {
-                            Write-Verbose ('Checking hosted video link {0}' -f $downloadLink)
-                            Try {
-                                $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+
+                        Write-Verbose ('Checking download link {0}' -f $downloadLink)
+                        Try {
+                            $Response= Invoke-WebRequest -Method HEAD -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                            $DirectLink= $Response.Headers.'Content-Type' -eq 'video/mp4'
+                        }
+                        Catch {
+                            $DirectLink= $False
+                        }
+
+                        If( ! ( $DirectLink) -and $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com|mediastream\.microsoft\.com)' ) {
+                            $DownloadedPage= Invoke-WebRequest -Method Get -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                            $OnDemandPage= $DownloadedPage.RawContent
+                            $Endpoint= $null
+
+                            If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
+                                Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
+                                $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
                             }
-                            Catch {
-                                Write-Warning ('Problem downloading from {0}' -f $downloadLink)
+                            If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://stream\.event\.microsoft\.com/.*master\.m3u8)";') {
+                                Write-Verbose ('Using Azure Media Stream URL {0}' -f $matches.AzureStreamURL)
+                                $Endpoint= '{0}?(format=mpd-time-csf)' -f $matches.AzureStreamURL
                             }
-                            If( $DownloadedPage) {                        
-                                $OnDemandPage= $DownloadedPage.RawContent 
-                                $Endpoint= $null
 
-                                If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
-                                    Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
-                                    $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
-                                }
-                                If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://stream\.event\.microsoft\.com/.*master\.m3u8)";') {
-                                    Write-Verbose ('Using Azure Media Stream URL {0}' -f $matches.AzureStreamURL)
-                                    $Endpoint= '{0}?(format=mpd-time-csf)' -f $matches.AzureStreamURL
-                                }
+                            If ($Endpoint) {
+                                $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
 
-                                If ($Endpoint) {
-                                    $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-
-                                    # Construct Format for this specific video, language and audio languages available
-                                    If ( $Format) {
-                                        $ThisFormat= $Format
-                                    } 
-                                    Else { 
-                                        $ThisFormat= 'worstvideo+bestaudio'
-                                    }
- 
-                                    If( $SessionToGet.audioLanguage) {
-
-                                        If( $SessionToGet.audioLanguage.Count -gt 1) {
-                                            # Session has multiple audio tracks
-                                            If( $SessionToGet.audioLanguage -icontains $Language) {
-                                                Write-Warning ('Multiple audio languages available; will try downloading {0} audio stream' -f $Language)
-                                                $ThisLanguage= $Language
-                                            }
-                                            Else {
-                                                $ThisLanguage= $SessionToGet.audioLanguage | Select -First 1
-                                                Write-Warning ('Requested language {0} not available; will use default stream ({1})' -f $Language, $ThisLanguage)
-                                            }
-
-                                            # Take specified Format apart so we can insert the language filter per specification
-                                            $ThisFormatElem= $ThisFormat -Split ','
-                                            $NewFormat= [System.Collections.ArrayList]@()
-                                            ForEach( $Elem in $ThisFormatElem) {
-                                                If( $Elem -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
-                                                    If( $matches.audioparam) {
-                                                        $NewFormatElem= '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $matches.audioparam, $matches.post
-                                                    }
-                                                    Else {
-                                                        $NewFormatElem= '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
-                                                    }
-                                                }
-                                                Else {
-                                                    $NewFormatElem= $Elem
-                                                    Write-Warning ('Problem determining where to add language criteria in {0}, leaving criteria as-is' -f $Elem)
-                                                }
-                                                $null= $NewFormat.Add( $NewFormatElem)
-                                            }
-
-                                            # With language filters determined, recreate filter and add whole non-language specific qualifiers as next best 
-                                            $ThisFormat= ($NewFormat -Join ','), $ThisFormat -Join ','
-
-                                        }
-                                        Else {
-                                            # Only 1 Language available, so use default audio stream
-                                            Write-Warning ('Only single audio stream available, will use default audio stream')
-                                        }
-                                    }
-                                    Else {
-                                        # No multiple audio languages, use default audio stream
-                                        Write-Warning ('Multiple audio streams not available, will use default audio stream')
-                                    }
-                                    $Arg += ('--format {0}' -f $ThisFormat)
+                                # Construct Format for this specific video, language and audio languages available
+                                If ( $Format) {
+                                    $ThisFormat= $Format
                                 }
                                 Else {
-                                    # Check for embedded YouTube 
-                                    If( $OnDemandPage -match '"https:\/\/www\.youtube-nocookie\.com\/embed\/(?<YouTubeID>.+?)\?enablejsapi=1&"') {
-                                        $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
-                                        Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
-                                        $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-                                        If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
-                                        If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
-                                    }
-                                    Else {
-                                        Write-Warning "Skipping: Embedded AMS or YouTube URL not found"
-                                        $EndPoint= $null
-                                    }
+                                    $ThisFormat= 'worstvideo+bestaudio'
                                 }
 
+                                If( $SessionToGet.audioLanguage) {
+
+                                    If( $SessionToGet.audioLanguage.Count -gt 1) {
+                                        # Session has multiple audio tracks
+                                        If( $SessionToGet.audioLanguage -icontains $Language) {
+                                            Write-Warning ('Multiple audio languages available; will try downloading {0} audio stream' -f $Language)
+                                            $ThisLanguage= $Language
+                                        }
+                                        Else {
+                                            $ThisLanguage= $SessionToGet.audioLanguage | Select -First 1
+                                            Write-Warning ('Requested language {0} not available; will use default stream ({1})' -f $Language, $ThisLanguage)
+                                        }
+
+                                        # Take specified Format apart so we can insert the language filter per specification
+                                        $ThisFormatElem= $ThisFormat -Split ','
+                                        $NewFormat= [System.Collections.ArrayList]@()
+                                        ForEach( $Elem in $ThisFormatElem) {
+                                            If( $Elem -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
+                                                If( $matches.audioparam) {
+                                                    $NewFormatElem= '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $matches.audioparam, $matches.post
+                                                }
+                                                Else {
+                                                    $NewFormatElem= '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
+                                                }
+                                            }
+                                            Else {
+                                                $NewFormatElem= $Elem
+                                                Write-Warning ('Problem determining where to add language criteria in {0}, leaving criteria as-is' -f $Elem)
+                                            }
+                                            $null= $NewFormat.Add( $NewFormatElem)
+                                        }
+
+                                        # With language filters determined, recreate filter and add whole non-language specific qualifiers as next best
+                                        $ThisFormat= ($NewFormat -Join ','), $ThisFormat -Join ','
+
+                                    }
+                                    Else {
+                                        # Only 1 Language available, so use default audio stream
+                                        Write-Warning ('Only single audio stream available, will use default audio stream')
+                                    }
+                                }
+                                Else {
+                                    # No multiple audio languages, use default audio stream
+                                    Write-Warning ('Multiple audio streams not available, will use default audio stream')
+                                }
+                                $Arg += ('--format {0}' -f $ThisFormat)
                             }
                             Else {
-                                 Write-Warning ('Skipping: {0} unavailable' -f $downloadLink)
+                                # Check for embedded YouTube
+                                If( $OnDemandPage -match '"https:\/\/www\.youtube-nocookie\.com\/embed\/(?<YouTubeID>.+?)\?enablejsapi=1&"') {
+                                    $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
+                                    Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
+                                    $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
+                                    If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format 22') }
+                                    If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
+                                }
+                                Else {
+                                    Write-Warning "Skipping: Embedded AMS or YouTube URL not found"
+                                    $EndPoint= $null
+                                }
                             }
                         }
                         Else {
@@ -1668,16 +1719,16 @@ param(
                         }
                         If( $Endpoint) {
                             # Direct, AMS or YT video found, attempt download but first define common parameters
-                            If ( $ProxyURL) { 
+                            If ( $ProxyURL) {
                                 $Arg += ('--proxy "{0}"' -f $ProxyURL)
                             }
                             $Arg+= '--socket-timeout 90'
-                            $Arg+= '--no-check-certificate'                            
+                            $Arg+= '--no-check-certificate'
                             $Arg+= '--retries 15'
                             $Arg+= '--concurrent-fragments {0}' -f $ConcurrentFragments
                             If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
 
-                            If ( $TempPath) { 
+                            If ( $TempPath) {
                                 # When using temp path, we need to use relative path for file and use home for location
                                 $OutputTemp= ($Arg | Where { $_ -like '-o *'})
                                 $OutputTemp= $OutputTemp.substring(4, $OutputTemp.Length - 4 -1)
@@ -1687,7 +1738,7 @@ param(
                                 $Arg+= '-P temp:"{0}"' -f $TempPath.TrimEnd('\')
                             }
                             If( $Overwrite) {
-                                $Arg+= '--force-overwrites'                                
+                                $Arg+= '--force-overwrites'
                             }
 
                             Write-Verbose ('Running: {0} {1}' -f $YouTubeEXE, ($Arg -join ' '))
@@ -1697,84 +1748,84 @@ param(
                             # Video not available or no link found
                             $VideoInfo[ $InfoPlaceholder]++
                         }
-                    }
 
-                    If( $Captions) {
-                        $captionExtFile= $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
+                        If( $Captions) {
+                            $captionExtFile= $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
 
-                        If ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
-                            Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
-                        }
-                        Else {
-                            # Caption file in AMS needs seperate download, fetch onDemand page if not already downloaded for video
-                            If(! $OnDemandPage) {
-                                If( $SessionToGet.onDemand) {
-                                    Try {
-                            		Write-Host ('Fetching video page to retrieve transcript information from {0}' -f $SessionToGet.onDemand) 
-                                        $DownloadedPage= Invoke-WebRequest -Uri $SessionToGet.onDemand -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                                        If( $DownloadedPage) {                        
-                                            $OnDemandPage= $DownloadedPage.RawContent 
+                            If ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
+                                Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
+                            }
+                            Else {
+                                # Caption file in AMS needs seperate download, fetch onDemand page if not already downloaded for video
+                                If(! $OnDemandPage) {
+                                    If( $SessionToGet.onDemand) {
+                                        Try {
+                                        Write-Host ('Fetching video page to retrieve transcript information from {0}' -f $SessionToGet.onDemand)
+                                            $DownloadedPage= Invoke-WebRequest -Uri $SessionToGet.onDemand -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                            If( $DownloadedPage) {
+                                                $OnDemandPage= $DownloadedPage.RawContent
+                                            }
+                                        }
+                                        Catch {
+                                            #Problem retrieving file, look for alternative options
                                         }
                                     }
-                                    Catch {
-                                        #Problem retrieving file, look for alternative options
+
+                                }
+                                # Check for vtt files before we check any direct caption file (likely docx now)
+                                $captionFileLink= $Null
+                                If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
+                                    $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
+                                    If( $Subs) {
+                                        $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq $Subs}).src
+                                    }
+                                    If(! $captionFileLink) {
+                                        $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq 'en'}).src
                                     }
                                 }
-                              
-                            }
-                            # Check for vtt files before we check any direct caption file (likely docx now)
-                            $captionFileLink= $Null
-                            If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
-                                $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
-                                If( $Subs) {
-                                    $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq $Subs}).src
-                                }
-                                If(! $captionFileLink) {
-                                    $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq 'en'}).src
-                                }
-                            }
-                            If( ! $CaptionFileLink) {
-                                $captionFileLink= $SessionToGet.captionFileLink
-                            }
-                            If( ! $captionFileLink) {
-
-                                If(! $OnDemandPage) {
-                                    # Try if there is caption file reference on page
-                                    Try {
-                                        $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                                        $OnDemandPage= $DownloadedPage.RawContent
-                                    }
-                                    Catch {
-                                        $DownloadedPage= $null
-                                        $onDemandPage= $null
-                                    } 
-                                }
-                                Else {
-                                    # Reuse one from video download
-                                }
-
-                                If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\{0}\?.*?)"' -f $CaptionExt) {
-                                    $captionFileLink= $matches.AzureCaptionURL
+                                If( ! $CaptionFileLink) {
+                                    $captionFileLink= $SessionToGet.captionFileLink
                                 }
                                 If( ! $captionFileLink) {
-                                    $captionFileLink= $captionURL -f $SessionToGet.SessionCode
+
+                                    If(! $OnDemandPage) {
+                                        # Try if there is caption file reference on page
+                                        Try {
+                                            $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                            $OnDemandPage= $DownloadedPage.RawContent
+                                        }
+                                        Catch {
+                                            $DownloadedPage= $null
+                                            $onDemandPage= $null
+                                        }
+                                    }
+                                    Else {
+                                        # Reuse one from video download
+                                    }
+
+                                    If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\{0}\?.*?)"' -f $CaptionExt) {
+                                        $captionFileLink= $matches.AzureCaptionURL
+                                    }
+                                    If( ! $captionFileLink) {
+                                        $captionFileLink= $captionURL -f $SessionToGet.SessionCode
+                                    }
+                                }
+                                If( $captionFileLink) {
+                                    Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
+
+                                    $captionFullFile= $captionExtFile
+                                    Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink,  $captionFullFile)
+                                    Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+
+                                }
+                                Else {
+                                    Write-Warning "Subtitles requested, but no Caption URL found"
                                 }
                             }
-                            If( $captionFileLink) {
-                                Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
-
-                                 $captionFullFile= $captionExtFile
-                                 Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink,  $captionFullFile)
-                                 Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
-
-                             }
-                             Else {
-                                 Write-Warning "Subtitles requested, but no Caption URL found"
-                             }
                         }
+                        $captionFileLink= $null
+                        $OnDemandPage= $null
                     }
-                    $captionFileLink= $null
-                    $OnDemandPage= $null
                 }
               }
 
@@ -1825,7 +1876,7 @@ param(
                         }
                         $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
                         if ((Test-Path -LiteralPath $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
-                            Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray 
+                            Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray
                             $DeckInfo[ $InfoExist]++
                         }
                         Else {
@@ -1846,7 +1897,7 @@ param(
 
             $JobsRunning= Get-BackgroundDownloadJobs
 
-            if ([system.console]::KeyAvailable) { 
+            if ([system.console]::KeyAvailable) {
                 $key = [system.console]::readkey($true)
                 if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
                     Write-Host "TERMINATING" -ForegroundColor Red
@@ -1854,7 +1905,7 @@ param(
                     Exit -1
                 }
             }
-                   
+
         }
 
         $ProcessedSessions= $i
@@ -1865,7 +1916,7 @@ param(
         If ( $JobsRunning -gt 0) {
             Write-Host ('Waiting for download jobs to finish - press Ctrl-C once to abort)' -f $JobsRunning)
             While  ( $JobsRunning -gt 0) {
-                if ([system.console]::KeyAvailable) { 
+                if ([system.console]::KeyAvailable) {
                     Start-Sleep 1
                     $key = [system.console]::readkey($true)
                     if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
@@ -1882,7 +1933,7 @@ param(
             Write-Host ('Background download jobs have finished' -f $JobsRunning)
         }
 
-        Write-Progress -Id 2 -Completed -Activity "Download jobs finished"  
+        Write-Progress -Id 2 -Completed -Activity "Download jobs finished"
 
         Write-Host ('Selected {0} sessions out of a total of {1}' -f $ProcessedSessions, $TotalNumberOfSessions)
         Write-Host ('Downloaded {0} slide decks and {1} videos.' -f $DeckInfo[ $InfoDownload], $VideoInfo[ $InfoDownload])
