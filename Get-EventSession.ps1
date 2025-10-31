@@ -15,7 +15,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.32, May 21st, 2025
+    Version 4.33, October 31st, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -177,9 +177,9 @@
     Specify what event to download sessions for.
     Options are:
     - Ignite                                       : Ignite contents (current)
-    - Ignite2024,Ignite2023,Ignite2022             : Ignite contents from that year/time
+    - Ignite2025,Ignite2024,Ignite2023             : Ignite contents from that year/time
     - Inspire                                      : Inspire contents (current)
-    - Inspire2023,Inspire2022,Inspire2021          : Inspire contents from that year
+    - Inspire2023                                  : Inspire contents from that year
     - Build                                        : Build contents (current)
     - Build2025,Build2024,Build2023                : Build contents from that year
     - MEC                                          : MEC contents (current)
@@ -451,6 +451,8 @@
           Rewrite for new catalog API endpoint and session hosting
     4.31  Fixed downloading Captions for direct video links
     4.32  Fixed default format when downloading from YouTube
+    4.33  Added Ignite 2025
+          Removed 2021 and 2022 event options
 
     TODO:
     - Add processing of archived events through new API endpoint (starting with Build)
@@ -568,7 +570,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2024','Ignite2023', 'Ignite2022', 'Inspire', 'Inspire2023', 'Inspire2022', 'Inspire2021', 'Build', 'Build2025')]
+    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2025', 'Ignite2024','Ignite2023', 'Inspire', 'Inspire2023', 'Build', 'Build2025')]
     [string]$Event='',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
@@ -1001,7 +1003,19 @@ param(
             $EventLocale= 'en-us'
             $CaptionExt= 'vtt'
         }
-        {'Ignite','Ignite2024' -contains $_} {
+        {'Ignite','Ignite2025' -contains $_} {
+            $EventName= 'Ignite2025'
+            $EventType='API2'
+            $EventAPIUrl= 'https://api-v2.ignite.microsoft.com/api/session/all/en-US'
+            $SessionUrl= 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
+            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG25-{0}'
+            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
+            $Method= 'GET'
+            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2025-11-01T12:00:00.000Z","endDateTime":"2025-11-30T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+            $CaptionExt= 'vtt'
+        }
+        {'Ignite2024' -contains $_} {
             $EventName= 'Ignite2024'
             $EventType='API'
             $EventAPIUrl= 'https://api-v2.ignite.microsoft.com'
@@ -1027,19 +1041,6 @@ param(
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-11-13T12:00:00.000Z","endDateTime":"2023-11-18T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
-        {'Ignite2022' -contains $_} {
-            $EventName= 'Ignite2022'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.ignite.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG22-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG22-{0}'
-            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
-            $Method= 'Post'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-10-12T12:00:00.000Z","endDateTime":"2022-10-13T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
         {'Inspire', 'Inspire2023' -contains $_} {
             $EventName= 'Inspire2023'
             $EventType='API'
@@ -1050,30 +1051,6 @@ param(
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP23-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-08-01T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Inspire2022' -contains $_} {
-            $EventName= 'Inspire2022'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.inspire.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP22-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP22-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP22-{0}'
-            $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2022-07-19T08:00:00-05:00","endDateTime":"2022-07-21T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Inspire2021' -contains $_} {
-            $EventName= 'Inspire2021'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.inspire.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP21-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP21-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP21-{0}'
-            $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2021-01-01T08:00:00-05:00","endDateTime":"2021-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
         }
         {'Build', 'Build2025' -contains $_} {
@@ -1107,30 +1084,6 @@ param(
             $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
             $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
             $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
-            $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Build2022' -contains $_} {
-            $EventName= 'Build2022'
-            $EventType='API'
-            $EventAPIUrl= 'https://api-v2.build.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B22-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B22-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B22-{0}'
-            $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Build2021' -contains $_} {
-            $EventName= 'Build2021'
-            $EventType='API'
-            $EventAPIUrl= 'https://api-v2.build.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B21-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B21-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B21-{0}'
             $Method= 'Post'
             $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
             $CaptionExt= 'vtt'
@@ -1304,7 +1257,7 @@ param(
                 userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
                 requestUri  = [uri]('{0}/{1}' -f $EventAPIUrl, $EventSearchURI)
                 headers     = @{'Content-Type'='application/json; charset=utf-8'; 'Accept-Encoding'='deflate, gzip'}
-                itemsPerPage= 100
+                itemsPerPage= 1000
             }
             Try {
                 $SearchBody= $EventSearchBody -f '1', '1'
