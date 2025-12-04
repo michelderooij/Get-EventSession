@@ -15,7 +15,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.33, October 31st, 2025
+    Version 4.34, December 4th, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -453,6 +453,7 @@
     4.32  Fixed default format when downloading from YouTube
     4.33  Added Ignite 2025
           Removed 2021 and 2022 event options
+    4.34  Added removal of Ignite2025 placeholder files
 
     TODO:
     - Add processing of archived events through new API endpoint (starting with Build)
@@ -748,9 +749,9 @@ param(
                 $isPlaceholder= $false
 		        If( Test-Path -LiteralPath $job.file) {
                     $FileObj= Get-ChildItem -LiteralPath $job.file
-                    If( $FileObj.Length -eq 42) {
+                    If( $FileObj.Length -lt 1kb) {
 
-                        If( (Get-Content -LiteralPath $job.File) -eq 'No resource file is available for download') {
+                        If( @('No resource file is available for download','No resource file is available for download for the given id') -contains (Get-Content -LiteralPath $job.File) ) {
                             Write-Warning ('Removing {0} placeholder file {1}' -f $job.scheduleCode, $job.file)
                             Remove-Item -LiteralPath $job.file -Force
                             $isPlaceholder= $true
