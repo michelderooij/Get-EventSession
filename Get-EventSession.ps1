@@ -15,7 +15,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.34, December 4th, 2025
+    Version 4.35, December 4th, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -410,7 +410,7 @@
     3.77  Corrected API endpoints for some of the older events
     3.78  Fixed content-based help
     3.79  Fixed issue with placeholder detection
-          Fixed path handling, fixes file detection and timestamping a.o.
+          Fixed path handling, fixes file detection and timestamping a.o.7
           Added PowerShell 5.1 requirement (tested with)
     3.80  Fixed redundant passing of Format to YouTube-dl
     3.81  Moved to using ytl-dl, a fork of Youtube-DL (not maintained any longer)
@@ -454,6 +454,8 @@
     4.33  Added Ignite 2025
           Removed 2021 and 2022 event options
     4.34  Added removal of Ignite2025 placeholder files
+    4.35  Setting video output preset to mp4 to make sure merging results in mp4 file, not an mkv
+          Added header to output
 
     TODO:
     - Add processing of archived events through new API endpoint (starting with Build)
@@ -975,7 +977,12 @@ param(
 ##########
 # MAIN
 ##########
-#Requires -Version 5.1
+
+    Write-Host( '*' * 78)
+    Write-Host( 'Get-EventSession v4.35')
+    Write-Host( 'Microsoft event video and slidedeck downloading script')
+    Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
+    Write-Host( '*' * 78)
 
     If( $psISE) {
         Throw( 'Running from PowerShell ISE is not supported due to requirement to capture console input for proper termination of the script. Please run from a regular PowerShell session.')
@@ -1681,6 +1688,7 @@ param(
                             If ( $ProxyURL) {
                                 $Arg += ('--proxy "{0}"' -f $ProxyURL)
                             }
+                            $Arg+= '-t mp4'
                             $Arg+= '--socket-timeout 90'
                             $Arg+= '--no-check-certificate'
                             $Arg+= '--retries 15'
