@@ -143,13 +143,13 @@ function Get-VideoProperties {
     param($FilePath, $FFMPEGPath)
     
     try {
-        $probe = & $FFMPEGPath -i "$FilePath" 2>&1
+        $probe = & $FFMPEGPath -i $FilePath 2>&1
         $probeText = $probe | Out-String
         
         $width = 0
         $height = 0
         
-        if ($probeText -match 'Stream.*Video.*?(\d+)x(\d+)') {
+        if( $probeText -match 'Stream.*Video.*?(\d+)x(\d+)') {
             $width = [int]$matches[1]
             $height = [int]$matches[2]
         }
@@ -160,7 +160,7 @@ function Get-VideoProperties {
         }
     }
     catch {
-        Write-Warning "Failed to get video properties for $FilePath"
+        Write-Warning ('Failed to get video properties for {0}' -f $FilePath)
         return @{
             Width = 0
             Height = 0
@@ -174,40 +174,40 @@ function Recompress-JpegWithBitmap {
         Add-Type -AssemblyName System.Drawing
 
         # Load the image as a Bitmap
-        $bitmap = New-Object System.Drawing.Bitmap($SrcPath)
+        $bitmap = New-Object System.Drawing.Bitmap( $SrcPath)
 
         # Get JPEG encoder
         $encoders = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders()
-        $jpegCodec = $encoders | Where-Object { $_.MimeType -eq "image/jpeg" } | Select-Object -First 1
+        $jpegCodec = $encoders | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
 
-        if (-not $jpegCodec) {
+        if( -not $jpegCodec) {
             $bitmap.Dispose()
             return $false
         }
 
         # Set up encoder parameters for quality
-        $encParams = New-Object System.Drawing.Imaging.EncoderParameters(1)
-        $encParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]$Quality)
+        $encParams = New-Object System.Drawing.Imaging.EncoderParameters( 1)
+        $encParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter( [System.Drawing.Imaging.Encoder]::Quality, [long]$Quality)
 
         # Save with compression
-        $bitmap.Save($DstPath, $jpegCodec, $encParams)
+        $bitmap.Save( $DstPath, $jpegCodec, $encParams)
         $bitmap.Dispose()
 
         return $true
     } catch {
-        Write-Warning "Error recompressing $SrcPath : $_"
+        Write-Warning ('Error recompressing {0} : {1}' -f $SrcPath, $_)
         return $false
     }
 }
 
 function Recompress-PngWithPngquant {
-    param($SrcPath, $DstPath, [string]$QualityRange="60-90", $PNGQUANTPath)
+    param($SrcPath, $DstPath, [string]$QualityRange='60-90', $PNGQUANTPath)
     try {
         # Use pngquant for lossy PNG compression with good quality
-        $process = Start-Process -FilePath $PNGQUANTPath -ArgumentList @("--quality=$QualityRange", "--output", "`"$DstPath`"", "`"$SrcPath`"") -Wait -PassThru -NoNewWindow -RedirectStandardError "NUL"
+        $process = Start-Process -FilePath $PNGQUANTPath -ArgumentList @( ('--quality={0}' -f $QualityRange), '--output', ('"""""' + $DstPath + '"""""'), ('"""""' + $SrcPath + '"""""')) -Wait -PassThru -NoNewWindow -RedirectStandardError 'NUL'
         return $process.ExitCode -eq 0
     } catch {
-        Write-Warning "Error optimizing PNG with pngquant $SrcPath : $_"
+        Write-Warning ('Error optimizing PNG with pngquant {0} : {1}' -f $SrcPath, $_)
         return $false
     }
 }
@@ -216,79 +216,79 @@ function Reencode-MediaWithFFmpeg {
     param($SrcPath, $DstPath, [int]$TargetHeight, [int]$TargetWidth, [int]$CRF, [string]$Preset, $Extension= '.mp4', $FFMPEGPath)
     try {
         # Construct scale filter
-        $scaleHeight = if ($TargetHeight) { "min($TargetHeight,ih)" } else { 'ih' }
-        $scaleWidth = if ($TargetWidth) { "min($TargetWidth,iw)" } else { 'iw' }
-        $scaleFilter = "scale='$scaleWidth':'$scaleHeight'"
+        $scaleHeight = if( $TargetHeight) { 'min({0},ih)' -f $TargetHeight } else { 'ih' }
+        $scaleWidth = if( $TargetWidth) { 'min({0},iw)' -f $TargetWidth } else { 'iw' }
+        $scaleFilter = 'scale=''{0}'':''{1}''' -f $scaleWidth, $scaleHeight
         
         $arguments = @(
-            "-i", ('"{0}"' -f $SrcPath)
-            "-vf", ("""{0}""" -f $scaleFilter)
-            "-y"  # Overwrite output file
+            '-i', $SrcPath
+            '-vf', $scaleFilter
+            '-y'  # Overwrite output file
         )
         
-        switch($Extension.ToLower()) {
-            ".wmv" {
-                $arguments+= "-f"
-                $arguments+= "asf"
-                $arguments+= "-c:v"
-                $arguments+= "wmv2"
-                $arguments+= "-b:v"
-                $arguments+= "2500k"
-                $arguments+= "-c:a"
-                $arguments+= "wmav2"
-                $arguments+= "-b:a"
-                $arguments+= "128k"
+        switch( $Extension.ToLower()) {
+            '.wmv' {
+                $arguments+= '-f'
+                $arguments+= 'asf'
+                $arguments+= '-c:v'
+                $arguments+= 'wmv2'
+                $arguments+= '-b:v'
+                $arguments+= '2500k'
+                $arguments+= '-c:a'
+                $arguments+= 'wmav2'
+                $arguments+= '-b:a'
+                $arguments+= '128k'
             }
-            ".mov" {
-                $arguments+= "-f"
-                $arguments+= "mov"
-                $arguments+= "-crf"
+            '.mov' {
+                $arguments+= '-f'
+                $arguments+= 'mov'
+                $arguments+= '-crf'
                 $arguments+= $CRF.ToString()
-                $arguments+= "-preset"
+                $arguments+= '-preset'
                 $arguments+= $Preset
-                $arguments+= "-c:v"
-                $arguments+= "libx264"
-                $arguments+= "-c:a"
-                $arguments+= "aac"
-                $arguments+= "-b:a"
-                $arguments+= "128k"
+                $arguments+= '-c:v'
+                $arguments+= 'libx264'
+                $arguments+= '-c:a'
+                $arguments+= 'aac'
+                $arguments+= '-b:a'
+                $arguments+= '128k'
             }
-            ".avi" {
-                $arguments+= "-f"
-                $arguments+= "avi"
-                $arguments+= "-c:v"
-                $arguments+= "mpeg4"
-                $arguments+= "-q:v"
-                $arguments+= "3"
-                $arguments+= "-c:a"
-                $arguments+= "mp3"
-                $arguments+= "-b:a"
-                $arguments+= "128k"
+            '.avi' {
+                $arguments+= '-f'
+                $arguments+= 'avi'
+                $arguments+= '-c:v'
+                $arguments+= 'mpeg4'
+                $arguments+= '-q:v'
+                $arguments+= '3'
+                $arguments+= '-c:a'
+                $arguments+= 'mp3'
+                $arguments+= '-b:a'
+                $arguments+= '128k'
            }
             default {
                 # mp4
-                $arguments+= "-f"
-                $arguments+= "mp4"
-                $arguments+= "-crf"
+                $arguments+= '-f'
+                $arguments+= 'mp4'
+                $arguments+= '-crf'
                 $arguments+= $CRF.ToString()
-                $arguments+= "-preset"
+                $arguments+= '-preset'
                 $arguments+= $Preset
-                $arguments+= "-c:v"
-                $arguments+= "libx264"
-                $arguments+= "-c:a"
-                $arguments+= "aac"
-                $arguments+= "-b:a"
-                $arguments+= "128k"
+                $arguments+= '-c:v'
+                $arguments+= 'libx264'
+                $arguments+= '-c:a'
+                $arguments+= 'aac'
+                $arguments+= '-b:a'
+                $arguments+= '128k'
             }
         }
         $arguments+= $DstPath
 
-        Write-Output ("FFmpeg arguments: {0}" -f ($arguments -join ' '))
+        Write-Output ('FFmpeg arguments: {0}' -f ($arguments -join ' '))
 
-        $process = Start-Process -FilePath $FFMPEGPath -ArgumentList $arguments -Wait -PassThru -NoNewWindow -RedirectStandardError "NUL"
+        $process = Start-Process -FilePath $FFMPEGPath -ArgumentList $arguments -Wait -PassThru -NoNewWindow -RedirectStandardError 'NUL'
         return $process.ExitCode -eq 0
     } catch {
-        Write-Warning "Error reencoding video $SrcPath : $_"
+        Write-Warning ('Error reencoding video {0} : {1}' -f $SrcPath, $_)
         return $false
     }
 }
@@ -303,25 +303,25 @@ function Update-PptxMedia {
         $mediaFiles = Get-ChildItem -Path $MediaDir -File
 
         # Open the PPTX for update
-        $zip = [System.IO.Compression.ZipFile]::Open($PptxPath, [System.IO.Compression.ZipArchiveMode]::Update)
+        $zip = [System.IO.Compression.ZipFile]::Open( $PptxPath, [System.IO.Compression.ZipArchiveMode]::Update)
 
-        foreach ($file in $mediaFiles) {
+        foreach( $file in $mediaFiles) {
             # Use forward slashes for ZIP entry paths
-            $entryPath = "ppt/media/$($file.Name)"
+            $entryPath = 'ppt/media/{0}' -f $file.Name
 
             # Find the existing entry
             $existingEntry = $zip.Entries | Where-Object { $_.FullName -eq $entryPath }
 
-            if ($existingEntry) {
-                Write-Output "Updating: $entryPath"
+            if( $existingEntry) {
+                Write-Output ('Updating: {0}' -f $entryPath)
 
                 # Open the entry and overwrite its content
                 $entryStream = $existingEntry.Open()
-                $entryStream.SetLength(0)  # Clear existing content
+                $entryStream.SetLength( 0)  # Clear existing content
 
                 # Copy new file content
-                $fileStream = [System.IO.File]::OpenRead($file.FullName)
-                $fileStream.CopyTo($entryStream)
+                $fileStream = [System.IO.File]::OpenRead( $file.FullName)
+                $fileStream.CopyTo( $entryStream)
 
                 # Close streams
                 $fileStream.Close()
@@ -330,7 +330,7 @@ function Update-PptxMedia {
                 $entryStream.Dispose()
             }
             else {
-                Write-Warning "Entry not found in archive: $entryPath"
+                Write-Warning ('Entry not found in archive: {0}' -f $entryPath)
             }
         }
 
@@ -338,8 +338,8 @@ function Update-PptxMedia {
         return $true
 
     } catch {
-        Write-Warning "Error updating PPTX media: $_"
-        if ($zip) {
+        Write-Warning ('Error updating PPTX media: {0}' -f $_)
+        if( $zip) {
             try { $zip.Dispose() } catch { }
         }
         return $false
@@ -349,11 +349,11 @@ function Update-PptxMedia {
 # -- Begin
 
 # Check for ffmpeg.exe
-if (-not $FFMPEG) {
+if( -not $FFMPEG) {
     $FFMPEG = Join-Path $PSScriptRoot 'ffmpeg.exe'
 }
 
-if (-not (Test-Path $FFMPEG)) {
+if( -not (Test-Path $FFMPEG)) {
     Write-Host ('ffmpeg.exe not found at {0}, attempting to download...' -f $FFMPEG) -ForegroundColor Yellow
     
     $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
@@ -362,16 +362,16 @@ if (-not (Test-Path $FFMPEG)) {
     try {
         Invoke-WebRequest -Uri $FFMPEGlink -OutFile $tempFile
         
-        if (Test-Path $tempFile) {
+        if( Test-Path $tempFile) {
             Add-Type -AssemblyName System.IO.Compression.FileSystem
             Write-Host ('Downloaded {0}, extracting ffmpeg.exe...' -f $tempFile) -ForegroundColor Yellow
             
-            $FFMPEGZip = [System.IO.Compression.ZipFile]::OpenRead($tempFile)
+            $FFMPEGZip = [System.IO.Compression.ZipFile]::OpenRead( $tempFile)
             $FFMPEGEntry = $FFMPEGZip.Entries | Where-Object { $_.FullName -like '*/bin/ffmpeg.exe' }
             
-            if ($FFMPEGEntry) {
+            if( $FFMPEGEntry) {
                 try {
-                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($FFMPEGEntry, $FFMPEG, $true)
+                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile( $FFMPEGEntry, $FFMPEG, $true)
                     $FFMPEGZip.Dispose()
                     Remove-Item -LiteralPath $tempFile -Force
                     Write-Host ('ffmpeg.exe extracted to {0}' -f $FFMPEG) -ForegroundColor Green
@@ -390,18 +390,18 @@ if (-not (Test-Path $FFMPEG)) {
     }
 }
 
-if (-not (Test-Path $FFMPEG)) {
+if( -not (Test-Path $FFMPEG)) {
     throw ('ffmpeg.exe not found at {0}' -f $FFMPEG)
 }
 
 Write-Host ('Using ffmpeg.exe at {0}' -f $FFMPEG) -ForegroundColor Green
 
 # Check for pngquant.exe
-if (-not $PNGQUANT) {
+if( -not $PNGQUANT) {
     $PNGQUANT = Join-Path $PSScriptRoot 'pngquant.exe'
 }
 
-if (-not (Test-Path $PNGQUANT)) {
+if( -not (Test-Path $PNGQUANT)) {
     Write-Host ('pngquant.exe not found at {0}, attempting to download...' -f $PNGQUANT) -ForegroundColor Yellow
     
     $PNGQUANTlink = 'https://pngquant.org/pngquant-windows.zip'
@@ -410,16 +410,16 @@ if (-not (Test-Path $PNGQUANT)) {
     try {
         Invoke-WebRequest -Uri $PNGQUANTlink -OutFile $tempFile
         
-        if (Test-Path $tempFile) {
+        if( Test-Path $tempFile) {
             Add-Type -AssemblyName System.IO.Compression.FileSystem
             Write-Host ('Downloaded {0}, extracting pngquant.exe...' -f $tempFile) -ForegroundColor Yellow
             
-            $PNGQUANTZip = [System.IO.Compression.ZipFile]::OpenRead($tempFile)
+            $PNGQUANTZip = [System.IO.Compression.ZipFile]::OpenRead( $tempFile)
             $PNGQUANTEntry = $PNGQUANTZip.Entries | Where-Object { $_.Name -eq 'pngquant.exe' }
             
-            if ($PNGQUANTEntry) {
+            if( $PNGQUANTEntry) {
                 try {
-                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($PNGQUANTEntry, $PNGQUANT, $true)
+                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile( $PNGQUANTEntry, $PNGQUANT, $true)
                     $PNGQUANTZip.Dispose()
                     Remove-Item -LiteralPath $tempFile -Force
                     Write-Host ('pngquant.exe extracted to {0}' -f $PNGQUANT) -ForegroundColor Green
@@ -438,7 +438,7 @@ if (-not (Test-Path $PNGQUANT)) {
     }
 }
 
-if (-not (Test-Path $PNGQUANT)) {
+if( -not (Test-Path $PNGQUANT)) {
     throw ('pngquant.exe not found at {0}' -f $PNGQUANT)
 }
 
@@ -449,14 +449,16 @@ $ProgressPreference = 'SilentlyContinue'
 # Get all PPTX files from source path
 $pptxFiles = Get-ChildItem -Path $SourcePath -Recurse -Filter *.pptx -ErrorAction SilentlyContinue
 
-foreach ($pptxFile in $pptxFiles) {
-    Write-Output "`n=========================================="
-    Write-Output "Processing PPTX: $($pptxFile.FullName)"
-    Write-Output "Using Image Quality: $ImageQuality%, Video Target: ${TargetWidth}x${TargetHeight}px, CRF: $CRF, Preset: $Preset"
-    Write-Output "==========================================`n"
+foreach( $pptxFile in $pptxFiles) {
+    Write-Output ''
+    Write-Output '=========================================='
+    Write-Output ('Processing PPTX: {0}' -f $pptxFile.FullName)
+    Write-Output ('Using Image Quality: {0}%, Video Target: {1}x{2}px, CRF: {3}, Preset: {4}' -f $ImageQuality, $TargetWidth, $TargetHeight, $CRF, $Preset)
+    Write-Output '=========================================='
+    Write-Output ''
 
     $absPath = $pptxFile.FullName
-    $tempDir = Join-Path $env:TEMP ("pptx_recompress_" + [guid]::NewGuid().Guid)
+    $tempDir = Join-Path $env:TEMP ('pptx_recompress_{0}' -f [guid]::NewGuid().Guid)
     New-Item -ItemType Directory -Path $tempDir | Out-Null
 
     $ffmpegAvailable = Test-Path $FFMPEG
@@ -465,18 +467,18 @@ foreach ($pptxFile in $pptxFiles) {
 $success= $false
 try {
     # Create a working copy
-    $workingCopy = "$absPath.working"
+    $workingCopy = '{0}.working' -f $absPath
     Copy-Item -LiteralPath $absPath -Destination $workingCopy -Force
 
     # Expand PPTX
     Expand-Archive -Path $workingCopy -DestinationPath $tempDir -Force
 
-    $mediaDir = Join-Path $tempDir "ppt\media"
-    if (-not (Test-Path $mediaDir)) {
-        Write-Output "No embedded media found in PPTX."
+    $mediaDir = Join-Path $tempDir 'ppt\media'
+    if( -not (Test-Path $mediaDir)) {
+        Write-Output 'No embedded media found in PPTX.'
     } else {
         $files = Get-ChildItem -Path $mediaDir -File
-        foreach ($f in $files) {
+        foreach( $f in $files) {
             $orig = $f.FullName
             $ext = $f.Extension.ToLower()
             $tmp = "$orig.tmp"
@@ -502,70 +504,70 @@ try {
                 }
             }
             # Process video files
-            elseif ($ext -eq ".mp4" -or $ext -eq ".wmv" -or $ext -eq ".avi" -or $ext -eq '.mov') {
-                if ($ffmpegAvailable) {
+            elseif( $ext -eq '.mp4' -or $ext -eq '.wmv' -or $ext -eq '.avi' -or $ext -eq '.mov') {
+                if( $ffmpegAvailable) {
                     # Get video properties to check dimensions
                     $videoProps = Get-VideoProperties -FilePath $orig -FFMPEGPath $FFMPEG
                     
                     # Check minimum dimensions
                     $shouldProcess = $true
                     
-                    if ($MinimumHeight -and $videoProps.Height -lt $MinimumHeight) {
-                        Write-Output ("Skipping {0}: height ({1}) below minimum ({2})" -f $f.Name, $videoProps.Height, $MinimumHeight)
+                    if( $MinimumHeight -and $videoProps.Height -lt $MinimumHeight) {
+                        Write-Output ('Skipping {0}: height ({1}) below minimum ({2})' -f $f.Name, $videoProps.Height, $MinimumHeight)
                         $shouldProcess = $false
                     }
                     
-                    if ($MinimumWidth -and $videoProps.Width -lt $MinimumWidth) {
-                        Write-Output ("Skipping {0}: width ({1}) below minimum ({2})" -f $f.Name, $videoProps.Width, $MinimumWidth)
+                    if( $MinimumWidth -and $videoProps.Width -lt $MinimumWidth) {
+                        Write-Output ('Skipping {0}: width ({1}) below minimum ({2})' -f $f.Name, $videoProps.Width, $MinimumWidth)
                         $shouldProcess = $false
                     }
                     
-                    if ($shouldProcess) {
-                        Write-Output ("Processing video: {0} (Current: {1}x{2}, Target: {3}x{4}, CRF: {5}, Preset: {6})" -f $f.Name, $videoProps.Width, $videoProps.Height, $TargetWidth, $TargetHeight, $CRF, $Preset)
+                    if( $shouldProcess) {
+                        Write-Output ('Processing video: {0} (Current: {1}x{2}, Target: {3}x{4}, CRF: {5}, Preset: {6})' -f $f.Name, $videoProps.Width, $videoProps.Height, $TargetWidth, $TargetHeight, $CRF, $Preset)
                         $ok = Reencode-MediaWithFFmpeg -SrcPath $orig -DstPath $tmp -TargetHeight $TargetHeight -TargetWidth $TargetWidth -CRF $CRF -Preset $Preset -Extension $ext -FFMPEGPath $FFMPEG
                         $processed = $true
                     }
                 } else {
-                    Write-Warning "FFmpeg not found. Skipping $ext file: $($f.Name)"
+                    Write-Warning ('FFmpeg not found. Skipping {0} file: {1}' -f $ext, $f.Name)
                     continue
                 }
             }
             else {
-                Write-Output "Skipping unsupported file: $($f.Name)"
+                Write-Output ('Skipping unsupported file: {0}' -f $f.Name)
                 continue
             }
 
             # Replace original file if processing was successful
-            if ($processed) {
-                if ($ok -and (Test-Path $tmp)) {
+            if( $processed) {
+                if( $ok -and (Test-Path $tmp)) {
                     $source= Get-ChildItem -Path $orig
                     $target= Get-ChildItem -Path $tmp
                     $diffsize= ($source.Length - $target.Length) / 1kb
                     If( $diffSize -gt 0) {
                         try {
-                            Write-Output ("Replacing {0}, saved {1} KB" -f $f.Name, [int]$diffsize)
+                            Write-Output ('Replacing {0}, saved {1} KB' -f $f.Name, [int]$diffsize)
                             Move-Item -LiteralPath $tmp -Destination $orig -Force
                         } catch {
-                            Write-Warning "Failed to replace $($f.Name): $_"
+                            Write-Warning ('Failed to replace {0}: {1}' -f $f.Name, $_)
                             Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
                         }
                     } else {
-                        Write-Warning ("$($f.Name) size would increase ({0} KB), not replacing" -f [int]$diffsize)
+                        Write-Warning ('{0} size would increase ({1} KB), not replacing' -f $f.Name, [int]$diffsize)
                         Remove-Item -LiteralPath $orig -ErrorAction SilentlyContinue
                     }
                 } else {
-                    Write-Warning "Recompression failed for $($f.Name) - keeping original"
+                    Write-Warning ('Recompression failed for {0} - keeping original' -f $f.Name)
                     Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
                 }
             }
         }
 
         # Now update the working copy with the compressed media
-        Write-Output "Updating PPTX with compressed media..."
+        Write-Output 'Updating PPTX with compressed media...'
         $updateSuccess = Update-PptxMedia -PptxPath $workingCopy -MediaDir $mediaDir
 
-        if (-not $updateSuccess) {
-            Write-Error "Failed to update PPTX with compressed media"
+        if( -not $updateSuccess) {
+            Write-Error 'Failed to update PPTX with compressed media'
             exit 6
         }
     }
@@ -575,9 +577,9 @@ try {
         $oldFile= Get-ChildItem -Path $absPath -erroraction silentlycontinue
         $newFile= Get-ChildItem -Path $workingCopy -ErrorAction silentlycontinue
 
-        $diffsize= [math]::round(($oldFile.Length - $newFile.Length) / 1MB, 2)
+        $diffsize= [math]::round( ($oldFile.Length - $newFile.Length) / 1MB, 2)
 
-        if ($diffsize -gt 0) {
+        if( $diffsize -gt 0) {
             $ct= $oldfile.creationTime
             $lwt= $oldfile.lastWriteTime
 
@@ -595,7 +597,7 @@ try {
             Write-Output ('Moving compressed {0} to {1}' -f $workingCopy, $absPath)
             Move-Item -LiteralPath $workingCopy -Destination $absPath -Force
 
-            Write-Output "Saved recompressed PPTX to: $absPath"
+            Write-Output ('Saved recompressed PPTX to: {0}' -f $absPath)
             $success= $true
         }
         else {
@@ -605,16 +607,16 @@ try {
         }
 
     } catch {
-        Write-Error "Failed to overwrite original PPTX: $_"
-        if (Test-Path $workingCopy) { Remove-Item -LiteralPath $workingCopy -Force }
+        Write-Error ('Failed to overwrite original PPTX: {0}' -f $_)
+        if( Test-Path $workingCopy) { Remove-Item -LiteralPath $workingCopy -Force }
     }
 }
 Catch {
-    Write-Error "An error occurred: $_"
+    Write-Error ('An error occurred: {0}' -f $_)
 }
 finally {
     # Cleanup
-    if (Test-Path $tempDir) {
+    if( Test-Path $tempDir) {
         Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

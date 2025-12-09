@@ -127,16 +127,16 @@ if (-not (Test-Path $FFMPEG)) {
     try {
         Invoke-WebRequest -Uri $FFMPEGlink -OutFile $tempFile
         
-        if (Test-Path $tempFile) {
+        if( Test-Path $tempFile) {
             Add-Type -AssemblyName System.IO.Compression.FileSystem
             Write-Host ('Downloaded {0}, extracting ffmpeg.exe...' -f $tempFile) -ForegroundColor Yellow
             
-            $FFMPEGZip = [System.IO.Compression.ZipFile]::OpenRead($tempFile)
+            $FFMPEGZip = [System.IO.Compression.ZipFile]::OpenRead( $tempFile)
             $FFMPEGEntry = $FFMPEGZip.Entries | Where-Object { $_.FullName -like '*/bin/ffmpeg.exe' }
             
-            if ($FFMPEGEntry) {
+            if( $FFMPEGEntry) {
                 try {
-                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($FFMPEGEntry, $FFMPEG, $true)
+                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile( $FFMPEGEntry, $FFMPEG, $true)
                     $FFMPEGZip.Dispose()
                     Remove-Item -LiteralPath $tempFile -Force
                     Write-Host ('ffmpeg.exe extracted to {0}' -f $FFMPEG) -ForegroundColor Green
@@ -166,51 +166,51 @@ $shell = New-Object -ComObject Shell.Application
 # Get all video files from source path
 $videoFiles = Get-ChildItem -Path $SourcePath -Recurse -Include *.mp4, *.wmv, *.avi -ErrorAction SilentlyContinue
 
-foreach ($inputVid in $videoFiles) {
+foreach( $inputVid in $videoFiles) {
     Write-Host ('Processing {0}' -f $inputVid.FullName) -ForegroundColor White
     
-    if ($inputVid -and (Test-Path $inputVid.FullName)) {
-        $folder = $shell.Namespace($inputVid.DirectoryName)
-        $file = $folder.ParseName($inputVid.Name)
-        $title = if ($file.ExtendedProperty('System.Title')) { $file.ExtendedProperty('System.Title') } else { $file.ExtendedProperty('System.Video.StreamName') }
-        $durationMin = [math]::Round($file.ExtendedProperty('System.Media.Duration') / 10000000 / 60, 2)
-        $height = $file.ExtendedProperty('System.Video.FrameHeight')
-        $width = $file.ExtendedProperty('System.Video.FrameWidth')
-        $bitrate = $file.ExtendedProperty('System.Video.EncodingBitrate')
-        $totalBitrate = $file.ExtendedProperty('System.Video.TotalBitrate')
+    if( $inputVid -and (Test-Path $inputVid.FullName)) {
+        $folder = $shell.Namespace( $inputVid.DirectoryName)
+        $file = $folder.ParseName( $inputVid.Name)
+        $title = if( $file.ExtendedProperty( 'System.Title')) { $file.ExtendedProperty( 'System.Title') } else { $file.ExtendedProperty( 'System.Video.StreamName') }
+        $durationMin = [math]::Round( $file.ExtendedProperty( 'System.Media.Duration') / 10000000 / 60, 2)
+        $height = $file.ExtendedProperty( 'System.Video.FrameHeight')
+        $width = $file.ExtendedProperty( 'System.Video.FrameWidth')
+        $bitrate = $file.ExtendedProperty( 'System.Video.EncodingBitrate')
+        $totalBitrate = $file.ExtendedProperty( 'System.Video.TotalBitrate')
 
         Write-Host ('Properties of {3}: Duration {0}m, Width: {1}, Height: {2} Bitrate: {4} (Total {5})' -f $durationMin, $width, $height, $title, $bitrate, $totalBitrate) -ForegroundColor White
 
         # Check minimum dimensions
         $shouldProcess = $true
         
-        if ($MinimumHeight -and $height -lt $MinimumHeight) {
+        if( $MinimumHeight -and $height -lt $MinimumHeight) {
             Write-Host ('{0} height ({1}) is below minimum ({2}), skipping' -f $inputVid.FullName, $height, $MinimumHeight) -ForegroundColor Yellow
             $shouldProcess = $false
         }
         
-        if ($MinimumWidth -and $width -lt $MinimumWidth) {
+        if( $MinimumWidth -and $width -lt $MinimumWidth) {
             Write-Host ('{0} width ({1}) is below minimum ({2}), skipping' -f $inputVid.FullName, $width, $MinimumWidth) -ForegroundColor Yellow
             $shouldProcess = $false
         }
 
-        if ($shouldProcess) {
+        if( $shouldProcess) {
             $orgFile = $inputVid.FullName
-            $tempFile = Join-Path $env:TEMP ([io.path]::GetFileName($orgFile))
+            $tempFile = Join-Path $env:TEMP ([io.path]::GetFileName( $orgFile))
 
             # Construct scale filter
-            $scaleHeight = if ($TargetHeight) { "min($TargetHeight,ih)" } else { 'ih' }
-            $scaleWidth = if ($TargetWidth) { "min($TargetWidth,iw)" } else { 'iw' }
-            $filt = "scale='$scaleWidth':'$scaleHeight'"
+            $scaleHeight = if( $TargetHeight) { 'min({0},ih)' -f $TargetHeight } else { 'ih' }
+            $scaleWidth = if( $TargetWidth) { 'min({0},iw)' -f $TargetWidth } else { 'iw' }
+            $filt = 'scale=''{0}'':''{1}''' -f $scaleWidth, $scaleHeight
 
             Write-Host ('Running ffmpeg with preset: {0}, CRF: {1}, filter: {2}' -f $Preset, $CRF, $filt) -ForegroundColor Cyan
 
-            & $FFMPEG -nostdin -y -i "$orgFile" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k -threads 0 -preset $Preset -crf $CRF -vf $filt -map 0 -map_metadata 0 "$tempFile"
+            & $FFMPEG -nostdin -y -i $orgFile -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k -threads 0 -preset $Preset -crf $CRF -vf $filt -map 0 -map_metadata 0 $tempFile
 
-            if (($LASTEXITCODE -eq 0) -and (Test-Path $tempFile)) {
+            if( ($LASTEXITCODE -eq 0) -and (Test-Path $tempFile)) {
                 $newFile = Get-ChildItem -Path $tempFile
                 
-                if ($inputVid.Length -gt $newFile.Length -or $orgFile -like '*.wmv' -or $orgFile -like '*.avi') {
+                if( $inputVid.Length -gt $newFile.Length -or $orgFile -like '*.wmv' -or $orgFile -like '*.avi') {
                     $ct = $inputVid.CreationTime
                     $lwt = $inputVid.LastWriteTime
 
@@ -227,7 +227,7 @@ foreach ($inputVid in $videoFiles) {
                     Write-Host ('Setting CreationTime to {0}' -f $ct) -ForegroundColor Green
                     (Get-ChildItem $newOrgFile).CreationTime = $ct
 
-                    if ($newOrgFile -ne $orgFile) {
+                    if( $newOrgFile -ne $orgFile) {
                         Remove-Item -LiteralPath $orgFile -Force
                     }
                 }
