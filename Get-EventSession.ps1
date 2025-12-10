@@ -15,7 +15,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.35, December 4th, 2025
+    Version 4.36, December 10th, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -456,6 +456,8 @@
     4.34  Added removal of Ignite2025 placeholder files
     4.35  Setting video output preset to mp4 to make sure merging results in mp4 file, not an mkv
           Added header to output
+    4.36  Fixed downloading of direct video links for MP2T type (YouTube)
+          Added Cookies and CookiesFromBrowser support for yt-dlp (YouTube)
 
     TODO:
     - Add processing of archived events through new API endpoint (starting with Build)
@@ -642,7 +644,17 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [ValidateScript({ Test-Path -Path $_ -PathType Container})]
-    [string]$TempPath
+    [string]$TempPath,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [ValidateScript({ Test-Path -Path $_ -PathType Leaf})]
+    [string]$CookieFile,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [ValidateSet( 'brave', 'chrome', 'chromium', 'edge', 'firefox', 'opera', 'safari', 'vivaldi', 'whale' )]
+    [string]$CookiesFromBrowser
 )
 
     # Max age for cache, older than this # hours will force info refresh
@@ -1578,7 +1590,7 @@ param(
                         Write-Verbose ('Checking download link {0}' -f $downloadLink)
                         Try {
                             $Response= Invoke-WebRequest -Method HEAD -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                            $DirectLink= $Response.Headers.'Content-Type' -eq 'video/mp4'
+                            $DirectLink= @( 'video/mp4', 'video/MP2T') -contains $Response.Headers.'Content-Type' 
                         }
                         Catch {
                             $DirectLink= $False
@@ -1664,6 +1676,9 @@ param(
                                     $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
                                     If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"') }
                                     If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
+
+                                    If ( $CookiesFile) { $Arg += ('--cookies {0}' -f $CookiesFile) }
+                                    If ( $CookiesFromBrowser) { $Arg += ('--cookies-from-browser {0}' -f $CookiesFromBrowser) }
                                 }
                                 Else {
                                     Write-Warning "Skipping: Embedded AMS or YouTube URL not found"

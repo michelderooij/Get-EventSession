@@ -36,6 +36,20 @@ Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite
 
 ## FAQ
 
+### YouTube authentication
+Recently, YouTube started requiring authentication to prevent automated downloads. Symptom is that you will see yt-dlp operations
+resulting in "ERROR [youtube] XXXXXXXXXX : Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication" errors.
+To support this, you can either:
+* Use direct downloads when available, by using PreferDirect. Disadvantage is that you cannot specify a format, and you may end up with large files. However, you can
+compress and descale those in bulk afterwards using the Compress-MP4.ps1 script from this same repository.
+* Use yt-dlp.exe with downloaded cookies (NetScape format) or cookies from a browser. See https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies
+on how to export cookies. Be advised that your account might get flagged, so using a burner account is recommended when downloading lots of videos.
+Syntax:
+```
+.\Get-EventSession.ps1 .. -CookiesFile <File>
+.\Get-EventSession.ps1 .. -CookiesFromBrowser <brave|chrome|chromium|edge|firefox|opera|safari|vivaldi|whale>
+```
+
 ### Why do downloads happen twice?
 Depending on the source, the video and audio streams are seperate. First the video stream is fetched, then the audio stream.
 After fetching, the two are merged.
