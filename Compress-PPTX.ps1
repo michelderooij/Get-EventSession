@@ -7,7 +7,7 @@
 
     Michel de Rooij
     https://github.com/michelderooij/Get-EventSession
-    Version 1.0, December 11th, 2025
+    Version 1.01, December 12th, 2025
 
     .DESCRIPTION
     This script processes PowerPoint (.pptx) files in a specified directory, compressing embedded images
@@ -486,20 +486,25 @@ try {
             $processed = $false
 
             # Process JPEG files
-            if ($ext -eq ".jpg" -or $ext -eq ".jpeg") {
-                Write-Output "Processing JPEG: $($f.Name) (Quality: $ImageQuality%)"
-                $ok = Recompress-JpegWithBitmap -SrcPath $orig -DstPath $tmp -Quality $ImageQuality
-                $processed = $true
+            if( $ext -eq '.jpg' -or $ext -eq '.jpeg') {
+                Write-Output ('Processing JPEG: {0} (Quality: {1}%)' -f $f.Name, $ImageQuality)
+                if( $ffmpegAvailable) {
+                    $ok = Recompress-JpegWithBitmap -SrcPath $orig -DstPath $tmp -Quality $ImageQuality
+                    $processed = $true
+                } else {
+                    Write-Warning ('FFmpeg not found. Skipping JPEG file: {0}' -f $f.Name)
+                    continue
+                }
             }
             # Process PNG files
-            elseif ($ext -eq ".png") {
-                $QualityRange= ("{0}-{1}" -f (-10 + $ImageQuality), (10 + $ImageQuality))
-                Write-Output ("Processing PNG: {0} (Range quality: {1}%)" -f $f.Name, $QualityRange)
-                if ($pngquantAvailable) {
+            elseif( $ext -eq '.png') {
+                $QualityRange= '{0}-{1}' -f (-10 + $ImageQuality), (10 + $ImageQuality)
+                Write-Output ('Processing PNG: {0} (Range quality: {1}%)' -f $f.Name, $QualityRange)
+                if( $pngquantAvailable) {
                     $ok = Recompress-PngWithPngquant -SrcPath $orig -DstPath $tmp -QualityRange $QualityRange -PNGQUANTPath $PNGQUANT
                     $processed = $true
                 } else {
-                    Write-Warning "pngquant not found. Skipping PNG file: $($f.Name)"
+                    Write-Warning ('pngquant not found. Skipping PNG file: {0}' -f $f.Name)
                     continue
                 }
             }
@@ -545,7 +550,8 @@ try {
                     $diffsize= ($source.Length - $target.Length) / 1kb
                     If( $diffSize -gt 0) {
                         try {
-                            Write-Output ('Replacing {0}, saved {1} KB' -f $f.Name, [int]$diffsize)
+                            $percentSaved = [math]::Round( ($diffsize * 1kb / $source.Length) * 100, 1)
+                            Write-Output ('Replacing {0}, saved {1} KB ({2}%)' -f $f.Name, [int]$diffsize, $percentSaved)
                             Move-Item -LiteralPath $tmp -Destination $orig -Force
                         } catch {
                             Write-Warning ('Failed to replace {0}: {1}' -f $f.Name, $_)
@@ -583,7 +589,8 @@ try {
             $ct= $oldfile.creationTime
             $lwt= $oldfile.lastWriteTime
 
-            Write-Host ('Saved {0} MB' -f $diffsize) -ForegroundColor Green
+             $percentSaved = [math]::Round( ($diffsize * 1kb / $oldFile.Length) * 100, 1)
+            Write-Host ('Saved {0} MB ({1}%)' -f $diffsize, $percentSaved) -ForegroundColor Green
 
             Write-Output ('Setting CreationTime to {0}, LastWriteTime to {1}' -f  $ct, $lwt)
             $newFile.creationTime = $ct
