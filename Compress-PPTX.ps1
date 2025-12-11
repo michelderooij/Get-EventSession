@@ -7,7 +7,7 @@
 
     Michel de Rooij
     https://github.com/michelderooij/Get-EventSession
-    Version 1.0, December 12th, 2025
+    Version 1.0, December 11th, 2025
 
     .DESCRIPTION
     This script processes PowerPoint (.pptx) files in a specified directory, compressing embedded images

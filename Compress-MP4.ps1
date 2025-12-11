@@ -7,7 +7,7 @@
 
     Michel de Rooij
     https://github.com/michelderooij/Get-EventSession
-    Version 1.0, December 12th, 2025
+    Version 1.01, December 11th, 2025
 
     .DESCRIPTION
     This script processes video files (MP4, WMV, AVI) in a specified directory, converting them to MP4 format
@@ -57,6 +57,11 @@
     - Slower presets = longer encoding but better compression
     Default is 'medium' which balances speed and compression.
 
+    .PARAMETER Priority
+    Process priority for ffmpeg execution.
+    Valid values: Idle, BelowNormal, Normal, AboveNormal, High, RealTime
+    Default is 'Normal'. Use 'Idle' or 'BelowNormal' to reduce system impact during encoding.
+
     .EXAMPLE
     .\Convert-MP4.ps1 -SourcePath "D:\Videos"
     
@@ -76,6 +81,11 @@
     .\Convert-MP4.ps1 -SourcePath "D:\Videos" -FFMPEG "C:\Tools\ffmpeg.exe" -MinimumWidth 1920 -MinimumHeight 1080
     
     Uses ffmpeg from a custom location and only processes Full HD (1920x1080) or larger videos.
+
+    .EXAMPLE
+    .\Convert-MP4.ps1 -SourcePath "D:\Videos" -Priority BelowNormal
+    
+    Processes all videos with lower priority to reduce system impact during encoding.
 
     .NOTES
     - The script preserves creation and modification timestamps
@@ -110,7 +120,11 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateSet('ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow')]
-    [string]$Preset = 'medium'
+    [string]$Preset = 'medium',
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('Idle', 'BelowNormal', 'Normal', 'AboveNormal', 'High', 'RealTime')]
+    [string]$Priority = 'Normal'
 )
 
 # Check for ffmpeg.exe
@@ -203,11 +217,38 @@ foreach( $inputVid in $videoFiles) {
             $scaleWidth = if( $TargetWidth) { 'min({0},iw)' -f $TargetWidth } else { 'iw' }
             $filt = 'scale=''{0}'':''{1}''' -f $scaleWidth, $scaleHeight
 
-            Write-Host ('Running ffmpeg with preset: {0}, CRF: {1}, filter: {2}' -f $Preset, $CRF, $filt) -ForegroundColor Cyan
+            Write-Host ('Running ffmpeg with preset: {0}, CRF: {1}, filter: {2}, priority: {3}' -f $Preset, $CRF, $filt, $Priority) -ForegroundColor Cyan
 
-            & $FFMPEG -nostdin -y -i $orgFile -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k -threads 0 -preset $Preset -crf $CRF -vf $filt -map 0 -map_metadata 0 $tempFile
+            $ffmpegArgs = @(
+                '-nostdin'
+                '-y'
+                '-i', ('"{0}"' -f $orgFile)
+                '-c:v', 'libx264'
+                '-pix_fmt', 'yuv420p'
+                '-c:a', 'aac'
+                '-b:a', '128k'
+                '-threads', '0'
+                '-preset', $Preset
+                '-crf', $CRF
+                '-vf', $filt
+                '-map', '0'
+                '-map_metadata', '0'
+                ('"{0}"' -f $tempFile)
+            )
 
-            if( ($LASTEXITCODE -eq 0) -and (Test-Path $tempFile)) {
+            $process = Start-Process -FilePath $FFMPEG -ArgumentList $ffmpegArgs -Wait -PassThru -NoNewWindow
+
+            # Set process priority if not default
+            if( $Priority -ne 'Normal') {
+                try {
+                    $process.PriorityClass = $Priority
+                }
+                catch {
+                    Write-Warning ('Failed to set process priority to {0}: {1}' -f $Priority, $_)
+                }
+            }
+
+            if( ($process.ExitCode -eq 0) -and (Test-Path $tempFile)) {
                 $newFile = Get-ChildItem -Path $tempFile
                 
                 if( $inputVid.Length -gt $newFile.Length -or $orgFile -like '*.wmv' -or $orgFile -like '*.avi') {
