@@ -7,7 +7,7 @@
 
     Michel de Rooij
     https://github.com/michelderooij/Get-EventSession
-    Version 1.01, December 12th, 2025
+    Version 1.02, December 13th, 2025
 
     .DESCRIPTION
     This script processes PowerPoint (.pptx) files in a specified directory, compressing embedded images
@@ -589,7 +589,7 @@ try {
             $ct= $oldfile.creationTime
             $lwt= $oldfile.lastWriteTime
 
-             $percentSaved = [math]::Round( ($diffsize * 1kb / $oldFile.Length) * 100, 1)
+             $percentSaved = [math]::Round( ($diffsize / $oldFile.Length) * 100, 1)
             Write-Host ('Saved {0} MB ({1}%)' -f $diffsize, $percentSaved) -ForegroundColor Green
 
             Write-Output ('Setting CreationTime to {0}, LastWriteTime to {1}' -f  $ct, $lwt)
