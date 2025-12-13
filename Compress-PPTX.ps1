@@ -7,7 +7,7 @@
 
     Michel de Rooij
     https://github.com/michelderooij/Get-EventSession
-    Version 1.02, December 13th, 2025
+    Version 1.10, December 13th, 2025
 
     .DESCRIPTION
     This script processes PowerPoint (.pptx) files in a specified directory, compressing embedded images
@@ -204,10 +204,71 @@ function Recompress-PngWithPngquant {
     param($SrcPath, $DstPath, [string]$QualityRange='60-90', $PNGQUANTPath)
     try {
         # Use pngquant for lossy PNG compression with good quality
-        $process = Start-Process -FilePath $PNGQUANTPath -ArgumentList @( ('--quality={0}' -f $QualityRange), '--output', ('"""""' + $DstPath + '"""""'), ('"""""' + $SrcPath + '"""""')) -Wait -PassThru -NoNewWindow -RedirectStandardError 'NUL'
+        $PngQuantArgs= @(
+            '--quality', $QualityRange
+            '--output'
+            $DstPath
+            '--force'
+            '--verbose'
+            $SrcPath
+        )
+        $process = Start-Process -FilePath $PNGQUANTPath -ArgumentList $PngQuantArgs -Wait -PassThru -NoNewWindow -RedirectStandardError 'NUL'
         return $process.ExitCode -eq 0
     } catch {
         Write-Warning ('Error optimizing PNG with pngquant {0} : {1}' -f $SrcPath, $_)
+        return $false
+    }
+}
+
+function Recompress-WdpWithSystemDrawing {
+    param($SrcPath, $DstPath, [int]$Quality)
+    try {
+        Add-Type -AssemblyName System.Drawing
+        Add-Type -AssemblyName WindowsBase
+        Add-Type -AssemblyName PresentationCore
+
+        # Load WDP using WPF decoder
+        $fileStream = [System.IO.File]::OpenRead( $SrcPath)
+        $decoder = New-Object System.Windows.Media.Imaging.WmpBitmapDecoder( $fileStream, [System.Windows.Media.Imaging.BitmapCreateOptions]::None, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+        $frame = $decoder.Frames[0]
+        
+        # Create a bitmap from the frame
+        $bitmap = New-Object System.Drawing.Bitmap( $frame.PixelWidth, $frame.PixelHeight, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $bitmapData = $bitmap.LockBits( (New-Object System.Drawing.Rectangle( 0, 0, $bitmap.Width, $bitmap.Height)), [System.Drawing.Imaging.ImageLockMode]::WriteOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        
+        $frame.CopyPixels( [System.Windows.Int32Rect]::Empty, $bitmapData.Scan0, $bitmapData.Stride * $bitmapData.Height, $bitmapData.Stride)
+        $bitmap.UnlockBits( $bitmapData)
+        $fileStream.Close()
+        $fileStream.Dispose()
+        
+        # Save as WDP using WmpBitmapEncoder
+        $outStream = [System.IO.File]::Create( $DstPath)
+        $encoder = New-Object System.Windows.Media.Imaging.WmpBitmapEncoder
+        $encoder.ImageQualityLevel = [float]($Quality / 100.0)
+        
+        # Convert bitmap back to BitmapSource
+        $memStream = New-Object System.IO.MemoryStream
+        $bitmap.Save( $memStream, [System.Drawing.Imaging.ImageFormat]::Png)
+        $memStream.Position = 0
+        $pngDecoder = New-Object System.Windows.Media.Imaging.PngBitmapDecoder( $memStream, [System.Windows.Media.Imaging.BitmapCreateOptions]::None, [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad)
+        
+        $encoder.Frames.Add( [System.Windows.Media.Imaging.BitmapFrame]::Create( $pngDecoder.Frames[0]))
+        $encoder.Save( $outStream)
+        
+        # Cleanup
+        $outStream.Close()
+        $outStream.Dispose()
+        $memStream.Close()
+        $memStream.Dispose()
+        $bitmap.Dispose()
+        
+        return $true
+    } catch {
+        Write-Warning ('Error recompressing WDP with System.Drawing {0} : {1}' -f $SrcPath, $_)
+        if( $fileStream) { try { $fileStream.Close(); $fileStream.Dispose() } catch {} }
+        if( $outStream) { try { $outStream.Close(); $outStream.Dispose() } catch {} }
+        if( $memStream) { try { $memStream.Close(); $memStream.Dispose() } catch {} }
+        if( $bitmap) { try { $bitmap.Dispose() } catch {} }
         return $false
     }
 }
@@ -283,12 +344,12 @@ function Reencode-MediaWithFFmpeg {
         }
         $arguments+= $DstPath
 
-        Write-Output ('FFmpeg arguments: {0}' -f ($arguments -join ' '))
+        Write-Verbose ('FFmpeg arguments: {0}' -f ($arguments -join ' '))
 
         $process = Start-Process -FilePath $FFMPEGPath -ArgumentList $arguments -Wait -PassThru -NoNewWindow -RedirectStandardError 'NUL'
         return $process.ExitCode -eq 0
     } catch {
-        Write-Warning ('Error reencoding video {0} : {1}' -f $SrcPath, $_)
+        Write-Warning ('Error re-encoding video {0} : {1}' -f $SrcPath, $_)
         return $false
     }
 }
@@ -313,7 +374,7 @@ function Update-PptxMedia {
             $existingEntry = $zip.Entries | Where-Object { $_.FullName -eq $entryPath }
 
             if( $existingEntry) {
-                Write-Output ('Updating: {0}' -f $entryPath)
+                Write-Verbose ('Updating: {0}' -f $entryPath)
 
                 # Open the entry and overwrite its content
                 $entryStream = $existingEntry.Open()
@@ -354,7 +415,7 @@ if( -not $FFMPEG) {
 }
 
 if( -not (Test-Path $FFMPEG)) {
-    Write-Host ('ffmpeg.exe not found at {0}, attempting to download...' -f $FFMPEG) -ForegroundColor Yellow
+    Write-Warning ('ffmpeg.exe not found at {0}, attempting to download...' -f $FFMPEG) -ForegroundColor Yellow
     
     $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
     $tempFile = Join-Path $env:TEMP 'ffmpeg-release-essentials.zip'
@@ -389,12 +450,13 @@ if( -not (Test-Path $FFMPEG)) {
         throw ('Unable to download or extract ffmpeg.exe: {0}' -f $_.Exception.Message)
     }
 }
+Else {
+        Write-Host ('ffmpeg.exe found at {0}' -f $FFMPEG) -ForegroundColor Green
+}
 
 if( -not (Test-Path $FFMPEG)) {
     throw ('ffmpeg.exe not found at {0}' -f $FFMPEG)
 }
-
-Write-Host ('Using ffmpeg.exe at {0}' -f $FFMPEG) -ForegroundColor Green
 
 # Check for pngquant.exe
 if( -not $PNGQUANT) {
@@ -402,7 +464,7 @@ if( -not $PNGQUANT) {
 }
 
 if( -not (Test-Path $PNGQUANT)) {
-    Write-Host ('pngquant.exe not found at {0}, attempting to download...' -f $PNGQUANT) -ForegroundColor Yellow
+    Write-Warning ('pngquant.exe not found at {0}, attempting to download...' -f $PNGQUANT) -ForegroundColor Yellow
     
     $PNGQUANTlink = 'https://pngquant.org/pngquant-windows.zip'
     $tempFile = Join-Path $env:TEMP 'pngquant-windows.zip'
@@ -437,12 +499,13 @@ if( -not (Test-Path $PNGQUANT)) {
         throw ('Unable to download or extract pngquant.exe: {0}' -f $_.Exception.Message)
     }
 }
+Else {
+        Write-Host ('pngquant.exe found at {0}' -f $PNGQUANT) -ForegroundColor Green
+}
 
 if( -not (Test-Path $PNGQUANT)) {
     throw ('pngquant.exe not found at {0}' -f $PNGQUANT)
 }
-
-Write-Host ('Using pngquant.exe at {0}' -f $PNGQUANT) -ForegroundColor Green
 
 $ProgressPreference = 'SilentlyContinue'
 
@@ -450,16 +513,14 @@ $ProgressPreference = 'SilentlyContinue'
 $pptxFiles = Get-ChildItem -Path $SourcePath -Recurse -Filter *.pptx -ErrorAction SilentlyContinue
 
 foreach( $pptxFile in $pptxFiles) {
-    Write-Output ''
-    Write-Output '=========================================='
-    Write-Output ('Processing PPTX: {0}' -f $pptxFile.FullName)
-    Write-Output ('Using Image Quality: {0}%, Video Target: {1}x{2}px, CRF: {3}, Preset: {4}' -f $ImageQuality, $TargetWidth, $TargetHeight, $CRF, $Preset)
-    Write-Output '=========================================='
-    Write-Output ''
+    Write-Host ('Processing PPTX: {0}' -f $pptxFile.FullName) -ForegroundColor White
+    Write-Host ('Using: Image Quality: {0}%, Video Target: {1}x{2}px, CRF: {3}, Preset: {4}' -f $ImageQuality, $TargetWidth, $TargetHeight, $CRF, $Preset)
+    Write-Host ('=' * 60)
 
     $absPath = $pptxFile.FullName
     $tempDir = Join-Path $env:TEMP ('pptx_recompress_{0}' -f [guid]::NewGuid().Guid)
     New-Item -ItemType Directory -Path $tempDir | Out-Null
+    Write-Verbose ('Using temp directory: {0}' -f $tempDir)
 
     $ffmpegAvailable = Test-Path $FFMPEG
     $pngquantAvailable = Test-Path $PNGQUANT
@@ -475,7 +536,7 @@ try {
 
     $mediaDir = Join-Path $tempDir 'ppt\media'
     if( -not (Test-Path $mediaDir)) {
-        Write-Output 'No embedded media found in PPTX.'
+        Write-Host 'No embedded media found in PPTX.'
     } else {
         $files = Get-ChildItem -Path $mediaDir -File
         foreach( $f in $files) {
@@ -487,8 +548,8 @@ try {
 
             # Process JPEG files
             if( $ext -eq '.jpg' -or $ext -eq '.jpeg') {
-                Write-Output ('Processing JPEG: {0} (Quality: {1}%)' -f $f.Name, $ImageQuality)
                 if( $ffmpegAvailable) {
+                    Write-Verbose ('Processing JPEG: {0} (Quality: {1}%)' -f $f.Name, $ImageQuality)
                     $ok = Recompress-JpegWithBitmap -SrcPath $orig -DstPath $tmp -Quality $ImageQuality
                     $processed = $true
                 } else {
@@ -499,12 +560,27 @@ try {
             # Process PNG files
             elseif( $ext -eq '.png') {
                 $QualityRange= '{0}-{1}' -f (-10 + $ImageQuality), (10 + $ImageQuality)
-                Write-Output ('Processing PNG: {0} (Range quality: {1}%)' -f $f.Name, $QualityRange)
+                Write-Verbose ('Processing PNG: {0} (Range quality: {1}%)' -f $f.Name, $QualityRange)
                 if( $pngquantAvailable) {
                     $ok = Recompress-PngWithPngquant -SrcPath $orig -DstPath $tmp -QualityRange $QualityRange -PNGQUANTPath $PNGQUANT
                     $processed = $true
                 } else {
                     Write-Warning ('pngquant not found. Skipping PNG file: {0}' -f $f.Name)
+                    continue
+                }
+            }            # Process WDP files (Windows Media Photo / HD Photo)
+            elseif( $ext -eq '.wdp') {
+                Write-Verbose ('Processing WDP: {0} (Quality: {1}%)' -f $f.Name, $ImageQuality)
+                $ok = Recompress-WdpWithSystemDrawing -SrcPath $orig -DstPath $tmp -Quality $ImageQuality
+                $processed = $true
+            }            # Process WDP files (Windows Media Photo / HD Photo)
+            elseif( $ext -eq '.wdp') {
+                Write-Verbose ('Processing WDP: {0} (Quality: {1}%)' -f $f.Name, $ImageQuality)
+                if( $ffmpegAvailable) {
+                    $ok = Recompress-WdpWithFFmpeg -SrcPath $orig -DstPath $tmp -Quality $ImageQuality -FFMPEGPath $FFMPEG
+                    $processed = $true
+                } else {
+                    Write-Warning ('FFmpeg not found. Skipping WDP file: {0}' -f $f.Name)
                     continue
                 }
             }
@@ -518,17 +594,17 @@ try {
                     $shouldProcess = $true
                     
                     if( $MinimumHeight -and $videoProps.Height -lt $MinimumHeight) {
-                        Write-Output ('Skipping {0}: height ({1}) below minimum ({2})' -f $f.Name, $videoProps.Height, $MinimumHeight)
+                        Write-Verbose ('Skipping {0}: height ({1}) below minimum ({2})' -f $f.Name, $videoProps.Height, $MinimumHeight)
                         $shouldProcess = $false
                     }
                     
                     if( $MinimumWidth -and $videoProps.Width -lt $MinimumWidth) {
-                        Write-Output ('Skipping {0}: width ({1}) below minimum ({2})' -f $f.Name, $videoProps.Width, $MinimumWidth)
+                        Write-Verbose ('Skipping {0}: width ({1}) below minimum ({2})' -f $f.Name, $videoProps.Width, $MinimumWidth)
                         $shouldProcess = $false
                     }
                     
                     if( $shouldProcess) {
-                        Write-Output ('Processing video: {0} (Current: {1}x{2}, Target: {3}x{4}, CRF: {5}, Preset: {6})' -f $f.Name, $videoProps.Width, $videoProps.Height, $TargetWidth, $TargetHeight, $CRF, $Preset)
+                        Write-Verbose ('Processing video: {0} (Current: {1}x{2}, Target: {3}x{4}, CRF: {5}, Preset: {6})' -f $f.Name, $videoProps.Width, $videoProps.Height, $TargetWidth, $TargetHeight, $CRF, $Preset)
                         $ok = Reencode-MediaWithFFmpeg -SrcPath $orig -DstPath $tmp -TargetHeight $TargetHeight -TargetWidth $TargetWidth -CRF $CRF -Preset $Preset -Extension $ext -FFMPEGPath $FFMPEG
                         $processed = $true
                     }
@@ -538,7 +614,7 @@ try {
                 }
             }
             else {
-                Write-Output ('Skipping unsupported file: {0}' -f $f.Name)
+                Write-Verbose ('Skipping unsupported file: {0}' -f $f.Name)
                 continue
             }
 
@@ -551,15 +627,15 @@ try {
                     If( $diffSize -gt 0) {
                         try {
                             $percentSaved = [math]::Round( ($diffsize * 1kb / $source.Length) * 100, 1)
-                            Write-Output ('Replacing {0}, saved {1} KB ({2}%)' -f $f.Name, [int]$diffsize, $percentSaved)
+                            Write-Verbose ('Replacing {0}, saved {1} KB ({2}%)' -f $f.Name, [int]$diffsize, $percentSaved)
                             Move-Item -LiteralPath $tmp -Destination $orig -Force
                         } catch {
                             Write-Warning ('Failed to replace {0}: {1}' -f $f.Name, $_)
                             Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
                         }
                     } else {
-                        Write-Warning ('{0} size would increase ({1} KB), not replacing' -f $f.Name, [int]$diffsize)
-                        Remove-Item -LiteralPath $orig -ErrorAction SilentlyContinue
+                        Write-Verbose ('{0} size would increase ({1} KB), not replacing' -f $f.Name, [int]$diffsize)
+                        Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
                     }
                 } else {
                     Write-Warning ('Recompression failed for {0} - keeping original' -f $f.Name)
@@ -569,7 +645,7 @@ try {
         }
 
         # Now update the working copy with the compressed media
-        Write-Output 'Updating PPTX with compressed media...'
+        Write-Verbose 'Updating PPTX with compressed media...'
         $updateSuccess = Update-PptxMedia -PptxPath $workingCopy -MediaDir $mediaDir
 
         if( -not $updateSuccess) {
@@ -589,26 +665,26 @@ try {
             $ct= $oldfile.creationTime
             $lwt= $oldfile.lastWriteTime
 
-             $percentSaved = [math]::Round( ($diffsize / $oldFile.Length) * 100, 1)
+            $percentSaved = [math]::Round( (($oldFile.Length - $newFile.Length) / $oldFile.Length) * 100, 1)
             Write-Host ('Saved {0} MB ({1}%)' -f $diffsize, $percentSaved) -ForegroundColor Green
 
-            Write-Output ('Setting CreationTime to {0}, LastWriteTime to {1}' -f  $ct, $lwt)
+            Write-Host ('Setting CreationTime to {0}, LastWriteTime to {1}' -f  $ct, $lwt)
             $newFile.creationTime = $ct
             $newFile.lastWriteTime = $lwt
 
             If( $Backup) {
-                Write-Output ('Backing up original {0} to {1}.bak' -f $absPath, $absPath)
+                Write-Host ('Backing up original {0} to {1}.bak' -f $absPath, $absPath)
                 Move-Item -LiteralPath $absPath -Destination ('{0}.bak' -f $absPath) -Force
             }
 
-            Write-Output ('Moving compressed {0} to {1}' -f $workingCopy, $absPath)
+            Write-Verbose ('Moving compressed {0} to {1}' -f $workingCopy, $absPath)
             Move-Item -LiteralPath $workingCopy -Destination $absPath -Force
 
-            Write-Output ('Saved recompressed PPTX to: {0}' -f $absPath)
+            Write-Host ('Saved recompressed PPTX to: {0}' -f $absPath)
             $success= $true
         }
         else {
-            Write-Host ('Recompressed file is not smaller (difference: {0} MB), keeping original' -f $diffsize) -ForegroundColor Yellow
+            Write-Warning ('Recompressed file is not smaller (difference: {0} MB), keeping original' -f $diffsize)
             Remove-Item -LiteralPath $workingCopy -Force -ErrorAction SilentlyContinue
             $success= $false
         }
