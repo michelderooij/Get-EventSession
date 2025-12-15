@@ -198,12 +198,12 @@ foreach( $inputVid in $videoFiles) {
         # Check minimum dimensions
         $shouldProcess = $true
         
-        if( [uint]$MinimumHeight -gt 0 -and [uint]::$height -gt 0 -and $height -lt $MinimumHeight) {
+        if( [uint]$MinimumHeight -gt 0 -and [uint]$height -gt 0 -and $height -lt $MinimumHeight) {
             Write-Host ('{0} height ({1}) is below minimum ({2}), skipping' -f $inputVid.FullName, $height, $MinimumHeight) -ForegroundColor Yellow
             $shouldProcess = $false
         }
         
-        if( [uint]$MinimumWidth -gt 0 -and [uint]::$width -gt 0 -and $width -lt $MinimumWidth) {
+        if( [uint]$MinimumWidth -gt 0 -and [uint]$width -gt 0 -and $width -lt $MinimumWidth) {
             Write-Host ('{0} width ({1}) is below minimum ({2}), skipping' -f $inputVid.FullName, $width, $MinimumWidth) -ForegroundColor Yellow
             $shouldProcess = $false
         }
