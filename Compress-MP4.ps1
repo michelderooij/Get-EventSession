@@ -7,7 +7,7 @@
 
     Michel de Rooij
     https://github.com/michelderooij/Get-EventSession
-    Version 1.02, December 14th, 2025
+    Version 1.03, December 15th, 2025
 
     .DESCRIPTION
     This script processes video files (MP4, WMV, AVI) in a specified directory, converting them to MP4 format
@@ -236,7 +236,7 @@ foreach( $inputVid in $videoFiles) {
                 ('"{0}"' -f $tempFile)
             )
 
-            $process = Start-Process -FilePath $FFMPEG -ArgumentList $ffmpegArgs -Wait -PassThru -NoNewWindow
+            $process = Start-Process -FilePath $FFMPEG -ArgumentList $ffmpegArgs -PassThru -NoNewWindow
 
             # Set process priority if not default
             if( $Priority -ne 'Normal') {
@@ -247,6 +247,9 @@ foreach( $inputVid in $videoFiles) {
                     Write-Warning ('Failed to set process priority to {0}: {1}' -f $Priority, $_)
                 }
             }
+
+            # Wait for process to complete
+            $process.WaitForExit()
 
             if( ($process.ExitCode -eq 0) -and (Test-Path $tempFile)) {
                 $newFile = Get-ChildItem -Path $tempFile
