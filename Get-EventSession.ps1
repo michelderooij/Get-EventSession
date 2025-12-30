@@ -15,7 +15,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.36, December 10th, 2025
+    Version 4.37, December 30, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -562,21 +562,21 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [ValidateRange(1,128)]
-    [int]$MaxDownloadJobs=4,
+    [ValidateRange(1, 128)]
+    [int]$MaxDownloadJobs = 4,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [uri]$Proxy=$null,
+    [uri]$Proxy = $null,
 
     [parameter( Mandatory = $true, ParameterSetName = 'Download')]
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC','MEC2022','Ignite', 'Ignite2025', 'Ignite2024','Ignite2023', 'Inspire', 'Inspire2023', 'Build', 'Build2025')]
-    [string]$Event='',
+    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Ignite2024', 'Ignite2023', 'Inspire', 'Inspire2023', 'Build', 'Build2025')]
+    [string]$Event = '',
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [switch]$InfoOnly,
@@ -613,13 +613,13 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [string]$Language='English',
+    [string]$Language = 'English',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
-    [ValidateSet('de-DE','zh-CN','en-US','ja-JP','es-CO','fr-FR')]
-    [string[]]$Locale='en-US',
+    [ValidateSet('de-DE', 'zh-CN', 'en-US', 'ja-JP', 'es-CO', 'fr-FR')]
+    [string[]]$Locale = 'en-US',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -638,17 +638,17 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    $ConcurrentFragments= 4,
+    $ConcurrentFragments = 4,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [ValidateScript({ Test-Path -Path $_ -PathType Container})]
+    [ValidateScript({ Test-Path -Path $_ -PathType Container })]
     [string]$TempPath,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [ValidateScript({ Test-Path -Path $_ -PathType Leaf})]
+    [ValidateScript({ Test-Path -Path $_ -PathType Leaf })]
     [string]$CookieFile,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -657,611 +657,611 @@ param(
     [string]$CookiesFromBrowser
 )
 
-    # Max age for cache, older than this # hours will force info refresh
-    $MaxCacheAge = 8
+# Max age for cache, older than this # hours will force info refresh
+$MaxCacheAge = 8
 
-    $YouTubeEXE = 'yt-dlp.exe'
-    $YouTubeDL = Join-Path $PSScriptRoot $YouTubeEXE
-    $FFMPEG= Join-Path $PSScriptRoot 'ffmpeg.exe'
+$YouTubeEXE = 'yt-dlp.exe'
+$YouTubeDL = Join-Path $PSScriptRoot $YouTubeEXE
+$FFMPEG = Join-Path $PSScriptRoot 'ffmpeg.exe'
 
-    $YTlink = 'https://github.com/yt-dlp/yt-dlp/releases/download/2023.07.06/yt-dlp.exe'
-    $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+$YTlink = 'https://github.com/yt-dlp/yt-dlp/releases/download/2023.07.06/yt-dlp.exe'
+$FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
 
-    # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
-    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+# Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
+[Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
 
-    $script:BackgroundDownloadJobs= @()
+$script:BackgroundDownloadJobs = @()
 
-    Function Iif($Cond, $IfTrue, $IfFalse) {
-        If( $Cond) { $IfTrue } Else { $IfFalse }
-    }
+function Iif($Cond, $IfTrue, $IfFalse) {
+    if ( $Cond) { $IfTrue } else { $IfFalse }
+}
 
-    Function Fix-FileName ($title) {
-        return (((((((($title -replace '\]', ')') -replace '\[', '(') -replace [char]0x202f, ' ') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
-    }
+function Fix-FileName ($title) {
+    return (((((((($title -replace '\]', ')') -replace '\[', '(') -replace [char]0x202f, ' ') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
+}
 
-    Function Get-IEProxy {
-        If ( (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings').ProxyEnable -ne 0) {
-            $proxies = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings').proxyServer
-            if ($proxies) {
-                if ($proxies -ilike "*=*") {
-                    return $proxies -replace "=", "://" -split (';') | Select-Object -First 1
-                }
-                Else {
-                    return ('http://{0}' -f $proxies)
-                }
+function Get-IEProxy {
+    if ( (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings').ProxyEnable -ne 0) {
+        $proxies = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings').proxyServer
+        if ($proxies) {
+            if ($proxies -ilike "*=*") {
+                return $proxies -replace "=", "://" -split (';') | Select-Object -First 1
             }
-            Else {
-                return $null
+            else {
+                return ('http://{0}' -f $proxies)
             }
         }
-        Else {
+        else {
             return $null
         }
     }
+    else {
+        return $null
+    }
+}
 
-    Function Clean-VideoLeftovers ( $videofile) {
-        $masks= '.*.mp4.part', '.*.mp4.ytdl'
-	    ForEach( $mask in $masks) {
-            If( $TempPath) {
-                $FileMask= (Join-Path -Path $TempPath -ChildPath (Split-Path -Path $videofile -Leaf)) -replace '.mp4', $mask
-            }
-            Else {
-                $FileMask= $videofile -replace '.mp4', $mask
-            }
-            Get-Item -LiteralPath $FileMask -ErrorAction SilentlyContinue | ForEach-Object {
-                Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
-                Remove-Item -LiteralPath $_.fullname -Force -ErrorAction SilentlyContinue
-            }
+function Clean-VideoLeftovers ( $videofile) {
+    $masks = '.*.mp4.part', '.*.mp4.ytdl'
+    foreach ( $mask in $masks) {
+        if ( $TempPath) {
+            $FileMask = (Join-Path -Path $TempPath -ChildPath (Split-Path -Path $videofile -Leaf)) -replace '.mp4', $mask
+        }
+        else {
+            $FileMask = $videofile -replace '.mp4', $mask
+        }
+        Get-Item -LiteralPath $FileMask -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
+            Remove-Item -LiteralPath $_.fullname -Force -ErrorAction SilentlyContinue
         }
     }
+}
 
-    Function Get-BackgroundDownloadJobs {
-        $Temp= @()
-        ForEach( $job in $script:BackgroundDownloadJobs) {
+function Get-BackgroundDownloadJobs {
+    $Temp = @()
+    foreach ( $job in $script:BackgroundDownloadJobs) {
 
-            switch( $job.Type) {
-                1 {
-                    $isJobRunning= $job.job.State -eq 'Running'
-                }
-                2 {
-                    $isJobRunning= -not $job.job.hasExited
-                }
-                3 {
-                    $isJobRunning= $job.job.State -eq 'Running'
-                }
-                default {
-                    $isJobRunning= $false
-                }
-            }
-            if( $isJobRunning) {
-                $Temp+= $job
-            }
-            Else {
-                # Job finished, process result
-                switch( $job.Type) {
-                    1 {
-                        $isJobSuccess= $job.job.State -eq 'Completed'
-                        $DeckInfo[ $InfoDownload]++
-                        Write-Progress -Id $job.job.Id -Activity ('Slidedeck {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
-                    }
-                    2 {
-                        $isJobSuccess= Test-Path -LiteralPath $job.file
-                        $VideoInfo[ $InfoDownload]++
-                        Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
-                    }
-                    3 {
-                        $isJobSuccess= Test-Path -LiteralPath $job.file
-                        Write-Progress -Id $job.job.Id -Activity ('Captions {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
-                    }
-                    default {
-                        $isJobSuccess= $false
-                    }
-                }
-
-                # Test if file is placeholder
-                $isPlaceholder= $false
-		        If( Test-Path -LiteralPath $job.file) {
-                    $FileObj= Get-ChildItem -LiteralPath $job.file
-                    If( $FileObj.Length -lt 1kb) {
-
-                        If( @('No resource file is available for download','No resource file is available for download for the given id') -contains (Get-Content -LiteralPath $job.File) ) {
-                            Write-Warning ('Removing {0} placeholder file {1}' -f $job.scheduleCode, $job.file)
-                            Remove-Item -LiteralPath $job.file -Force
-                            $isPlaceholder= $true
-
-                            Switch( $job.Type) {
-                                1 {
-                                    # Placeholder Deck file downloaded
-                                    $DeckInfo[ $InfoDownload]--
-                                    $DeckInfo[ $InfoPlaceholder]++
-                                }
-                                2 {
-                                    # Placeholder Video file downloaded
-                                    $VideoInfo[ $InfoDownload]--
-                                    $VideoInfo[ $InfoPlaceholder]++
-                                }
-                                3 {
-                                    # Placeholder VTT file downloaded
-                                }
-                            }
-                        }
-                        Else {
-                            # Placeholder different text?
-                        }
-                    }
-                }
-
-		        If( $isJobSuccess -and -not $isPlaceholder) {
-
-                    Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
-
-                    # Do we need to adjust timestamp
-                    If( $job.Timestamp) {
-                        If( Test-Path -LiteralPath $job.file) {
-                            Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
-                            $FileObj= Get-ChildItem -LiteralPath $job.file
-                            $FileObj.CreationTime= Get-Date -Date $job.Timestamp
-                            $FileObj.LastWriteTime= Get-Date -Date $job.Timestamp
-                        }
-                        Else {
-                            Write-Warning ('File {0} not found for timestamp adjustment' -f $job.file)
-                        }
-                    }
-
-                    If( $job.Type -eq 2) {
-                        # Clean video leftovers
-                        Clean-VideoLeftovers $job.file
-                    }
-                }
-                Else {
-                    switch( $job.Type) {
-                        1 {
-                            Write-Host ('Problem downloading or missing slidedeck of {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
-                            $job.job.ChildJobs | Stop-Job | Out-Null
-                            $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
-                        }
-                        2 {
-                            $LastLine= (Get-Content -LiteralPath $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
-                            Write-Host ('Problem downloading or missing video of {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
-                            Remove-Item -LiteralPath $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
-                        }
-                        3 {
-                            Write-Host ('Problem downloading or missing captions of {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
-                            $job.job.ChildJobs | Stop-Job | Out-Null
-                            $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
-                        }
-                        default {
-                        }
-                    }
-                }
-            }
-        }
-        $Num= ($Temp| Measure-Object).Count
-        $script:BackgroundDownloadJobs= $Temp
-        Show-BackgroundDownloadJobs
-        return $Num
-    }
-
-    Function Show-BackgroundDownloadJobs {
-        $Num=0
-        $NumDeck= 0
-        $NumVid= 0
-        $NumCaption= 0
-        ForEach( $BGJob in $script:BackgroundDownloadJobs) {
-            $Num++
-            Switch( $BGJob.Type) {
-                1 {
-                     $NumDeck++
-                }
-                2 {
-                     $NumVid++
-                }
-                3 {
-                     $NumCaption++
-                }
-            }
-        }
-        Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedeck, {2} video and {3} caption files)' -f $Num, $NumDeck, $NumVid, $NumCaption)
-
-        ForEach( $job in $script:BackgroundDownloadJobs) {
-            If( $Job.Type -eq 2) {
-
-                # Get last line of YT log to display for video downloads
-                $LastLine= (Get-Content -LiteralPath $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
-                If(!( $LastLine)) {
-                    $LastLine= 'Evaluating..'
-                }
-                Write-Progress -Id $job.job.id -Activity ('Video {0} {1}' -f $job.scheduleCode, $Job.title) -Status $LastLine -ParentId 2
-                $progressId++
-            }
-        }
-    }
-
-    Function Stop-BackgroundDownloadJobs {
-        # Trigger update jobs running data
-        $null= Get-BackgroundDownloadJobs
-        # Stop all slidedeck background jobs
-        ForEach( $BGJob in $script:BackgroundDownloadJobs ) {
-            Switch( $BGJob.Type) {
-                1 {
-                    $BGJob.Job.ChildJobs | Stop-Job -PassThru
-	                $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
-                }
-                2 {
-                    Stop-Process -Id $BGJob.job.id -Force -ErrorAction SilentlyContinue
-                    Start-Sleep -Seconds 5
-                    Remove-Item -LiteralPath $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
-                }
-                3 {
-                    $BGJob.Job.ChildJobs | Stop-Job -PassThru
-	                $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
-                }
-            }
-            Write-Warning ('Stopped downloading {0} {1}' -f $BGJob.scheduleCode, $BGJob.title)
-	    }
-    }
-
-    Function Add-BackgroundDownloadJob {
-        param(
-            $Type,
-            $FilePath,
-            $DownloadUrl,
-            $ArgumentList,
-            $File,
-            $Timestamp= $null,
-            $Title='',
-            $ScheduleCode=''
-        )
-        $JobsRunning= Get-BackgroundDownloadJobs
-        If ( $JobsRunning -ge $MaxDownloadJobs) {
-            Write-Host ('Maximum background download jobs reached ({0}), waiting for free slot - press Ctrl-C once to abort..' -f $JobsRunning)
-            While ( $JobsRunning -ge $MaxDownloadJobs) {
-                if ([system.console]::KeyAvailable) {
-                    Start-Sleep 1
-                    $key = [system.console]::readkey($true)
-                    if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
-                        Write-Host "TERMINATING" -ForegroundColor Red
-                        Stop-BackgroundDownloadJobs
-                        Exit -1
-                    }
-                }
-                $JobsRunning= Get-BackgroundDownloadJobs
-            }
-        }
-        Switch( $Type) {
+        switch ( $job.Type) {
             1 {
-                # Slidedeck
-                $job= Start-Job -ScriptBlock {
-                    param( $url, $file)
-                    $wc = New-Object System.Net.WebClient
-                    $wc.Encoding = [System.Text.Encoding]::UTF8
-                    $wc.DownloadFile( $url, $file)
-                } -ArgumentList $DownloadUrl, $FilePath
-                $stdOutTempFile = $null
-                $stdErrTempFile = $null
+                $isJobRunning = $job.job.State -eq 'Running'
             }
             2 {
-                # Video
-                $TempFile= Join-Path ($env:TEMP) (New-Guid).Guid
-                $stdOutTempFile = '{0}-Out.log' -f $TempFile
-                $stdErrTempFile = '{0}-Err.log' -f $TempFile
-                $ProcessParam= @{
-                    FilePath= $FilePath
-                    ArgumentList= $ArgumentList
-                    RedirectStandardError= $stdErrTempFile
-                    RedirectStandardOutput= $stdOutTempFile
-                    Wait= $false
-                    Passthru= $true
-                    NoNewWindow= $true
-                    #WindowStyle= [System.Diagnostics.ProcessWindowStyle]::Normal
-                }
-                $job= Start-Process @ProcessParam
+                $isJobRunning = -not $job.job.hasExited
             }
             3 {
-                # Caption
-                $job= Start-Job -ScriptBlock {
-                    param( $url, $file)
-                    $wc = New-Object System.Net.WebClient
-                    $wc.Encoding = [System.Text.Encoding]::UTF8
-                    $wc.DownloadFile( $url, $file)
-                } -ArgumentList $DownloadUrl, $FilePath
-                $stdOutTempFile = $null
-                $stdErrTempFile = $null
+                $isJobRunning = $job.job.State -eq 'Running'
+            }
+            default {
+                $isJobRunning = $false
             }
         }
-        $object= New-Object -TypeName PSObject -Property @{
-            Type= $Type
-            job= $job
-            file= $file
-            title= $Title
-            url= $DownloadUrl
-            scheduleCode= $ScheduleCode
-            timestamp= $timestamp
-            stdOutTempFile= $stdOutTempFile
-            stdErrTempFile= $stdErrTempFile
+        if ( $isJobRunning) {
+            $Temp += $job
         }
+        else {
+            # Job finished, process result
+            switch ( $job.Type) {
+                1 {
+                    $isJobSuccess = $job.job.State -eq 'Completed'
+                    $DeckInfo[ $InfoDownload]++
+                    Write-Progress -Id $job.job.Id -Activity ('Slidedeck {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
+                }
+                2 {
+                    $isJobSuccess = Test-Path -LiteralPath $job.file
+                    $VideoInfo[ $InfoDownload]++
+                    Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
+                }
+                3 {
+                    $isJobSuccess = Test-Path -LiteralPath $job.file
+                    Write-Progress -Id $job.job.Id -Activity ('Captions {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
+                }
+                default {
+                    $isJobSuccess = $false
+                }
+            }
 
-        $script:BackgroundDownloadJobs+= $object
-        Show-BackgroundDownloadJobs
+            # Test if file is placeholder
+            $isPlaceholder = $false
+            if ( Test-Path -LiteralPath $job.file) {
+                $FileObj = Get-ChildItem -LiteralPath $job.file
+                if ( $FileObj.Length -lt 1kb) {
+
+                    if ( @('No resource file is available for download', 'No resource file is available for download for the given id') -contains (Get-Content -LiteralPath $job.File) ) {
+                        Write-Warning ('Removing {0} placeholder file {1}' -f $job.scheduleCode, $job.file)
+                        Remove-Item -LiteralPath $job.file -Force
+                        $isPlaceholder = $true
+
+                        switch ( $job.Type) {
+                            1 {
+                                # Placeholder Deck file downloaded
+                                $DeckInfo[ $InfoDownload]--
+                                $DeckInfo[ $InfoPlaceholder]++
+                            }
+                            2 {
+                                # Placeholder Video file downloaded
+                                $VideoInfo[ $InfoDownload]--
+                                $VideoInfo[ $InfoPlaceholder]++
+                            }
+                            3 {
+                                # Placeholder VTT file downloaded
+                            }
+                        }
+                    }
+                    else {
+                        # Placeholder different text?
+                    }
+                }
+            }
+
+            if ( $isJobSuccess -and -not $isPlaceholder) {
+
+                Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
+
+                # Do we need to adjust timestamp
+                if ( $job.Timestamp) {
+                    if ( Test-Path -LiteralPath $job.file) {
+                        Write-Verbose ('Applying timestamp {0} to {1}' -f $job.Timestamp, $job.file)
+                        $FileObj = Get-ChildItem -LiteralPath $job.file
+                        $FileObj.CreationTime = Get-Date -Date $job.Timestamp
+                        $FileObj.LastWriteTime = Get-Date -Date $job.Timestamp
+                    }
+                    else {
+                        Write-Warning ('File {0} not found for timestamp adjustment' -f $job.file)
+                    }
+                }
+
+                if ( $job.Type -eq 2) {
+                    # Clean video leftovers
+                    Clean-VideoLeftovers $job.file
+                }
+            }
+            else {
+                switch ( $job.Type) {
+                    1 {
+                        Write-Host ('Problem downloading or missing slidedeck of {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
+                        $job.job.ChildJobs | Stop-Job | Out-Null
+                        $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
+                    }
+                    2 {
+                        $LastLine = (Get-Content -LiteralPath $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
+                        Write-Host ('Problem downloading or missing video of {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
+                        Remove-Item -LiteralPath $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
+                    }
+                    3 {
+                        Write-Host ('Problem downloading or missing captions of {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
+                        $job.job.ChildJobs | Stop-Job | Out-Null
+                        $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
+                    }
+                    default {
+                    }
+                }
+            }
+        }
     }
+    $Num = ($Temp | Measure-Object).Count
+    $script:BackgroundDownloadJobs = $Temp
+    Show-BackgroundDownloadJobs
+    return $Num
+}
+
+function Show-BackgroundDownloadJobs {
+    $Num = 0
+    $NumDeck = 0
+    $NumVid = 0
+    $NumCaption = 0
+    foreach ( $BGJob in $script:BackgroundDownloadJobs) {
+        $Num++
+        switch ( $BGJob.Type) {
+            1 {
+                $NumDeck++
+            }
+            2 {
+                $NumVid++
+            }
+            3 {
+                $NumCaption++
+            }
+        }
+    }
+    Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedeck, {2} video and {3} caption files)' -f $Num, $NumDeck, $NumVid, $NumCaption)
+
+    foreach ( $job in $script:BackgroundDownloadJobs) {
+        if ( $Job.Type -eq 2) {
+
+            # Get last line of YT log to display for video downloads
+            $LastLine = (Get-Content -LiteralPath $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
+            if (!( $LastLine)) {
+                $LastLine = 'Evaluating..'
+            }
+            Write-Progress -Id $job.job.id -Activity ('Video {0} {1}' -f $job.scheduleCode, $Job.title) -Status $LastLine -ParentId 2
+            $progressId++
+        }
+    }
+}
+
+function Stop-BackgroundDownloadJobs {
+    # Trigger update jobs running data
+    $null = Get-BackgroundDownloadJobs
+    # Stop all slidedeck background jobs
+    foreach ( $BGJob in $script:BackgroundDownloadJobs ) {
+        switch ( $BGJob.Type) {
+            1 {
+                $BGJob.Job.ChildJobs | Stop-Job -PassThru
+                $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+            }
+            2 {
+                Stop-Process -Id $BGJob.job.id -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 5
+                Remove-Item -LiteralPath $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
+            }
+            3 {
+                $BGJob.Job.ChildJobs | Stop-Job -PassThru
+                $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Write-Warning ('Stopped downloading {0} {1}' -f $BGJob.scheduleCode, $BGJob.title)
+    }
+}
+
+function Add-BackgroundDownloadJob {
+    param(
+        $Type,
+        $FilePath,
+        $DownloadUrl,
+        $ArgumentList,
+        $File,
+        $Timestamp = $null,
+        $Title = '',
+        $ScheduleCode = ''
+    )
+    $JobsRunning = Get-BackgroundDownloadJobs
+    if ( $JobsRunning -ge $MaxDownloadJobs) {
+        Write-Host ('Maximum background download jobs reached ({0}), waiting for free slot - press Ctrl-C once to abort..' -f $JobsRunning)
+        while ( $JobsRunning -ge $MaxDownloadJobs) {
+            if ([system.console]::KeyAvailable) {
+                Start-Sleep 1
+                $key = [system.console]::readkey($true)
+                if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
+                    Write-Host "TERMINATING" -ForegroundColor Red
+                    Stop-BackgroundDownloadJobs
+                    exit -1
+                }
+            }
+            $JobsRunning = Get-BackgroundDownloadJobs
+        }
+    }
+    switch ( $Type) {
+        1 {
+            # Slidedeck
+            $job = Start-Job -ScriptBlock {
+                param( $url, $file)
+                $wc = New-Object System.Net.WebClient
+                $wc.Encoding = [System.Text.Encoding]::UTF8
+                $wc.DownloadFile( $url, $file)
+            } -ArgumentList $DownloadUrl, $FilePath
+            $stdOutTempFile = $null
+            $stdErrTempFile = $null
+        }
+        2 {
+            # Video
+            $TempFile = Join-Path ($env:TEMP) (New-Guid).Guid
+            $stdOutTempFile = '{0}-Out.log' -f $TempFile
+            $stdErrTempFile = '{0}-Err.log' -f $TempFile
+            $ProcessParam = @{
+                FilePath               = $FilePath
+                ArgumentList           = $ArgumentList
+                RedirectStandardError  = $stdErrTempFile
+                RedirectStandardOutput = $stdOutTempFile
+                Wait                   = $false
+                Passthru               = $true
+                NoNewWindow            = $true
+                #WindowStyle= [System.Diagnostics.ProcessWindowStyle]::Normal
+            }
+            $job = Start-Process @ProcessParam
+        }
+        3 {
+            # Caption
+            $job = Start-Job -ScriptBlock {
+                param( $url, $file)
+                $wc = New-Object System.Net.WebClient
+                $wc.Encoding = [System.Text.Encoding]::UTF8
+                $wc.DownloadFile( $url, $file)
+            } -ArgumentList $DownloadUrl, $FilePath
+            $stdOutTempFile = $null
+            $stdErrTempFile = $null
+        }
+    }
+    $object = New-Object -TypeName PSObject -Property @{
+        Type           = $Type
+        job            = $job
+        file           = $file
+        title          = $Title
+        url            = $DownloadUrl
+        scheduleCode   = $ScheduleCode
+        timestamp      = $timestamp
+        stdOutTempFile = $stdOutTempFile
+        stdErrTempFile = $stdErrTempFile
+    }
+
+    $script:BackgroundDownloadJobs += $object
+    Show-BackgroundDownloadJobs
+}
 
 ##########
 # MAIN
 ##########
 
-    Write-Host( '*' * 78)
-    Write-Host( 'Get-EventSession v4.35')
-    Write-Host( 'Microsoft event video and slidedeck downloading script')
-    Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
-    Write-Host( '*' * 78)
+Write-Host( '*' * 78)
+Write-Host( 'Get-EventSession v4.37')
+Write-Host( 'Microsoft event video and slidedeck downloading script')
+Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
+Write-Host( '*' * 78)
 
-    If( $psISE) {
-        Throw( 'Running from PowerShell ISE is not supported due to requirement to capture console input for proper termination of the script. Please run from a regular PowerShell session.')
+if ( $psISE) {
+    throw( 'Running from PowerShell ISE is not supported due to requirement to capture console input for proper termination of the script. Please run from a regular PowerShell session.')
+}
+
+if ( $Proxy) {
+    $ProxyURL = $Proxy
+}
+else {
+    $ProxyURL = Get-IEProxy
+}
+if ( $ProxyURL) {
+    Write-Host "Using proxy address $ProxyURL"
+}
+else {
+    Write-Host "No proxy setting detected, using direct connection"
+}
+
+# Determine what event URLs to use.
+# Use {0} for session code (eg BRK123), {1} for session id (guid)
+switch ( $Event) {
+    { 'MEC', 'MEC2022' -contains $_ } {
+        $EventName = 'MEC2022'
+        $EventType = 'YT'
+        $EventYTUrl = 'https://www.youtube.com/playlist?list=PLxdTT6-7g--2POisC5XcDQxUXHhWsoZc9'
+        $EventLocale = 'en-us'
+        $CaptionExt = 'vtt'
+    }
+    { 'Ignite', 'Ignite2025' -contains $_ } {
+        $EventName = 'Ignite2025'
+        $EventType = 'API2'
+        $EventAPIUrl = 'https://api-v2.ignite.microsoft.com/api/session/all/en-US'
+        $SessionUrl = 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
+        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/IG25-{0}'
+        $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
+        $Method = 'GET'
+        # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2025-11-01T12:00:00.000Z","endDateTime":"2025-11-30T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+        $CaptionExt = 'vtt'
+    }
+    { 'Ignite2024' -contains $_ } {
+        $EventName = 'Ignite2024'
+        $EventType = 'API'
+        $EventAPIUrl = 'https://api-v2.ignite.microsoft.com'
+        $EventSearchURI = 'api/session/search'
+        $SessionUrl = 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
+        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/IG24-{0}'
+        $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
+        $Method = 'Post'
+        # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-11-19T12:00:00.000Z","endDateTime":"2024-11-22T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+        $CaptionExt = 'vtt'
+    }
+    { 'Ignite2023' -contains $_ } {
+        $EventName = 'Ignite2023'
+        $EventType = 'API'
+        $EventAPIUrl = 'https://api.ignite.microsoft.com'
+        $EventSearchURI = 'api/session/search'
+        $SessionUrl = 'https://medius.studios.ms/Embed/video-nc/IG23-{0}'
+        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/IG23-{0}'
+        $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
+        $Method = 'Post'
+        # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
+        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-11-13T12:00:00.000Z","endDateTime":"2023-11-18T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+        $CaptionExt = 'vtt'
+    }
+    { 'Inspire', 'Inspire2023' -contains $_ } {
+        $EventName = 'Inspire2023'
+        $EventType = 'API'
+        $EventAPIUrl = 'https://api.inspire.microsoft.com'
+        $EventSearchURI = 'api/session/search'
+        $SessionUrl = 'https://medius.studios.ms/video/asset/HIGHMP4/INSP23-{0}'
+        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/INSP23-{0}'
+        $SlidedeckUrl = 'https://medius.studios.ms/video/asset/PPT/INSP23-{0}'
+        $Method = 'Post'
+        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-08-01T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+        $CaptionExt = 'vtt'
+    }
+    { 'Build', 'Build2025' -contains $_ } {
+        $EventName = 'Build2025'
+        $EventType = 'API2'
+        $EventAPIUrl = 'https://eventtools.event.microsoft.com/build2025-prod/fallback/session-all-en-us.json'
+        $SessionUrl = 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
+        $CaptionURL = 'https://medius.microsoft.com/video/asset/CAPTION/{0}'
+        $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
+        $Method = 'GET'
+        $CaptionExt = 'vtt'
+        $PreferDirect = $True
+    }
+    { 'Build2024' -contains $_ } {
+        $EventName = 'Build2024'
+        $EventType = 'API'
+        $EventAPIUrl = 'https://api-v2.build.microsoft.com'
+        $EventSearchURI = 'api/session/search'
+        $SessionUrl = 'https://medius.studios.ms/video/asset/HIGHMP4/B24-{0}'
+        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/B24-{0}'
+        $SlidedeckUrl = 'https://medius.studios.ms/video/asset/PPT/B24-{0}'
+        $Method = 'Post'
+        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-05-21T08:00:00-05:00","endDateTime":"2024-05-24T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+        $CaptionExt = 'vtt'
+    }
+    { 'Build2023' -contains $_ } {
+        $EventName = 'Build2023'
+        $EventType = 'API'
+        $EventAPIUrl = 'https://api-v2.build.microsoft.com'
+        $EventSearchURI = 'api/session/search'
+        $SessionUrl = 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
+        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
+        $SlidedeckUrl = 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
+        $Method = 'Post'
+        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+        $CaptionExt = 'vtt'
+    }
+    default {
+        Write-Host ('Unknown event: {0}' -f $Event) -ForegroundColor Red
+        exit -1
+    }
+}
+
+if (-not ($InfoOnly)) {
+
+    # If no download folder set, use system drive with event subfolder
+    if ( -not( $DownloadFolder)) {
+        $DownloadFolder = '{0}\{1}' -f $ENV:SystemDrive, $EventName
     }
 
-    If( $Proxy) {
-        $ProxyURL= $Proxy
-    }
-    Else {
-        $ProxyURL = Get-IEProxy
-    }
-    If ( $ProxyURL) {
-        Write-Host "Using proxy address $ProxyURL"
-    }
-    Else {
-        Write-Host "No proxy setting detected, using direct connection"
+    Add-Type -AssemblyName System.Web
+    Write-Host "Using download path: $DownloadFolder"
+    # Create the local content path if not exists
+    if ( (Test-Path $DownloadFolder) -eq $false ) {
+        New-Item -Path $DownloadFolder -ItemType Directory | Out-Null
     }
 
-    # Determine what event URLs to use.
-    # Use {0} for session code (eg BRK123), {1} for session id (guid)
-    Switch( $Event) {
-        {'MEC','MEC2022' -contains $_} {
-            $EventName= 'MEC2022'
-            $EventType='YT'
-            $EventYTUrl= 'https://www.youtube.com/playlist?list=PLxdTT6-7g--2POisC5XcDQxUXHhWsoZc9'
-            $EventLocale= 'en-us'
-            $CaptionExt= 'vtt'
-        }
-        {'Ignite','Ignite2025' -contains $_} {
-            $EventName= 'Ignite2025'
-            $EventType='API2'
-            $EventAPIUrl= 'https://api-v2.ignite.microsoft.com/api/session/all/en-US'
-            $SessionUrl= 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG25-{0}'
-            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
-            $Method= 'GET'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2025-11-01T12:00:00.000Z","endDateTime":"2025-11-30T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Ignite2024' -contains $_} {
-            $EventName= 'Ignite2024'
-            $EventType='API'
-            $EventAPIUrl= 'https://api-v2.ignite.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG24-{0}'
-            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
-            $Method= 'Post'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-11-19T12:00:00.000Z","endDateTime":"2024-11-22T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Ignite2023' -contains $_} {
-            $EventName= 'Ignite2023'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.ignite.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/Embed/video-nc/IG23-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/IG23-{0}'
-            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
-            $Method= 'Post'
-            # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-11-13T12:00:00.000Z","endDateTime":"2023-11-18T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Inspire', 'Inspire2023' -contains $_} {
-            $EventName= 'Inspire2023'
-            $EventType='API'
-            $EventAPIUrl= 'https://api.inspire.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/INSP23-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/INSP23-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/INSP23-{0}'
-            $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-08-01T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Build', 'Build2025' -contains $_} {
-            $EventName= 'Build2025'
-            $EventType='API2'
-            $EventAPIUrl= 'https://eventtools.event.microsoft.com/build2025-prod/fallback/session-all-en-us.json'
-            $SessionUrl= 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
-            $CaptionURL= 'https://medius.microsoft.com/video/asset/CAPTION/{0}'
-            $SlidedeckUrl= 'https://medius.microsoft.com/video/asset/PPT/{0}'
-            $Method= 'GET'
-            $CaptionExt= 'vtt'
-            $PreferDirect= $True
-        }
-        {'Build2024' -contains $_} {
-            $EventName= 'Build2024'
-            $EventType='API'
-            $EventAPIUrl= 'https://api-v2.build.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B24-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B24-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B24-{0}'
-            $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-05-21T08:00:00-05:00","endDateTime":"2024-05-24T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        {'Build2023' -contains $_} {
-            $EventName= 'Build2023'
-            $EventType='API'
-            $EventAPIUrl= 'https://api-v2.build.microsoft.com'
-            $EventSearchURI= 'api/session/search'
-            $SessionUrl= 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
-            $CaptionURL= 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
-            $SlidedeckUrl= 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
-            $Method= 'Post'
-            $EventSearchBody= '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-            $CaptionExt= 'vtt'
-        }
-        default {
-            Write-Host ('Unknown event: {0}' -f $Event) -ForegroundColor Red
-            Exit -1
-        }
+    if ( $NoVideos) {
+        Write-Host 'Will skip downloading videos'
+        $DownloadVideos = $false
     }
-
-    If (-not ($InfoOnly)) {
-
-        # If no download folder set, use system drive with event subfolder
-        If( -not( $DownloadFolder)) {
-            $DownloadFolder= '{0}\{1}' -f $ENV:SystemDrive, $EventName
+    else {
+        if (-not( Test-Path $YouTubeDL)) {
+            Write-Host ('{0} not found, will try to download from {1}' -f $YouTubeEXE, $YTLink)
+            Invoke-WebRequest -Uri $YTLink -OutFile $YouTubeDL -Proxy $ProxyURL
         }
+        if ( Test-Path $YouTubeDL) {
+            Write-Host ('Running self-update of {0}' -f $YouTubeEXE)
 
-        Add-Type -AssemblyName System.Web
-        Write-Host "Using download path: $DownloadFolder"
-        # Create the local content path if not exists
-        if ( (Test-Path $DownloadFolder) -eq $false ) {
-            New-Item -Path $DownloadFolder -ItemType Directory | Out-Null
+            $Arg = @('-U')
+            if ( $ProxyURL) { $Arg += "--proxy $ProxyURL" }
+
+            $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+            $pinfo.FileName = $YouTubeDL
+            $pinfo.RedirectStandardError = $true
+            $pinfo.RedirectStandardOutput = $true
+            $pinfo.UseShellExecute = $false
+            $pinfo.Arguments = $Arg
+
+            Write-Verbose ('Running {0} using {1}' -f $pinfo.FileName, ($pinfo.Arguments -join ' '))
+            try {
+                $p = New-Object System.Diagnostics.Process
+                $p.StartInfo = $pinfo
+                $p.Start() | Out-Null
+                $stdout = $p.StandardOutput.ReadToEnd()
+                $stderr = $p.StandardError.ReadToEnd()
+                $p.WaitForExit()
+            }
+            catch {
+                throw ('Problem running {0}. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).' -f $YouTubeEXE)
+            }
+            $DownloadVideos = $true
         }
-
-        If ( $NoVideos) {
-            Write-Host 'Will skip downloading videos'
+        else {
+            Write-Warning ('Unable to locate or download {0}, will skip downloading YouTube videos' -f $YouTubeEXE)
             $DownloadVideos = $false
         }
-        Else {
-            If (-not( Test-Path $YouTubeDL)) {
-                Write-Host ('{0} not found, will try to download from {1}' -f $YouTubeEXE, $YTLink)
-                Invoke-WebRequest -Uri $YTLink -OutFile $YouTubeDL -Proxy $ProxyURL
-            }
-            If ( Test-Path $YouTubeDL) {
-                Write-Host ('Running self-update of {0}' -f $YouTubeEXE)
 
-                $Arg = @('-U')
-                If ( $ProxyURL) { $Arg += "--proxy $ProxyURL" }
+        if (-not( Test-Path $FFMPEG)) {
 
-                $pinfo = New-Object System.Diagnostics.ProcessStartInfo
-                $pinfo.FileName = $YouTubeDL
-                $pinfo.RedirectStandardError = $true
-                $pinfo.RedirectStandardOutput = $true
-                $pinfo.UseShellExecute = $false
-                $pinfo.Arguments = $Arg
+            Write-Host ('ffmpeg.exe not found, will try to download from {0}' -f $FFMPEGlink)
+            $TempFile = Join-Path $PSScriptRoot 'ffmpeg-latest-win32-static.zip'
+            Invoke-WebRequest -Uri $FFMPEGlink -OutFile $TempFile -Proxy $ProxyURL
 
-                Write-Verbose ('Running {0} using {1}' -f $pinfo.FileName, ($pinfo.Arguments -join ' '))
-                Try {
-                    $p = New-Object System.Diagnostics.Process
-                    $p.StartInfo = $pinfo
-                    $p.Start() | Out-Null
-                    $stdout = $p.StandardOutput.ReadToEnd()
-                    $stderr = $p.StandardError.ReadToEnd()
-                    $p.WaitForExit()
-                }
-                Catch {
-                    Throw ('Problem running {0}. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).' -f $YouTubeEXE)
-                }
-                $DownloadVideos = $true
-            }
-            Else {
-                Write-Warning ('Unable to locate or download {0}, will skip downloading YouTube videos' -f $YouTubeEXE)
-                $DownloadVideos = $false
-            }
-
-            If (-not( Test-Path $FFMPEG)) {
-
-                Write-Host ('ffmpeg.exe not found, will try to download from {0}' -f $FFMPEGlink)
-                $TempFile= Join-Path $PSScriptRoot 'ffmpeg-latest-win32-static.zip'
-                Invoke-WebRequest -Uri $FFMPEGlink -OutFile $TempFile -Proxy $ProxyURL
-
-                If( Test-Path $TempFile) {
-                    Add-Type -AssemblyName System.IO.Compression.FileSystem
-                    Write-Host ('{0} downloaded, trying to extract ffmpeg.exe' -f $TempFile)
-                    $FFMPEGZip= [System.IO.Compression.ZipFile]::OpenRead( $TempFile)
-                    $FFMPEGEntry= $FFMPEGZip.Entries | Where-Object {$_.FullName -like '*/ffmpeg.exe'}
-                    If( $FFMPEGEntry) {
-                        Try {
-                            [System.IO.Compression.ZipFileExtensions]::ExtractToFile( $FFMPEGEntry, $FFMPEG)
-                            $FFMPEGZip.Dispose()
-                            Remove-Item -LiteralPath $TempFile -Force
-                        }
-                        Catch {
-                            Throw ('Problem extracting ffmpeg.exe from {0}' -f $FFMPEGZip)
-                        }
+            if ( Test-Path $TempFile) {
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+                Write-Host ('{0} downloaded, trying to extract ffmpeg.exe' -f $TempFile)
+                $FFMPEGZip = [System.IO.Compression.ZipFile]::OpenRead( $TempFile)
+                $FFMPEGEntry = $FFMPEGZip.Entries | Where-Object { $_.FullName -like '*/ffmpeg.exe' }
+                if ( $FFMPEGEntry) {
+                    try {
+                        [System.IO.Compression.ZipFileExtensions]::ExtractToFile( $FFMPEGEntry, $FFMPEG)
+                        $FFMPEGZip.Dispose()
+                        Remove-Item -LiteralPath $TempFile -Force
                     }
-                    Else {
-                        Throw 'ffmpeg.exe missing in downloaded archive'
+                    catch {
+                        throw ('Problem extracting ffmpeg.exe from {0}' -f $FFMPEGZip)
                     }
                 }
-            }
-            If ( Test-Path $FFMPEG) {
-                Write-Host ('ffmpeg.exe located at {0}' -f $FFMPEG)
-                $DownloadAMSVideos= $true
-            }
-            Else {
-                Write-Warning 'Unable to locate or download ffmpeg.exe, will skip downloading Azure Media Services videos'
-                $DownloadAMSVideos = $false
-            }
-        }
-    }
-
-    $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $EventName)
-    $SessionCacheValid = $false
-
-    If( $Refresh) {
-        Write-Host 'Refresh specified, will read session information from the online catalog'
-    }
-    Else {
-        If ( Test-Path $SessionCache) {
-            Try {
-                If ( (Get-childItem -LiteralPath $SessionCache).LastWriteTime -ge (Get-Date).AddHours( - $MaxCacheAge)) {
-                    Write-Host 'Session cache file found, reading session information'
-                    $data = Import-CliXml -LiteralPath $SessionCache -ErrorAction SilentlyContinue
-                    $SessionCacheValid = $true
-                }
-                Else {
-                   Write-Warning 'Cache information expired, will re-read information from catalog'
+                else {
+                    throw 'ffmpeg.exe missing in downloaded archive'
                 }
             }
-            Catch {
-                Write-Host 'Error reading cache file or cache file invalid - will read from online catalog' -ForegroundColor Red
-            }
+        }
+        if ( Test-Path $FFMPEG) {
+            Write-Host ('ffmpeg.exe located at {0}' -f $FFMPEG)
+            $DownloadAMSVideos = $true
+        }
+        else {
+            Write-Warning 'Unable to locate or download ffmpeg.exe, will skip downloading Azure Media Services videos'
+            $DownloadAMSVideos = $false
         }
     }
+}
 
-    If ( -not( $SessionCacheValid)) {
+$SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $EventName)
+$SessionCacheValid = $false
 
-      Switch($EventType) {
+if ( $Refresh) {
+    Write-Host 'Refresh specified, will read session information from the online catalog'
+}
+else {
+    if ( Test-Path $SessionCache) {
+        try {
+            if ( (Get-ChildItem -LiteralPath $SessionCache).LastWriteTime -ge (Get-Date).AddHours( - $MaxCacheAge)) {
+                Write-Host 'Session cache file found, reading session information'
+                $data = Import-Clixml -LiteralPath $SessionCache -ErrorAction SilentlyContinue
+                $SessionCacheValid = $true
+            }
+            else {
+                Write-Warning 'Cache information expired, will re-read information from catalog'
+            }
+        }
+        catch {
+            Write-Host 'Error reading cache file or cache file invalid - will read from online catalog' -ForegroundColor Red
+        }
+    }
+}
+
+if ( -not( $SessionCacheValid)) {
+
+    switch ($EventType) {
         'API2' {
             Write-Host ('Reading {0} session catalog' -f $EventName)
             $web = @{
-                userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
-                requestUri  = [uri]('{0}' -f $EventAPIUrl)
-                headers     = @{'Content-Type'='application/json; charset=utf-8'; 'Accept-Encoding'='deflate, gzip' }
-                Timeout     = 300
+                userAgent  = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
+                requestUri = [uri]('{0}' -f $EventAPIUrl)
+                headers    = @{'Content-Type' = 'application/json; charset=utf-8'; 'Accept-Encoding' = 'deflate, gzip' }
+                Timeout    = 300
             }
-            Try {
+            try {
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
                 $ResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL -Timeout $web.Timeout
             }
-            Catch {
-                Throw ('Problem retrieving session catalog: {0}' -f $error[0])
+            catch {
+                throw ('Problem retrieving session catalog: {0}' -f $error[0])
             }
             [int32]$sessionCount = ($ResultsResponse | Measure-Object ).Count
             Write-Host ('Processing information for {0} sessions' -f $sessionCount)
             $data = [System.Collections.ArrayList]@()
             $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
             $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
-            ForEach( $item in $ResultsResponse) {
+            foreach ( $item in $ResultsResponse) {
                 $Item.PSObject.Properties | ForEach-Object {
-                    If( @('speakerNames') -icontains $_.Name ) {
+                    if ( @('speakerNames') -icontains $_.Name ) {
                         $Item.($_.Name) = @($_.Value)
                     }
-                    If( @('products', 'contentCategory') -icontains $_.Name ) {
+                    if ( @('products', 'contentCategory') -icontains $_.Name ) {
                         $Item.($_.Name) = @($_.Value -replace [char]9, '/')
                     }
-                    If( @('topic', 'sessionType', 'sessionLevel', 'audienceTypes', 'deliveryTypes', 'viewingOptions', 'event', 'programmingLanguages') -icontains $_.Name ) {
+                    if ( @('topic', 'sessionType', 'sessionLevel', 'audienceTypes', 'deliveryTypes', 'viewingOptions', 'event', 'programmingLanguages') -icontains $_.Name ) {
                         $Item.($_.Name) = $_.Value.displayValue -join ','
                     }
                 }
@@ -1274,34 +1274,34 @@ param(
         'API' {
             Write-Host ('Reading {0} session catalog' -f $EventName)
             $web = @{
-                userAgent   = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
-                requestUri  = [uri]('{0}/{1}' -f $EventAPIUrl, $EventSearchURI)
-                headers     = @{'Content-Type'='application/json; charset=utf-8'; 'Accept-Encoding'='deflate, gzip'}
-                itemsPerPage= 1000
+                userAgent    = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
+                requestUri   = [uri]('{0}/{1}' -f $EventAPIUrl, $EventSearchURI)
+                headers      = @{'Content-Type' = 'application/json; charset=utf-8'; 'Accept-Encoding' = 'deflate, gzip' }
+                itemsPerPage = 1000
             }
-            Try {
-                $SearchBody= $EventSearchBody -f '1', '1'
+            try {
+                $SearchBody = $EventSearchBody -f '1', '1'
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
                 $searchResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
             }
-            Catch {
-                Throw ('Problem retrieving session catalog: {0}' -f $error[0])
+            catch {
+                throw ('Problem retrieving session catalog: {0}' -f $error[0])
             }
             [int32]$sessionCount = $searchResultsResponse.total
             [int32]$remainder = 0
             $PageCount = [System.Math]::DivRem($sessionCount, $web.itemsPerPage, [ref]$remainder)
-            If ($remainder -gt 0) {
+            if ($remainder -gt 0) {
                 $PageCount++
             }
             Write-Host ('Reading information for {0} sessions' -f $sessionCount)
             $data = [System.Collections.ArrayList]@()
             $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
             $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
-            For ($page = 1; $page -le $PageCount; $page++) {
+            for ($page = 1; $page -le $PageCount; $page++) {
                 Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
-                $SearchBody= $EventSearchBody -f $web.itemsPerPage, $page
-                $searchResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session  -Proxy $ProxyURL
-                ForEach ( $Item in $searchResultsResponse.data) {
+                $SearchBody = $EventSearchBody -f $web.itemsPerPage, $page
+                $searchResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
+                foreach ( $Item in $searchResultsResponse.data) {
                     $Item.PSObject.Properties | ForEach-Object {
                         if ($_.Name -eq 'speakerNames') { $Item.($_.Name) = @($_.Value) }
                         if ($_.Name -eq 'products') { $Item.($_.Name) = @($_.Value -replace [char]9, '/') }
@@ -1320,8 +1320,8 @@ param(
             # YouTube published - Use yt-dlp to download the playlist as JSON so we can parse it to 'expected format'
             Write-Host ('Reading {0} playlist information (might take a while) ..' -f $EventName)
             $data = [System.Collections.ArrayList]@()
-            $Arg= [System.Collections.ArrayList]@()
-            If ( $ProxyURL) {
+            $Arg = [System.Collections.ArrayList]@()
+            if ( $ProxyURL) {
                 $Arg.Add( '--proxy "{0}"' -f $ProxyURL) | Out-Null
             }
             $Arg.Add( '--socket-timeout 90') | Out-Null
@@ -1344,67 +1344,67 @@ param(
             $stderr = $p.StandardError.ReadToEnd()
             $p.WaitForExit()
 
-            If ($p.ExitCode -ne 0) {
-                Throw ('Problem running {0}: {1}' -f $YouTubeEXE, $stderr)
+            if ($p.ExitCode -ne 0) {
+                throw ('Problem running {0}: {1}' -f $YouTubeEXE, $stderr)
             }
 
-            Try {
+            try {
                 Write-Verbose ('Converting from Json ..')
                 # Trim any trailing empty lines, convert single string with line-breaks to array for JSON conversion
-                $JsonData= ($stdout.Trim([System.Environment]::Newline) -Split "`n") | ConvertFrom-Json
+                $JsonData = ($stdout.Trim([System.Environment]::Newline) -split "`n") | ConvertFrom-Json
             }
-            Catch {
-                Throw( 'Output does not seem to be proper JSON format, see {0}' -f $TempJsonFile)
+            catch {
+                throw( 'Output does not seem to be proper JSON format, see {0}' -f $TempJsonFile)
             }
 
-            ForEach( $Item in $JsonData) {
+            foreach ( $Item in $JsonData) {
 
-                $SpeakerNames= [System.Collections.ArrayList]@()
+                $SpeakerNames = [System.Collections.ArrayList]@()
 
                 # Description match pattern? Set Desc+Speakers, otherwise Desc=Description, assume no Speakers defined
 
-                If($Item.Description -match '^(?<Description>[\s\S]*?)(\s)*(Download the slide deck from (?<Slidedeck>https:\/\/.*?)[\.]?)?(\s)*(Speaker(s)?:(\s)?(?<Speakers>.*))?(\s)*$') {
-                    $Description= $Matches.Description
-                    $Matches.Speakers -Split ';' | ForEach-Object { $SpeakerNames.Add( $_.Trim() ) |Out-Null }
-                    $SlidedeckUrl= $Matches.Slidedeck
+                if ($Item.Description -match '^(?<Description>[\s\S]*?)(\s)*(Download the slide deck from (?<Slidedeck>https:\/\/.*?)[\.]?)?(\s)*(Speaker(s)?:(\s)?(?<Speakers>.*))?(\s)*$') {
+                    $Description = $Matches.Description
+                    $Matches.Speakers -split ';' | ForEach-Object { $SpeakerNames.Add( $_.Trim() ) | Out-Null }
+                    $SlidedeckUrl = $Matches.Slidedeck
                 }
-                Else {
-                    $Description= $Item.Description
-                    $SlidedeckUrl= $null
+                else {
+                    $Description = $Item.Description
+                    $SlidedeckUrl = $null
                 }
 
                 # Slidedeck url, construct real link:
-                If( $SlidedeckUrl) {
+                if ( $SlidedeckUrl) {
                     # https://www.microsoft.com/en-us/download/details.aspx?id=104608 -> https://www.microsoft.com/en-us/download/confirmation.aspx?id=104608
 
-                    If( $SlidedeckUrl -match '^(?<host>https:\/\/www\.microsoft\.com).*id=(?<id>[\d]+)$') {
-                        $SlideDeck= '{0}/en-us/download/confirmation.aspx?id={1}' -f $Matches.host, $Matches.id
+                    if ( $SlidedeckUrl -match '^(?<host>https:\/\/www\.microsoft\.com).*id=(?<id>[\d]+)$') {
+                        $SlideDeck = '{0}/en-us/download/confirmation.aspx?id={1}' -f $Matches.host, $Matches.id
                     }
-                    Else {
+                    else {
                         Write-Warning ('Unexpected slide deck URL format: {0}' -f $SlidedeckUrl)
-                        $Slidedeck= $null
+                        $Slidedeck = $null
                     }
                 }
-                Else {
-                    $SlideDeck= $null
+                else {
+                    $SlideDeck = $null
                 }
 
                 $object = [PSCustomObject]@{
-                    sessionCode= [string]('{0:d2}' -f $Item.playlist_index)
-                    SessionType= 'On-Demand'
-                    Title= $Item.Title
-                    Description= $Description
-                    onDemand= $Item.webpage_url
-                    Views= $Item.view_count
-                    Likes= $Item.like_count
-                    Duration= [timespan]::FromSeconds( $Item.duration).ToString()
-                    langLocale= $EventLocale
-                    SolutionArea= $Item.Tags
-                    contentCategory= $Item.categories
-                    SpeakerNames= $SpeakerNames
-                    Slidedeck= $Slidedeck
-                    startDateTime= [Datetime]::ParseExact( $Item.upload_date, 'yyyyMMdd', $null)
-                    onDemandThumbnail= ($Item.thumbnails | Sort-Object -Property Id | Select-Object -First 1).Url
+                    sessionCode       = [string]('{0:d2}' -f $Item.playlist_index)
+                    SessionType       = 'On-Demand'
+                    Title             = $Item.Title
+                    Description       = $Description
+                    onDemand          = $Item.webpage_url
+                    Views             = $Item.view_count
+                    Likes             = $Item.like_count
+                    Duration          = [timespan]::FromSeconds( $Item.duration).ToString()
+                    langLocale        = $EventLocale
+                    SolutionArea      = $Item.Tags
+                    contentCategory   = $Item.categories
+                    SpeakerNames      = $SpeakerNames
+                    Slidedeck         = $Slidedeck
+                    startDateTime     = [Datetime]::ParseExact( $Item.upload_date, 'yyyyMMdd', $null)
+                    onDemandThumbnail = ($Item.thumbnails | Sort-Object -Property Id | Select-Object -First 1).Url
                 }
                 Write-Verbose ('Adding info for session {0}' -f $Item.Title)
                 $data.Add( $object) | Out-Null
@@ -1412,513 +1412,525 @@ param(
         }
 
         default {
-          Throw( 'Unknown event catalog type {0}' -f $EventType)
+            throw( 'Unknown event catalog type {0}' -f $EventType)
         }
-      }
-
-      Write-Host 'Storing session information'
-      $data | Export-CliXml -Encoding Unicode -Force -LiteralPath $SessionCache
-
     }
 
-    $SessionsToGet = $data
-    $TotalNumberOfSessions= ($SessionsToGet | Measure-Object).Count
+    Write-Host 'Storing session information'
+    $data | Export-Clixml -Encoding Unicode -Force -LiteralPath $SessionCache
 
-    If ($scheduleCode) {
-        Write-Verbose ('Session code(s) specified: {0}' -f ($ScheduleCode -join ','))
-        $SessionsToGet = $SessionsToGet | Where-Object { $scheduleCode -contains $_.sessioncode }
+}
+
+$SessionsToGet = $data
+$TotalNumberOfSessions = ($SessionsToGet | Measure-Object).Count
+
+if ($scheduleCode) {
+    Write-Verbose ('Session code(s) specified: {0}' -f ($ScheduleCode -join ','))
+    $SessionsToGet = $SessionsToGet | Where-Object { $scheduleCode -contains $_.sessioncode }
+}
+
+if ($ExcludeCommunityTopic) {
+    Write-Verbose ('Excluding community topic: {0}' -f $ExcludeCommunityTopic)
+    $SessionsToGet = $SessionsToGet | Where-Object { $ExcludeCommunityTopic -inotcontains $_.CommunityTopic }
+}
+
+if ($Speaker) {
+    Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker)
+    $SessionsToGet = $SessionsToGet | Where-Object { $_.speakerNames | Where-Object { $_ -ilike $Speaker } }
+}
+
+if ($Product) {
+    Write-Verbose ('Product specified: {0}' -f $Product)
+    $SessionsToGet = $SessionsToGet | Where-Object { $_.products | Where-Object { $_ -ilike $Product } }
+}
+
+if ($Category) {
+    Write-Verbose ('Category specified: {0}' -f $Category)
+    $SessionsToGet = $SessionsToGet | Where-Object { $_.contentCategory | Where-Object { $_ -ilike $Category } }
+}
+
+if ($SolutionArea) {
+    Write-Verbose ('SolutionArea specified: {0}' -f $SolutionArea)
+    $SessionsToGet = $SessionsToGet | Where-Object { $_.solutionArea | Where-Object { $_ -ilike $SolutionArea } }
+}
+
+if ($LearningPath) {
+    Write-Verbose ('LearningPath specified: {0}' -f $LearningPath)
+    $SessionsToGet = $SessionsToGet | Where-Object { $_.learningPath | Where-Object { $_ -ilike $LearningPath } }
+}
+
+if ($Topic) {
+    Write-Verbose ('Topic specified: {0}' -f $Topic)
+    $SessionsToGet = $SessionsToGet | Where-Object { $_.topic | Where-Object { $_ -ilike $Topic } }
+}
+
+if ($Locale) {
+    Write-Verbose ('Locale(s) specified: {0}' -f ($Locale -join ','))
+    $SessionsToGetTemp = [System.Collections.ArrayList]@()
+    foreach ( $item in $Locale) {
+        $SessionsToGet | Where-Object { $item -ieq $_.langLocale } | ForEach-Object { $null = $SessionsToGetTemp.Add(  $_ ) }
+    }
+    $SessionsToGet = $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
+}
+
+if ($Title) {
+    Write-Verbose ('Title keyword(s) specified: {0}' -f ( $Title -join ','))
+    $SessionsToGetTemp = [System.Collections.ArrayList]@()
+    foreach ( $item in $Title) {
+        $SessionsToGet | Where-Object { $_.title -ilike ('*{0}*' -f $item) } | ForEach-Object { $null = $SessionsToGetTemp.Add(  $_ ) }
+    }
+    $SessionsToGet = $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
+}
+
+if ($Keyword) {
+    Write-Verbose ('Description keyword(s) specified: {0}' -f ( $Keyword -join ','))
+    $SessionsToGetTemp = [System.Collections.ArrayList]@()
+    foreach ( $item in $Keyword) {
+        $SessionsToGet | Where-Object { $_.description -ilike ('*{0}*' -f $item) } | ForEach-Object { $null = $SessionsToGetTemp.Add(  $_ ) }
+    }
+    $SessionsToGet = $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
+}
+
+if ($NoRepeats) {
+    Write-Verbose ('Skipping repeated sessions')
+    $SessionsToGet = $SessionsToGet | Where-Object { $_.sessionCode -inotmatch '^*R[1-9]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$' }
+}
+
+if ( $InfoOnly) {
+    Write-Verbose ('There are {0} sessions matching your criteria.' -f (($SessionsToGet | Measure-Object).Count))
+    Write-Output $SessionsToGet
+}
+else {
+
+    if ( $OGVPicker) {
+        $SessionsToGet = $SessionsToGet | Out-GridView -Title 'Select Videos to Download, or Cancel for all Videos' -PassThru
     }
 
-    If ($ExcludeCommunityTopic) {
-        Write-Verbose ('Excluding community topic: {0}' -f $ExcludeCommunityTopic)
-        $SessionsToGet = $SessionsToGet | Where-Object { $ExcludeCommunityTopic -inotcontains $_.CommunityTopic  }
-    }
+    $i = 0
+    $DeckInfo = @(0, 0, 0)
+    $VideoInfo = @(0, 0, 0)
+    $InfoDownload = 0
+    $InfoPlaceholder = 1
+    $InfoExist = 2
 
-    If ($Speaker) {
-        Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.speakerNames | Where-Object {$_ -ilike $Speaker} }
-    }
+    $myTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById( 'US Eastern Standard Time')
 
-    If ($Product) {
-        Write-Verbose ('Product specified: {0}' -f $Product)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.products | Where-Object {$_ -ilike $Product }}
-    }
+    [console]::TreatControlCAsInput = $true
 
-    If ($Category) {
-        Write-Verbose ('Category specified: {0}' -f $Category)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.contentCategory | Where-Object {$_ -ilike $Category }}
-    }
+    $SessionsSelected = ($SessionsToGet | Measure-Object).Count
+    Write-Host ('There are {0} sessions matching your criteria.' -f $SessionsSelected)
 
-    If ($SolutionArea) {
-        Write-Verbose ('SolutionArea specified: {0}' -f $SolutionArea)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.solutionArea | Where-Object {$_ -ilike $SolutionArea }}
-    }
-
-    If ($LearningPath) {
-        Write-Verbose ('LearningPath specified: {0}' -f $LearningPath)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.learningPath | Where-Object {$_ -ilike $LearningPath }}
-    }
-
-    If ($Topic) {
-        Write-Verbose ('Topic specified: {0}' -f $Topic)
-        $SessionsToGet = $SessionsToGet | Where-Object { $_.topic | Where-Object {$_ -ilike $Topic }}
-    }
-
-    If ($Locale) {
-        Write-Verbose ('Locale(s) specified: {0}' -f ($Locale -join ','))
-        $SessionsToGetTemp= [System.Collections.ArrayList]@()
-        ForEach( $item in $Locale) {
-            $SessionsToGet | Where-Object {$item -ieq $_.langLocale} | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
+    if ( $DownloadFolder -inotlike '\\?\*') {
+        # Apply extended-length path prefix to support long paths
+        if ( $DownloadFolder -ilike '\\*') {
+            $DownloadFolder = '\\?\UNC\{0}' -f $DownloadFolder.Substring(2)
         }
-        $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
-    }
-
-    If ($Title) {
-        Write-Verbose ('Title keyword(s) specified: {0}' -f ( $Title -join ','))
-        $SessionsToGetTemp= [System.Collections.ArrayList]@()
-        ForEach( $item in $Title) {
-            $SessionsToGet | Where-Object {$_.title -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
+        else {
+            $DownloadFolder = '\\?\{0}' -f $DownloadFolder
         }
-        $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
     }
+}
 
-    If ($Keyword) {
-        Write-Verbose ('Description keyword(s) specified: {0}' -f ( $Keyword -join ','))
-        $SessionsToGetTemp= [System.Collections.ArrayList]@()
-        ForEach( $item in $Keyword) {
-            $SessionsToGet | Where-Object {$_.description -ilike ('*{0}*' -f $item) } | ForEach-Object { $null= $SessionsToGetTemp.Add(  $_ ) }
-        }
-        $SessionsToGet= $SessionsToGetTemp | Sort-Object -Unique -Property sessionCode
+foreach ($SessionToGet in $SessionsToGet) {
+
+    $i++
+    Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
+    if ( $SessionToGet.sessionCode) {
+        $FileName = Fix-FileName ('{0}-{1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
     }
-
-    If ($NoRepeats) {
-        Write-Verbose ('Skipping repeated sessions')
-        $SessionsToGet = $SessionsToGet | Where-Object {$_.sessionCode -inotmatch '^*R[1-9]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$'}
+    else {
+        $FileName = Fix-FileName ('{0}' -f $SessionToGet.title.Trim())
     }
-
-    If ( $InfoOnly) {
-        Write-Verbose ('There are {0} sessions matching your criteria.' -f (($SessionsToGet | Measure-Object).Count))
-        Write-Output $SessionsToGet
+    if (! ([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
+        # Get session localized timestamp, undoing TZ adjustments
+        $SessionTime = [System.TimeZoneInfo]::ConvertTime((Get-Date -Date $SessionToGet.startDateTime).ToUniversalTime(), $myTimeZone ).toString('g')
     }
-    Else {
+    else {
+        $SessionTime = $null
+    }
+    Write-Host ('Processing info session {0} from {1} [{2}]' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'), $SessionToGet.langLocale)
+    if (!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
+        Write-Verbose ('Skipping session {0}: Didn''t take place yet' -f $SessionToGet.sessioncode)
+    }
+    else {
 
-        If( $OGVPicker) {
-            $SessionsToGet= $SessionsToGet | Out-GridView -Title 'Select Videos to Download, or Cancel for all Videos' -PassThru
-        }
+        if ( ! $NoVideos) {
 
-        $i = 0
-        $DeckInfo = @(0, 0, 0)
-        $VideoInfo = @(0, 0, 0)
-        $InfoDownload = 0
-        $InfoPlaceholder = 1
-        $InfoExist = 2
+            $onDemandPage = $null
 
-        $myTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById( 'US Eastern Standard Time')
+            if ( $DownloadVideos -or $DownloadAMSVideos) {
 
-        [console]::TreatControlCAsInput = $true
+                $vidfileName = '{0}.mp4' -f $FileName
+                $vidFullFile = Join-Path -Path $DownloadFolder -ChildPath $vidfileName
 
-        $SessionsSelected = ($SessionsToGet | Measure-Object).Count
-        Write-Host ('There are {0} sessions matching your criteria.' -f $SessionsSelected)
-        Foreach ($SessionToGet in $SessionsToGet) {
-
-            $i++
-            Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
-            If( $SessionToGet.sessionCode) {
-                $FileName = Fix-FileName ('{0}-{1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
-            }
-            Else {
-                $FileName = Fix-FileName ('{0}' -f $SessionToGet.title.Trim())
-            }
-            If(! ([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
-                # Get session localized timestamp, undoing TZ adjustments
-                $SessionTime= [System.TimeZoneInfo]::ConvertTime((Get-Date -Date $SessionToGet.startDateTime).ToUniversalTime(), $myTimeZone ).toString('g')
-            }
-            Else {
-                $SessionTime= $null
-            }
-            Write-Host ('Processing info session {0} from {1} [{2}]' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'), $SessionToGet.langLocale)
-            If(!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
-                Write-Verbose ('Skipping session {0}: Didn''t take place yet' -f $SessionToGet.sessioncode)
-            }
-            Else {
-
-              If( ! $NoVideos) {
-
-                $onDemandPage= $null
-
-                If ( $DownloadVideos -or $DownloadAMSVideos) {
-
-                    $vidfileName = ("$FileName.mp4")
-                    $vidFullFile = '\\?\{0}' -f (Join-Path $DownloadFolder $vidfileName)
-
-                    if ((Test-Path -LiteralPath $vidFullFile) -and -not $Overwrite) {
-                        Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
-                        $VideoInfo[ $InfoExist]++
-                        # Clean video leftovers
-                        Clean-VideoLeftovers $vidFullFile
+                if ((Test-Path -LiteralPath $vidFullFile) -and -not $Overwrite) {
+                    Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
+                    $VideoInfo[ $InfoExist]++
+                    # Clean video leftovers
+                    Clean-VideoLeftovers $vidFullFile
+                }
+                else {
+                    $downloadLink = $null
+                    if ( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)) {
+                        if ( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) {
+                            if ( $NoGuessing) {
+                                $downloadLink = $null
+                            }
+                            else {
+                                # Try session page, eg https://medius.studios.ms/Embed/Video/IG18-BRK2094
+                                $downloadLink = $SessionUrl -f $SessionToGet.SessionCode
+                            }
+                        }
+                        else {
+                            $downloadLink = $SessionToGet.onDemand
+                        }
                     }
                     else {
-                        $downloadLink= $null
-                        If( [string]::IsNullOrEmpty( $SessionToGet.downloadVideoLink)) {
-                            If( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) {
-                                If( $NoGuessing) {
-                                    $downloadLink= $null
-                                }
-                                Else {
-                                    # Try session page, eg https://medius.studios.ms/Embed/Video/IG18-BRK2094
-                                    $downloadLink = $SessionUrl -f $SessionToGet.SessionCode
-                                }
+                        if ( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) {
+                            $downloadLink = $SessionToGet.downloadVideoLink
+                        }
+                        else {
+                            if ( $PreferDirect) {
+                                $downloadLink = $SessionToGet.downloadVideoLink
                             }
-                            Else {
+                            else {
                                 $downloadLink = $SessionToGet.onDemand
                             }
                         }
-                        Else {
-                            If( [string]::IsNullOrEmpty( $SessionToGet.onDemand)) {
-                                $downloadLink = $SessionToGet.downloadVideoLink
+                    }
+
+                    Write-Verbose ('Checking download link {0}' -f $downloadLink)
+                    try {
+                        $Response = Invoke-WebRequest -Method HEAD -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                        $DirectLink = @( 'video/mp4', 'video/MP2T') -contains $Response.Headers.'Content-Type'
+                    }
+                    catch {
+                        $DirectLink = $False
+                    }
+
+                    if ( ! ( $DirectLink) -and $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com|mediastream\.microsoft\.com)' ) {
+                        $DownloadedPage = Invoke-WebRequest -Method Get -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                        $OnDemandPage = $DownloadedPage.RawContent
+                        $Endpoint = $null
+
+                        if ( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
+                            Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
+                            $Endpoint = '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
+                        }
+                        if ( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://stream\.event\.microsoft\.com/.*master\.m3u8)";') {
+                            Write-Verbose ('Using Azure Media Stream URL {0}' -f $matches.AzureStreamURL)
+                            $Endpoint = '{0}?(format=mpd-time-csf)' -f $matches.AzureStreamURL
+                        }
+
+                        if ($Endpoint) {
+                            $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
+
+                            # Construct Format for this specific video, language and audio languages available
+                            if ( $Format) {
+                                $ThisFormat = $Format
                             }
-                            Else {
-                                If( $PreferDirect) {
-                                    $downloadLink = $SessionToGet.downloadVideoLink
+                            else {
+                                $ThisFormat = 'worstvideo+bestaudio'
+                            }
+
+                            if ( $SessionToGet.audioLanguage) {
+
+                                if ( $SessionToGet.audioLanguage.Count -gt 1) {
+                                    # Session has multiple audio tracks
+                                    if ( $SessionToGet.audioLanguage -icontains $Language) {
+                                        Write-Warning ('Multiple audio languages available; will try downloading {0} audio stream' -f $Language)
+                                        $ThisLanguage = $Language
+                                    }
+                                    else {
+                                        $ThisLanguage = $SessionToGet.audioLanguage | Select-Object -First 1
+                                        Write-Warning ('Requested language {0} not available; will use default stream ({1})' -f $Language, $ThisLanguage)
+                                    }
+
+                                    # Take specified Format apart so we can insert the language filter per specification
+                                    $ThisFormatElem = $ThisFormat -split ','
+                                    $NewFormat = [System.Collections.ArrayList]@()
+                                    foreach ( $Elem in $ThisFormatElem) {
+                                        if ( $Elem -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
+                                            if ( $matches.audioparam) {
+                                                $NewFormatElem = '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $matches.audioparam, $matches.post
+                                            }
+                                            else {
+                                                $NewFormatElem = '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
+                                            }
+                                        }
+                                        else {
+                                            $NewFormatElem = $Elem
+                                            Write-Warning ('Problem determining where to add language criteria in {0}, leaving criteria as-is' -f $Elem)
+                                        }
+                                        $null = $NewFormat.Add( $NewFormatElem)
+                                    }
+
+                                    # With language filters determined, recreate filter and add whole non-language specific qualifiers as next best
+                                    $ThisFormat = ($NewFormat -join ','), $ThisFormat -join ','
+
                                 }
-                                Else {
-                                    $downloadLink = $SessionToGet.onDemand
+                                else {
+                                    # Only 1 Language available, so use default audio stream
+                                    Write-Warning ('Only single audio stream available, will use default audio stream')
                                 }
                             }
-                        }
-
-                        Write-Verbose ('Checking download link {0}' -f $downloadLink)
-                        Try {
-                            $Response= Invoke-WebRequest -Method HEAD -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                            $DirectLink= @( 'video/mp4', 'video/MP2T') -contains $Response.Headers.'Content-Type' 
-                        }
-                        Catch {
-                            $DirectLink= $False
-                        }
-
-                        If( ! ( $DirectLink) -and $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com|mediastream\.microsoft\.com)' ) {
-                            $DownloadedPage= Invoke-WebRequest -Method Get -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                            $OnDemandPage= $DownloadedPage.RawContent
-                            $Endpoint= $null
-
-                            If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
-                                Write-Verbose ('Using Azure Media Services URL {0}' -f $matches.AzureStreamURL)
-                                $Endpoint= '{0}(format=mpd-time-csf)' -f $matches.AzureStreamURL
+                            else {
+                                # No multiple audio languages, use default audio stream
+                                Write-Warning ('Multiple audio streams not available, will use default audio stream')
                             }
-                            If( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://stream\.event\.microsoft\.com/.*master\.m3u8)";') {
-                                Write-Verbose ('Using Azure Media Stream URL {0}' -f $matches.AzureStreamURL)
-                                $Endpoint= '{0}?(format=mpd-time-csf)' -f $matches.AzureStreamURL
-                            }
-
-                            If ($Endpoint) {
+                            $Arg += ('--format {0}' -f $ThisFormat)
+                        }
+                        else {
+                            # Check for embedded YouTube
+                            if ( $OnDemandPage -match '"https:\/\/www\.youtube-nocookie\.com\/embed\/(?<YouTubeID>.+?)\?enablejsapi=1&"') {
+                                $Endpoint = 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
+                                Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
                                 $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
+                                if ( $Format) { $Arg += ('--format {0}' -f $Format) } else { $Arg += ('--format "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"') }
+                                if ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
 
-                                # Construct Format for this specific video, language and audio languages available
-                                If ( $Format) {
-                                    $ThisFormat= $Format
-                                }
-                                Else {
-                                    $ThisFormat= 'worstvideo+bestaudio'
-                                }
-
-                                If( $SessionToGet.audioLanguage) {
-
-                                    If( $SessionToGet.audioLanguage.Count -gt 1) {
-                                        # Session has multiple audio tracks
-                                        If( $SessionToGet.audioLanguage -icontains $Language) {
-                                            Write-Warning ('Multiple audio languages available; will try downloading {0} audio stream' -f $Language)
-                                            $ThisLanguage= $Language
-                                        }
-                                        Else {
-                                            $ThisLanguage= $SessionToGet.audioLanguage | Select -First 1
-                                            Write-Warning ('Requested language {0} not available; will use default stream ({1})' -f $Language, $ThisLanguage)
-                                        }
-
-                                        # Take specified Format apart so we can insert the language filter per specification
-                                        $ThisFormatElem= $ThisFormat -Split ','
-                                        $NewFormat= [System.Collections.ArrayList]@()
-                                        ForEach( $Elem in $ThisFormatElem) {
-                                            If( $Elem -match '^(?<pre>.*audio)(\[(?<audioparam>.*)\])?(?<post>(.*)?)$' ) {
-                                                If( $matches.audioparam) {
-                                                    $NewFormatElem= '{0}[format_id*={1},{2}]{3}' -f $matches.Pre, $ThisLanguage, $matches.audioparam, $matches.post
-                                                }
-                                                Else {
-                                                    $NewFormatElem= '{0}[format_id*={1}]{2}' -f $matches.Pre, $ThisLanguage, $matches.post
-                                                }
-                                            }
-                                            Else {
-                                                $NewFormatElem= $Elem
-                                                Write-Warning ('Problem determining where to add language criteria in {0}, leaving criteria as-is' -f $Elem)
-                                            }
-                                            $null= $NewFormat.Add( $NewFormatElem)
-                                        }
-
-                                        # With language filters determined, recreate filter and add whole non-language specific qualifiers as next best
-                                        $ThisFormat= ($NewFormat -Join ','), $ThisFormat -Join ','
-
-                                    }
-                                    Else {
-                                        # Only 1 Language available, so use default audio stream
-                                        Write-Warning ('Only single audio stream available, will use default audio stream')
-                                    }
-                                }
-                                Else {
-                                    # No multiple audio languages, use default audio stream
-                                    Write-Warning ('Multiple audio streams not available, will use default audio stream')
-                                }
-                                $Arg += ('--format {0}' -f $ThisFormat)
+                                if ( $CookiesFile) { $Arg += ('--cookies {0}' -f $CookiesFile) }
+                                if ( $CookiesFromBrowser) { $Arg += ('--cookies-from-browser {0}' -f $CookiesFromBrowser) }
                             }
-                            Else {
-                                # Check for embedded YouTube
-                                If( $OnDemandPage -match '"https:\/\/www\.youtube-nocookie\.com\/embed\/(?<YouTubeID>.+?)\?enablejsapi=1&"') {
-                                    $Endpoint= 'https://www.youtube.com/watch?v={0}' -f $matches.YouTubeID
-                                    Write-Verbose ('Using YouTube URL {0}' -f $Endpoint)
-                                    $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
-                                    If ( $Format) { $Arg += ('--format {0}' -f $Format) } Else { $Arg += ('--format "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"') }
-                                    If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
-
-                                    If ( $CookiesFile) { $Arg += ('--cookies {0}' -f $CookiesFile) }
-                                    If ( $CookiesFromBrowser) { $Arg += ('--cookies-from-browser {0}' -f $CookiesFromBrowser) }
-                                }
-                                Else {
-                                    Write-Warning "Skipping: Embedded AMS or YouTube URL not found"
-                                    $EndPoint= $null
-                                }
-                            }
-                        }
-                        Else {
-                            # Direct
-                            Write-Verbose ('Using direct video link {0}' -f $downloadLink)
-                            If( $downloadLink) {
-                                $Endpoint= $downloadLink
-                                $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink)
-                            }
-                            Else {
-                                Write-Warning ('No video link for {0}' -f ($SessionToGet.Title))
-                                $Endpoint= $null
-                            }
-                        }
-                        If( $Endpoint) {
-                            # Direct, AMS or YT video found, attempt download but first define common parameters
-                            If ( $ProxyURL) {
-                                $Arg += ('--proxy "{0}"' -f $ProxyURL)
-                            }
-                            $Arg+= '-t mp4'
-                            $Arg+= '--socket-timeout 90'
-                            $Arg+= '--no-check-certificate'
-                            $Arg+= '--retries 15'
-                            $Arg+= '--concurrent-fragments {0}' -f $ConcurrentFragments
-                            If ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -Join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
-
-                            If ( $TempPath) {
-                                # When using temp path, we need to use relative path for file and use home for location
-                                $OutputTemp= ($Arg | Where { $_ -like '-o *'})
-                                $OutputTemp= $OutputTemp.substring(4, $OutputTemp.Length - 4 -1)
-                                $Arg= $Arg | Where { $_ -inotlike '-o *'}
-                                $Arg+= '-o "{0}"' -f (Split-Path -Path $OutputTemp -Leaf)
-                                $Arg+= '-P home:"{0}"' -f (Split-Path -Path $OutputTemp -Parent).TrimEnd('\')
-                                $Arg+= '-P temp:"{0}"' -f $TempPath.TrimEnd('\')
-                            }
-                            If( $Overwrite) {
-                                $Arg+= '--force-overwrites'
-                            }
-
-                            Write-Verbose ('Running: {0} {1}' -f $YouTubeEXE, ($Arg -join ' '))
-                            Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
-                        }
-                        Else {
-                            # Video not available or no link found
-                            $VideoInfo[ $InfoPlaceholder]++
-                        }
-                    }
-                    If( $Captions) {
-                        $captionExtFile= $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
-
-                        If ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
-                                Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
-                        }
-                        Else {
-
-                            # Caption file in AMS needs seperate download, fetch onDemand page if not already downloaded for video
-                            If(! $OnDemandPage) {
-                                If( $SessionToGet.onDemand) {
-                                    Try {
-                                        Write-Host ('Fetching video page to retrieve transcript information from {0}' -f $SessionToGet.onDemand)
-                                        $DownloadedPage= Invoke-WebRequest -Uri $SessionToGet.onDemand -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                                        If( $DownloadedPage) {
-                                            $OnDemandPage= $DownloadedPage.RawContent
-                                        }
-                                    }
-                                    Catch {
-                                        #Problem retrieving file, look for alternative options
-                                    }
-                                }
-
-                            }
-                            # Check for vtt files before we check any direct caption file (likely docx now)
-                            $captionFileLink= $Null
-                            If( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
-                                $CaptionConfig= ($matches.CaptionsJSON | ConvertFrom-Json).languageList
-                                If( $Subs) {
-                                    $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq $Subs}).src
-                                }
-                                If(! $captionFileLink) {
-                                    $captionFileLink= ($CaptionConfig | Where-Object {$_.srclang -eq 'en'}).src
-                                }
-                            }
-                            If( ! $CaptionFileLink) {
-                                $captionFileLink= $SessionToGet.captionFileLink
-                            }
-                            If( ! $captionFileLink) {
-
-                                If(! $OnDemandPage) {
-                                    # Try if there is caption file reference on page
-                                    Try {
-                                        $DownloadedPage= Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                                        $OnDemandPage= $DownloadedPage.RawContent
-                                    }
-                                    Catch {
-                                        $DownloadedPage= $null
-                                        $onDemandPage= $null
-                                    }
-                                }
-                                Else {
-                                    # Reuse one from video download
-                                }
-
-                                If( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\{0}\?.*?)"' -f $CaptionExt) {
-                                    $captionFileLink= $matches.AzureCaptionURL
-                                }
-                                If( ! $captionFileLink) {
-                                    $captionFileLink= $captionURL -f $SessionToGet.SessionCode
-                                }
-                            }
-                            If( $captionFileLink) {
-                                Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
-
-                                $captionFullFile= $captionExtFile
-                                Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink,  $captionFullFile)
-                                Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
-
-                            }
-                            Else {
-                                Write-Warning "Subtitles requested, but no Caption URL found"
+                            else {
+                                Write-Warning "Skipping: Embedded AMS or YouTube URL not found"
+                                $EndPoint = $null
                             }
                         }
                     }
-                    $captionFileLink= $null
-                    $OnDemandPage= $null
-                }
-              }
-
-              If(! $NoSlidedecks) {
-                If ( !( [string]::IsNullOrEmpty( $SessionToGet.slideDeck)) ) {
-                    $downloadLink = $SessionToGet.slideDeck
-                }
-                Else {
-                    If( $NoGuessing) {
-                        $downloadLink= $null
+                    else {
+                        # Direct
+                        Write-Verbose ('Using direct video link {0}' -f $downloadLink)
+                        if ( $downloadLink) {
+                            $Endpoint = $downloadLink
+                            $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink)
+                        }
+                        else {
+                            Write-Warning ('No video link for {0}' -f ($SessionToGet.Title))
+                            $Endpoint = $null
+                        }
                     }
-                    Else {
-                        # Try alternative construction
-                        $downloadLink = $SlidedeckUrl -f $SessionToGet.SessionCode
+                    if ( $Endpoint) {
+                        # Direct, AMS or YT video found, attempt download but first define common parameters
+                        if ( $ProxyURL) {
+                            $Arg += ('--proxy "{0}"' -f $ProxyURL)
+                        }
+                        $Arg += '-t mp4'
+                        $Arg += '--socket-timeout 90'
+                        $Arg += '--no-check-certificate'
+                        $Arg += '--retries 15'
+                        $Arg += '--concurrent-fragments {0}' -f $ConcurrentFragments
+                        if ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
+
+                        if ( $TempPath) {
+                            # When using temp path, we need to use relative path for file and use home for location
+                            $OutputTemp = ($Arg | Where-Object { $_ -like '-o *' })
+                            $OutputTemp = $OutputTemp.substring(4, $OutputTemp.Length - 4 - 1)
+                            $Arg = $Arg | Where-Object { $_ -inotlike '-o *' }
+                            $Arg += '-o "{0}"' -f (Split-Path -Path $OutputTemp -Leaf)
+                            $Arg += '-P home:"{0}"' -f (Split-Path -Path $OutputTemp -Parent).TrimEnd('\')
+                            $Arg += '-P temp:"{0}"' -f $TempPath.TrimEnd('\')
+                        }
+                        if ( $Overwrite) {
+                            $Arg += '--force-overwrites'
+                        }
+
+                        Write-Verbose ('Running: {0} {1}' -f $YouTubeEXE, ($Arg -join ' '))
+                        Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                    }
+                    else {
+                        # Video not available or no link found
+                        $VideoInfo[ $InfoPlaceholder]++
                     }
                 }
+                if ( $Captions) {
+                    $captionExtFile = $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
 
-                If ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius' -or $downloadLink -match 'confirmation\.aspx') {
+                    if ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
+                        Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
+                    }
+                    else {
 
-                    $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
-                    Try {
-                       If( $downloadLink -notmatch 'confirmation\.aspx') {
-                           $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
-                       }
-                       Else {
-                           $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method GET -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
-                       }
-                    }
-                    Catch {
-                        $ValidUrl= $false
-                    }
+                        # Caption file in AMS needs seperate download, fetch onDemand page if not already downloaded for video
+                        if (! $OnDemandPage) {
+                            if ( $SessionToGet.onDemand) {
+                                try {
+                                    Write-Host ('Fetching video page to retrieve transcript information from {0}' -f $SessionToGet.onDemand)
+                                    $DownloadedPage = Invoke-WebRequest -Uri $SessionToGet.onDemand -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                    if ( $DownloadedPage) {
+                                        $OnDemandPage = $DownloadedPage.RawContent
+                                    }
+                                }
+                                catch {
+                                    #Problem retrieving file, look for alternative options
+                                }
+                            }
 
-                    If( $downloadLink -match 'confirmation\.aspx' -and $ValidURL.Headers.'Content-Type' -ilike 'text/html') {
-                        # Extra parsing for MS downloads
-                        If( $ValidUrl.RawContent -match 'href="(?<Url>https:\/\/download\.microsoft\.com\/download[\/0-9\-]*\/.*(pdf|pptx))".*click here to download manually') {
-                            $DownloadURL= [System.Web.HttpUtility]::UrlDecode( $Matches.Url)
-                            $ValidUrl= Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
                         }
-                    }
+                        # Check for vtt files before we check any direct caption file (likely docx now)
+                        $captionFileLink = $Null
+                        if ( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
+                            $CaptionConfig = ($matches.CaptionsJSON | ConvertFrom-Json).languageList
+                            if ( $Subs) {
+                                $captionFileLink = ($CaptionConfig | Where-Object { $_.srclang -eq $Subs }).src
+                            }
+                            if (! $captionFileLink) {
+                                $captionFileLink = ($CaptionConfig | Where-Object { $_.srclang -eq 'en' }).src
+                            }
+                        }
+                        if ( ! $CaptionFileLink) {
+                            $captionFileLink = $SessionToGet.captionFileLink
+                        }
+                        if ( ! $captionFileLink) {
 
-                    If( $ValidUrl ) {
-                        If( $DownloadURL -like '*.pdf' -or $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
-                            # Slidedeck offered is PDF format
-                            $slidedeckFile = '{0}.pdf' -f $FileName
+                            if (! $OnDemandPage) {
+                                # Try if there is caption file reference on page
+                                try {
+                                    $DownloadedPage = Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                    $OnDemandPage = $DownloadedPage.RawContent
+                                }
+                                catch {
+                                    $DownloadedPage = $null
+                                    $onDemandPage = $null
+                                }
+                            }
+                            else {
+                                # Reuse one from video download
+                            }
+
+                            if ( $OnDemandPage -match '"(?<AzureCaptionURL>https:\/\/mediusprodstatic\.studios\.ms\/asset-[a-z0-9\-]+\/transcript\{0}\?.*?)"' -f $CaptionExt) {
+                                $captionFileLink = $matches.AzureCaptionURL
+                            }
+                            if ( ! $captionFileLink) {
+                                $captionFileLink = $captionURL -f $SessionToGet.SessionCode
+                            }
                         }
-                        Else {
-                            $slidedeckFile = '{0}.pptx' -f $FileName
+                        if ( $captionFileLink) {
+                            Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
+
+                            $captionFullFile = $captionExtFile
+                            Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink, $captionFullFile)
+                            Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+
                         }
-                        $slidedeckFullFile =  '\\?\{0}' -f (Join-Path $DownloadFolder $slidedeckFile)
-                        if ((Test-Path -LiteralPath $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
-                            Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray
-                            $DeckInfo[ $InfoExist]++
+                        else {
+                            Write-Warning "Subtitles requested, but no Caption URL found"
                         }
-                        Else {
-                            Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL,  $slidedeckFullFile)
-                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
-                        }
-                    }
-                    Else {
-                        Write-Warning ('Skipping: Slidedeck unavailable {0}' -f $DownloadURL)
-                        $DeckInfo[ $InfoPlaceholder]++
                     }
                 }
-                Else {
-                    Write-Warning ('No slidedeck link for {0}' -f ($SessionToGet.Title))
-                }
-              }
+                $captionFileLink = $null
+                $OnDemandPage = $null
             }
+        }
 
-            $JobsRunning= Get-BackgroundDownloadJobs
-
-            if ([system.console]::KeyAvailable) {
-                $key = [system.console]::readkey($true)
-                if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
-                    Write-Host "TERMINATING" -ForegroundColor Red
-                    Stop-BackgroundDownloadJobs
-                    Exit -1
+        if (! $NoSlidedecks) {
+            if ( !( [string]::IsNullOrEmpty( $SessionToGet.slideDeck)) ) {
+                $downloadLink = $SessionToGet.slideDeck
+            }
+            else {
+                if ( $NoGuessing) {
+                    $downloadLink = $null
+                }
+                else {
+                    # Try alternative construction
+                    $downloadLink = $SlidedeckUrl -f $SessionToGet.SessionCode
                 }
             }
 
-        }
+            if ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius' -or $downloadLink -match 'confirmation\.aspx') {
 
-        $ProcessedSessions= $i
-
-        Write-Progress -Id 1 -Completed -Activity "Finished processing session information"
-
-        $JobsRunning= Get-BackgroundDownloadJobs
-        If ( $JobsRunning -gt 0) {
-            Write-Host ('Waiting for download jobs to finish - press Ctrl-C once to abort)' -f $JobsRunning)
-            While  ( $JobsRunning -gt 0) {
-                if ([system.console]::KeyAvailable) {
-                    Start-Sleep 1
-                    $key = [system.console]::readkey($true)
-                    if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
-                        Write-Host "TERMINATING" -ForegroundColor Red
-                        Stop-BackgroundDownloadJobs
-                        Exit -1
+                $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
+                try {
+                    if ( $downloadLink -notmatch 'confirmation\.aspx') {
+                        $ValidUrl = Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        $ValidUrl = Invoke-WebRequest -Uri $DownloadURL -Method GET -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
                     }
                 }
-                Start-Sleep 5
-                $JobsRunning= Get-BackgroundDownloadJobs
+                catch {
+                    $ValidUrl = $false
+                }
+
+                if ( $downloadLink -match 'confirmation\.aspx' -and $ValidURL.Headers.'Content-Type' -ilike 'text/html') {
+                    # Extra parsing for MS downloads
+                    if ( $ValidUrl.RawContent -match 'href="(?<Url>https:\/\/download\.microsoft\.com\/download[\/0-9\-]*\/.*(pdf|pptx))".*click here to download manually') {
+                        $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $Matches.Url)
+                        $ValidUrl = Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                    }
+                }
+
+                if ( $ValidUrl ) {
+                    if ( $DownloadURL -like '*.pdf' -or $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
+                        # Slidedeck offered is PDF format
+                        $slidedeckFile = '{0}.pdf' -f $FileName
+                    }
+                    else {
+                        $slidedeckFile = '{0}.pptx' -f $FileName
+                    }
+                    $slidedeckFullFile = Join-Path -Path $DownloadFolder -ChildPath $slidedeckFile
+                    if ((Test-Path -LiteralPath $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
+                        Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray
+                        $DeckInfo[ $InfoExist]++
+                    }
+                    else {
+                        Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL, $slidedeckFullFile)
+                        Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                    }
+                }
+                else {
+                    Write-Warning ('Skipping: Slidedeck unavailable {0}' -f $DownloadURL)
+                    $DeckInfo[ $InfoPlaceholder]++
+                }
+            }
+            else {
+                Write-Warning ('No slidedeck link for {0}' -f ($SessionToGet.Title))
             }
         }
-        Else {
-            Write-Host ('Background download jobs have finished' -f $JobsRunning)
-        }
-
-        Write-Progress -Id 2 -Completed -Activity "Download jobs finished"
-
-        Write-Host ('Selected {0} sessions out of a total of {1}' -f $ProcessedSessions, $TotalNumberOfSessions)
-        Write-Host ('Downloaded {0} slide decks and {1} videos.' -f $DeckInfo[ $InfoDownload], $VideoInfo[ $InfoDownload])
-        Write-Host ('Not (yet) available: {0} slide decks and {1} videos' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
-        Write-Host ('Skipped {0} slide decks and {1} videos as they were already downloaded.' -f $DeckInfo[ $InfoExist], $VideoInfo[ $InfoExist])
     }
+
+    $JobsRunning = Get-BackgroundDownloadJobs
+
+    if ([system.console]::KeyAvailable) {
+        $key = [system.console]::readkey($true)
+        if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
+            Write-Host "TERMINATING" -ForegroundColor Red
+            Stop-BackgroundDownloadJobs
+            exit -1
+        }
+    }
+
+}
+
+$ProcessedSessions = $i
+
+Write-Progress -Id 1 -Completed -Activity "Finished processing session information"
+
+$JobsRunning = Get-BackgroundDownloadJobs
+if ( $JobsRunning -gt 0) {
+    Write-Host ('Waiting for download jobs to finish - press Ctrl-C once to abort)' -f $JobsRunning)
+    while ( $JobsRunning -gt 0) {
+        if ([system.console]::KeyAvailable) {
+            Start-Sleep 1
+            $key = [system.console]::readkey($true)
+            if (($key.modifiers -band [consolemodifiers]"control") -and ($key.key -eq "C")) {
+                Write-Host "TERMINATING" -ForegroundColor Red
+                Stop-BackgroundDownloadJobs
+                exit -1
+            }
+        }
+        Start-Sleep 5
+        $JobsRunning = Get-BackgroundDownloadJobs
+    }
+}
+else {
+    Write-Host ('Background download jobs have finished' -f $JobsRunning)
+}
+
+Write-Progress -Id 2 -Completed -Activity "Download jobs finished"
+
+Write-Host ('Selected {0} sessions out of a total of {1}' -f $ProcessedSessions, $TotalNumberOfSessions)
+Write-Host ('Downloaded {0} slide decks and {1} videos.' -f $DeckInfo[ $InfoDownload], $VideoInfo[ $InfoDownload])
+Write-Host ('Not (yet) available: {0} slide decks and {1} videos' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
+Write-Host ('Skipped {0} slide decks and {1} videos as they were already downloaded.' -f $DeckInfo[ $InfoExist], $VideoInfo[ $InfoExist])
+
