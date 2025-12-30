@@ -15,7 +15,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.37, December 30, 2025
+    Version 4.38, December 30, 2025
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -458,6 +458,8 @@
           Added header to output
     4.36  Fixed downloading of direct video links for MP2T type (YouTube)
           Added Cookies and CookiesFromBrowser support for yt-dlp (YouTube)
+    4.37  Fixed downloading to UNC paths
+    4.38  Fixed CookiesFile parameter name
 
     TODO:
     - Add processing of archived events through new API endpoint (starting with Build)
@@ -649,7 +651,7 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [ValidateScript({ Test-Path -Path $_ -PathType Leaf })]
-    [string]$CookieFile,
+    [string]$CookiesFile,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
