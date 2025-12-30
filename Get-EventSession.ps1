@@ -460,6 +460,7 @@
           Added Cookies and CookiesFromBrowser support for yt-dlp (YouTube)
     4.37  Fixed downloading to UNC paths
     4.38  Fixed CookiesFile parameter name
+    4.39  Added UseSessionFolders switch to store content of each session in its own folder
 
     TODO:
     - Add processing of archived events through new API endpoint (starting with Build)
@@ -628,6 +629,11 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$Refresh,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [switch]$UseSessionFolders,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
@@ -1552,18 +1558,29 @@ foreach ($SessionToGet in $SessionsToGet) {
     }
     Write-Host ('Processing info session {0} from {1} [{2}]' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'), $SessionToGet.langLocale)
     if (!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
-        Write-Verbose ('Skipping session {0}: Didn''t take place yet' -f $SessionToGet.sessioncode)
+        Write-Verbose ('Skipping session {0}: Future session' -f $SessionToGet.sessioncode)
     }
     else {
 
         if ( ! $NoVideos) {
+
+            if ( $UseSessionFolders) {
+                $SessionFolder = Join-Path -Path $DownloadFolder -ChildPath $FileName
+                if ( (Test-Path $SessionFolder) -eq $false ) {
+                    New-Item -Path $SessionFolder -ItemType Directory | Out-Null
+                }
+                $ContentTargetFolder = $SessionFolder
+            }
+            else {
+                $ContentTargetFolder = $DownloadFolder
+            }
 
             $onDemandPage = $null
 
             if ( $DownloadVideos -or $DownloadAMSVideos) {
 
                 $vidfileName = '{0}.mp4' -f $FileName
-                $vidFullFile = Join-Path -Path $DownloadFolder -ChildPath $vidfileName
+                $vidFullFile = Join-Path -Path $ContentTargetFolder -ChildPath $vidfileName
 
                 if ((Test-Path -LiteralPath $vidFullFile) -and -not $Overwrite) {
                     Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
@@ -1870,7 +1887,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                     else {
                         $slidedeckFile = '{0}.pptx' -f $FileName
                     }
-                    $slidedeckFullFile = Join-Path -Path $DownloadFolder -ChildPath $slidedeckFile
+                    $slidedeckFullFile = Join-Path -Path $ContentTargetFolder -ChildPath $slidedeckFile
                     if ((Test-Path -LiteralPath $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
                         Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray
                         $DeckInfo[ $InfoExist]++
@@ -1900,6 +1917,11 @@ foreach ($SessionToGet in $SessionsToGet) {
             Stop-BackgroundDownloadJobs
             exit -1
         }
+    }
+
+    # Clear empty per-session folder
+    if ($UseSessionFolders -and -not (Get-ChildItem -Path $ContentTargetFolder)) {
+        Remove-Item -Path $ContentTargetFolder -Force
     }
 
 }
