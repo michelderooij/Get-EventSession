@@ -1,9 +1,12 @@
 <#
     .SYNOPSIS
-    Script to assist in downloading Microsoft Ignite, Inspire, Build or MEC contents, or return
+    Script to assist in downloading Microsoft Ignite, Inspire, Build, MEC or Custom event contents, or return
     session information for easier digesting. Video downloads will leverage external utilities,
     depending on the used video format. To prevent retrieving session information for every run,
     the script will cache session information.
+
+    Note: -Language controls preferred audio track selection for videos. Caption language selection
+    is controlled by -Subs when using -Captions.
 
     Be advised that downloading of OnDemand contents from Azure Media Services is throttled to real-time
     speed. To lessen the pain, the script performs simultaneous downloads of multiple videos streams. Those
@@ -15,13 +18,13 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.38, December 30, 2025
+    Version 4.40, April 6, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
     .DESCRIPTION
-    This script can download Microsoft Ignite, Inspire, Build and MEC session information and available
-    slidedecks and videos using MyIgnite/MyInspire/MyBuild techcommunity portal.
+    This script can download Microsoft Ignite, Inspire, Build, MEC and Custom event session information
+    and available slidedecks and videos using event-specific catalog endpoints.
 
     Video downloads will leverage one or more utilities:
     - YouTube-dl, which can be downloaded from https://yt-dl.org/latest/youtube-dl.exe. This utility
@@ -108,13 +111,15 @@
     When specified, for YouTube and Azure Media Services, downloads subtitles in provided languages by
     specifying one or more 2-letter language codes seperated by a comma, e.g. en,fr,de,nl. Downloaded
     subtitles may be in VTT or SRT format. Again, the subtitles might not always be accurate due to machine
-    translation. Note: For Azure Media Services, will only download caption in first language specified
+    translation. Note: For Azure Media Services and Custom Medius sessions when using -Captions, this
+    controls caption language preference. When omitted, fallback preference is en-us/en.
 
     .PARAMETER Language
     When specified, for Azure Media hosted contents, downloads videos with specified audio stream where
     available. Note that if you mix this with specifying your own Format parameter, you need to
     add the language in the filter yourself, e.g. bestaudio[format_id*=German]. Default value is English,
     as otherwise YouTube will download the last audio stream from the manifest (which often is Spanish).
+    This parameter controls audio stream preference only; it does not control caption language.
 
     .PARAMETER Keyword
     Only retrieve sessions with this keyword in their session description.
@@ -176,17 +181,20 @@
     .PARAMETER Event
     Specify what event to download sessions for.
     Options are:
+    - Custom                                       : Custom event endpoint requiring MSA login and page-based paging
     - Ignite                                       : Ignite contents (current)
-    - Ignite2025,Ignite2024,Ignite2023             : Ignite contents from that year/time
+    - Ignite2025                                    : Ignite contents from that year/time
     - Inspire                                      : Inspire contents (current)
-    - Inspire2023                                  : Inspire contents from that year
     - Build                                        : Build contents (current)
-    - Build2025,Build2024,Build2023                : Build contents from that year
+    - Build2025                                    : Build contents from that year
     - MEC                                          : MEC contents (current)
     - MEC2022                                      : MEC contents from that year
 
     .PARAMETER OGVPicker
     Specify that you want to pick sessions to download using Out-GridView.
+
+    .PARAMETER EventUrl
+    URL to use for Custom events. The URL is automatically expanded with a page parameter.
 
     .PARAMETER InfoOnly
     Tells the script to return session information only.
@@ -461,9 +469,11 @@
     4.37  Fixed downloading to UNC paths
     4.38  Fixed CookiesFile parameter name
     4.39  Added UseSessionFolders switch to store content of each session in its own folder
-
-    TODO:
-    - Add processing of archived events through new API endpoint (starting with Build)
+    4.40  Added Custom event support with configurable EventUrl
+          Added MSA authentication support to Custom Event for when needed
+          Added MSA token caching mechanism
+          Fixed terminate cleanup to stop yt-dlp child processes
+          Some minor fixes for InfoOnly reliability and runtime summary handling
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -578,8 +588,14 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Ignite2024', 'Ignite2023', 'Inspire', 'Inspire2023', 'Build', 'Build2025')]
+    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Inspire', 'Build', 'Build2025', 'Custom')]
     [string]$Event = '',
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [string]$EventUrl = $null,
 
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [switch]$InfoOnly,
@@ -666,19 +682,33 @@ param(
 )
 
 # Max age for cache, older than this # hours will force info refresh
-$MaxCacheAge = 8
+$script:MaxCacheAge = 24
+# Max age for MSA auth token, expiring in less than these minutes will force re-authentication
+$script:MinTokenValidityMinutes= 15
 
-$YouTubeEXE = 'yt-dlp.exe'
-$YouTubeDL = Join-Path $PSScriptRoot $YouTubeEXE
-$FFMPEG = Join-Path $PSScriptRoot 'ffmpeg.exe'
+$script:YouTubeEXE = 'yt-dlp.exe'
+$script:YouTubeDL = Join-Path $PSScriptRoot $YouTubeEXE
+$script:FFMPEG = Join-Path $PSScriptRoot 'ffmpeg.exe'
 
-$YTlink = 'https://github.com/yt-dlp/yt-dlp/releases/download/2023.07.06/yt-dlp.exe'
-$FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+$script:YTlink = 'https://github.com/yt-dlp/yt-dlp/releases/download/2023.07.06/yt-dlp.exe'
+$script:FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
 
 # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
 [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
 
 $script:BackgroundDownloadJobs = @()
+$script:MSAAuthWebSession = $null
+$script:MSAContentAuthRequired = $false
+$script:CustomSignedOnDemandUrlCache = @{}
+$script:CustomSignedOnDemandAuthRequiredBySession = @{}
+$script:MSAAuthInteractiveAttemptedByHost = @{}
+$script:SuppressWebRequestDebugDetails = $true
+
+if ($script:SuppressWebRequestDebugDetails) {
+    # Keep script-level debug traces while suppressing native HTTP request/response debug dumps.
+    $PSDefaultParameterValues['Invoke-WebRequest:Debug'] = $false
+    $PSDefaultParameterValues['Invoke-RestMethod:Debug'] = $false
+}
 
 function Iif($Cond, $IfTrue, $IfFalse) {
     if ( $Cond) { $IfTrue } else { $IfFalse }
@@ -708,6 +738,1913 @@ function Get-IEProxy {
     }
 }
 
+function Set-ObjectPropertyValue {
+    param(
+        [parameter(Mandatory = $true)]$Object,
+        [parameter(Mandatory = $true)][string]$Name,
+        $Value
+    )
+
+    if ($Object.PSObject.Properties.Match($Name).Count -gt 0) {
+        $Object.$Name = $Value
+    }
+    else {
+        $Object | Add-Member -MemberType NoteProperty -Name $Name -Value $Value
+    }
+}
+
+function Get-CustomEventPageUri {
+    param(
+        [parameter(Mandatory = $true)][string]$BaseUrl,
+        [parameter(Mandatory = $true)][ValidateRange(1, [int]::MaxValue)][int]$Page
+    )
+
+    $trimmedUrl = $BaseUrl.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmedUrl)) {
+        throw 'EventUrl cannot be empty for Custom events.'
+    }
+
+    if ($trimmedUrl -match '\{0\}') {
+        return ($trimmedUrl -f $Page)
+    }
+
+    if ($trimmedUrl -match '(?i)[\?&]page=') {
+        return [regex]::Replace($trimmedUrl, '(?i)([\?&]page=)\d+', ('$1{0}' -f $Page))
+    }
+
+    if ($trimmedUrl.Contains('?')) {
+        return ('{0}&page={1}' -f $trimmedUrl, $Page)
+    }
+
+    return ('{0}?page={1}' -f $trimmedUrl, $Page)
+}
+
+function Ensure-WinInetCookieInterop {
+    if (-not ('WinInet.NativeMethods' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace WinInet {
+    public static class NativeMethods {
+        [DllImport("wininet.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern bool InternetGetCookieEx(
+            string lpszUrl,
+            string lpszCookieName,
+            StringBuilder lpszCookieData,
+            ref int lpdwSize,
+            int dwFlags,
+            IntPtr lpReserved);
+    }
+}
+"@
+    }
+}
+
+function Get-UriCookieHeader {
+    param(
+        [parameter(Mandatory = $true)][uri]$Uri
+    )
+
+    Ensure-WinInetCookieInterop
+
+    $cookieDataSize = 4096
+    $cookieData = New-Object System.Text.StringBuilder $cookieDataSize
+    $httpOnlyFlag = 0x00002000
+
+    $isSuccess = [WinInet.NativeMethods]::InternetGetCookieEx(
+        $Uri.AbsoluteUri,
+        $null,
+        $cookieData,
+        [ref]$cookieDataSize,
+        $httpOnlyFlag,
+        [IntPtr]::Zero
+    )
+
+    if (-not $isSuccess -and $cookieDataSize -gt 0) {
+        $cookieData = New-Object System.Text.StringBuilder $cookieDataSize
+        $isSuccess = [WinInet.NativeMethods]::InternetGetCookieEx(
+            $Uri.AbsoluteUri,
+            $null,
+            $cookieData,
+            [ref]$cookieDataSize,
+            $httpOnlyFlag,
+            [IntPtr]::Zero
+        )
+    }
+
+    if ($isSuccess) {
+        return $cookieData.ToString()
+    }
+
+    return $null
+}
+
+function Merge-CookieHeaders {
+    param(
+        [string[]]$Headers
+    )
+
+    $entries = New-Object System.Collections.Generic.List[string]
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($header in @($Headers)) {
+        if ([string]::IsNullOrWhiteSpace($header)) {
+            continue
+        }
+
+        foreach ($cookieEntry in ($header -split ';')) {
+            $nameValue = $cookieEntry.Trim()
+            if ([string]::IsNullOrWhiteSpace($nameValue)) {
+                continue
+            }
+
+            $cookieParts = $nameValue -split '=', 2
+            if ($cookieParts.Count -ne 2 -or [string]::IsNullOrWhiteSpace($cookieParts[0])) {
+                continue
+            }
+
+            $cookieName = $cookieParts[0].Trim()
+            if ($seen.Add($cookieName)) {
+                $entries.Add(('{0}={1}' -f $cookieName, $cookieParts[1].Trim())) | Out-Null
+            }
+        }
+    }
+
+    if ($entries.Count -eq 0) {
+        return $null
+    }
+
+    return ($entries -join '; ')
+}
+
+function Test-IsNetscapeCookieCacheContent {
+    param(
+        [string]$CacheContent
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CacheContent)) {
+        return $false
+    }
+
+    $lines = $CacheContent -split "`r?`n"
+    if ($lines -match '^\s*#\s*Netscape HTTP Cookie File\s*$') {
+        return $true
+    }
+
+    $firstDataLine = $lines |
+    Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*#' } |
+    Select-Object -First 1
+
+    if ([string]::IsNullOrWhiteSpace($firstDataLine)) {
+        return $false
+    }
+
+    return [bool]($firstDataLine -match '^\S+\t(TRUE|FALSE)\t\S+\t(TRUE|FALSE)\t\d+\t\S+\t.*$')
+}
+
+function Convert-CacheContentToCookieHeader {
+    param(
+        [string]$CacheContent,
+        [parameter(Mandatory = $true)][uri]$CookieUri
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CacheContent)) {
+        return $null
+    }
+
+    if (-not (Test-IsNetscapeCookieCacheContent -CacheContent $CacheContent)) {
+        return ($CacheContent -replace "`r?`n", '').Trim()
+    }
+
+    $entries = New-Object System.Collections.Generic.List[string]
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $targetHost = $CookieUri.Host.TrimStart('.')
+
+    foreach ($rawLine in ($CacheContent -split "`r?`n")) {
+        $line = $rawLine.Trim()
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) {
+            continue
+        }
+
+        $parts = $line -split "`t", 7
+        if ($parts.Count -lt 7) {
+            continue
+        }
+
+        $domain = [string]$parts[0]
+        if ($domain.StartsWith('#HttpOnly_')) {
+            $domain = $domain.Substring(10)
+        }
+
+        $normalizedDomain = $domain.Trim().TrimStart('.')
+        if ([string]::IsNullOrWhiteSpace($normalizedDomain)) {
+            continue
+        }
+
+        if (
+            $normalizedDomain -ine $targetHost -and
+            -not $targetHost.EndsWith(('.{0}' -f $normalizedDomain), [System.StringComparison]::OrdinalIgnoreCase) -and
+            -not $normalizedDomain.EndsWith(('.{0}' -f $targetHost), [System.StringComparison]::OrdinalIgnoreCase)
+        ) {
+            continue
+        }
+
+        $cookieName = ([string]$parts[5]).Trim()
+        if ([string]::IsNullOrWhiteSpace($cookieName)) {
+            continue
+        }
+
+        $cookieValue = [string]$parts[6]
+        if ($seen.Add($cookieName)) {
+            $entries.Add(('{0}={1}' -f $cookieName, $cookieValue)) | Out-Null
+        }
+    }
+
+    if ($entries.Count -eq 0) {
+        return $null
+    }
+
+    return ($entries -join '; ')
+}
+
+function Convert-CookieHeaderToNetscapeCookieFileContent {
+    param(
+        [string]$CookieHeader,
+        [parameter(Mandatory = $true)][uri]$CookieUri
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CookieHeader)) {
+        return $null
+    }
+
+    $cookieEntries = New-Object System.Collections.Generic.List[psobject]
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($cookieEntry in ($CookieHeader -split ';')) {
+        $nameValue = $cookieEntry.Trim()
+        if ([string]::IsNullOrWhiteSpace($nameValue) -or -not $nameValue.Contains('=')) {
+            continue
+        }
+
+        $parts = $nameValue -split '=', 2
+        $cookieName = $parts[0].Trim()
+        if ([string]::IsNullOrWhiteSpace($cookieName) -or -not $seen.Add($cookieName)) {
+            continue
+        }
+
+        $cookieEntries.Add([pscustomobject]@{
+                Name  = $cookieName
+                Value = $parts[1]
+            }) | Out-Null
+    }
+
+    if ($cookieEntries.Count -eq 0) {
+        return $null
+    }
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('# Netscape HTTP Cookie File') | Out-Null
+    $lines.Add('# This file is generated by Get-EventSession for MSA authentication cache.') | Out-Null
+
+    foreach ($cookie in $cookieEntries) {
+        $lines.Add(("{0}`tFALSE`t/`tTRUE`t0`t{1}`t{2}" -f $CookieUri.Host, $cookie.Name, $cookie.Value)) | Out-Null
+    }
+
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Add-CookieHeaderToWebSession {
+    param(
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [parameter(Mandatory = $true)][uri]$Uri,
+        [parameter(Mandatory = $false)][string]$CookieHeader
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CookieHeader)) {
+        return
+    }
+
+    foreach ($cookieEntry in ($CookieHeader -split ';')) {
+        $nameValue = $cookieEntry.Trim()
+        if ([string]::IsNullOrWhiteSpace($nameValue)) {
+            continue
+        }
+
+        $cookieParts = $nameValue -split '=', 2
+        if ($cookieParts.Count -ne 2 -or [string]::IsNullOrWhiteSpace($cookieParts[0])) {
+            continue
+        }
+
+        $cookie = New-Object System.Net.Cookie
+        $cookie.Name = $cookieParts[0].Trim()
+        $cookie.Value = $cookieParts[1].Trim()
+        $cookie.Path = '/'
+        $cookie.Domain = $Uri.Host
+
+        try {
+            $WebSession.Cookies.Add($Uri, $cookie)
+        }
+        catch {
+            Write-Warning ('Skipping cookie {0}: {1}' -f $cookie.Name, $_.Exception.Message)
+        }
+    }
+}
+
+function New-WebSessionFromCookieHeader {
+    param(
+        [parameter(Mandatory = $true)][string]$CookieHeader,
+        [parameter(Mandatory = $true)][uri]$CookieUri
+    )
+
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    Add-CookieHeaderToWebSession -WebSession $session -Uri $CookieUri -CookieHeader $CookieHeader
+    Add-CookieHeaderToWebSession -WebSession $session -Uri ([uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host)) -CookieHeader $CookieHeader
+    return $session
+}
+
+function Get-WebSessionCookieHeader {
+    param(
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [switch]$IncludeAllDomains
+    )
+
+    $entries = New-Object System.Collections.Generic.List[string]
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+    try {
+        $cookieContainer = $WebSession.Cookies
+        $domainTable = $cookieContainer.GetType().InvokeMember('m_domainTable', [System.Reflection.BindingFlags]'NonPublic,Instance,GetField', $null, $cookieContainer, @())
+        $targetHost = $CookieUri.Host.TrimStart('.')
+
+        foreach ($domainKey in @($domainTable.Keys)) {
+            $domainName = [string]$domainKey
+            if ([string]::IsNullOrWhiteSpace($domainName)) {
+                continue
+            }
+
+            $normalizedDomain = $domainName.TrimStart('.')
+            if (-not $IncludeAllDomains) {
+                if ($normalizedDomain -ine $targetHost -and -not $targetHost.EndsWith(('.{0}' -f $normalizedDomain), [System.StringComparison]::OrdinalIgnoreCase) -and -not $normalizedDomain.EndsWith(('.{0}' -f $targetHost), [System.StringComparison]::OrdinalIgnoreCase)) {
+                    continue
+                }
+            }
+
+            $domainEntry = $domainTable[$domainKey]
+            if (-not $domainEntry) {
+                continue
+            }
+
+            $pathList = $domainEntry.GetType().InvokeMember('m_list', [System.Reflection.BindingFlags]'NonPublic,Instance,GetField', $null, $domainEntry, @())
+            foreach ($pathKey in @($pathList.Keys)) {
+                foreach ($cookie in @($pathList[$pathKey])) {
+                    if (-not $cookie -or [string]::IsNullOrWhiteSpace([string]$cookie.Name)) {
+                        continue
+                    }
+
+                    if ($seen.Add([string]$cookie.Name)) {
+                        $entries.Add(('{0}={1}' -f [string]$cookie.Name, [string]$cookie.Value)) | Out-Null
+                    }
+                }
+            }
+        }
+    }
+    catch {
+        Write-Verbose ('Unable to enumerate full cookie container for {0}: {1}' -f $CookieUri.Host, $_.Exception.Message)
+    }
+
+    if ($entries.Count -eq 0) {
+        try {
+            foreach ($cookie in @($WebSession.Cookies.GetCookies($CookieUri))) {
+                if ($cookie -and -not [string]::IsNullOrWhiteSpace([string]$cookie.Name) -and $seen.Add([string]$cookie.Name)) {
+                    $entries.Add(('{0}={1}' -f [string]$cookie.Name, [string]$cookie.Value)) | Out-Null
+                }
+            }
+        }
+        catch {
+            Write-Verbose ('Unable to read host-scoped cookies from web session for {0}: {1}' -f $CookieUri.Host, $_.Exception.Message)
+        }
+    }
+
+    if ($entries.Count -eq 0) {
+        return $null
+    }
+
+    return ($entries -join '; ')
+}
+
+function Get-CachedMSAWebSession {
+    param(
+        [parameter(Mandatory = $true)][string]$CachePath,
+        [parameter(Mandatory = $true)][uri]$CookieUri
+    )
+
+    if (-not (Test-Path -LiteralPath $CachePath)) {
+        Write-Verbose ('Auth cache file not found: {0}' -f $CachePath)
+        return $null
+    }
+
+    try {
+        $cacheContent = Get-Content -LiteralPath $CachePath -Raw -ErrorAction Stop
+    }
+    catch {
+        Write-Warning ('Unable to read auth cache file {0}: {1}' -f $CachePath, $_.Exception.Message)
+        return $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($cacheContent)) {
+        Write-Verbose ('Auth cache file is empty: {0}' -f $CachePath)
+        return $null
+    }
+
+    Write-Verbose ('Loaded auth cache data from {0} (length {1})' -f $CachePath, $cacheContent.Length)
+
+    $cookieHeader = Convert-CacheContentToCookieHeader -CacheContent $cacheContent -CookieUri $CookieUri
+    if ([string]::IsNullOrWhiteSpace($cookieHeader)) {
+        Write-Warning ('Auth cache file {0} did not contain usable cookies for {1}.' -f $CachePath, $CookieUri.Host)
+        return $null
+    }
+
+    $session = New-WebSessionFromCookieHeader -CookieHeader $cookieHeader -CookieUri $CookieUri
+    $cookieCount = ($session.Cookies.GetCookies($CookieUri) | Measure-Object).Count
+    Write-Verbose ('Constructed cached web session with {0} cookies for {1}' -f $cookieCount, $CookieUri.Host)
+    return $session
+}
+
+function Save-MSAAuthCookieHeader {
+    param(
+        [parameter(Mandatory = $true)][string]$CachePath,
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [parameter(Mandatory = $false)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [parameter(Mandatory = $false)][string]$CookieHeader
+    )
+
+    $cookieHeaderCandidates = New-Object System.Collections.Generic.List[string]
+
+    if (-not [string]::IsNullOrWhiteSpace($CookieHeader)) {
+        $cookieHeaderCandidates.Add($CookieHeader) | Out-Null
+    }
+
+    if ($WebSession) {
+        try {
+            $sessionCookieHeader = Get-WebSessionCookieHeader -WebSession $WebSession -CookieUri $CookieUri
+            if (-not [string]::IsNullOrWhiteSpace($sessionCookieHeader)) {
+                $cookieHeaderCandidates.Add($sessionCookieHeader) | Out-Null
+            }
+        }
+        catch {
+            Write-Warning ('Unable to read cookies from in-memory web session for {0}: {1}' -f $CookieUri.Host, $_.Exception.Message)
+        }
+    }
+
+    $uriCookieHeader = Get-UriCookieHeader -Uri $CookieUri
+    if (-not [string]::IsNullOrWhiteSpace($uriCookieHeader)) {
+        $cookieHeaderCandidates.Add($uriCookieHeader) | Out-Null
+    }
+
+    $cookieHeader = Merge-CookieHeaders -Headers @($cookieHeaderCandidates.ToArray())
+
+    if (-not [string]::IsNullOrWhiteSpace($cookieHeader)) {
+        $existingCookieHeader = $null
+        if (Test-Path -LiteralPath $CachePath) {
+            try {
+                $existingCacheContent = Get-Content -LiteralPath $CachePath -Raw -ErrorAction Stop
+                $existingCookieHeader = Convert-CacheContentToCookieHeader -CacheContent $existingCacheContent -CookieUri $CookieUri
+            }
+            catch {
+                $existingCookieHeader = $null
+            }
+        }
+
+        $cookieHeaderToPersist = if ([string]::IsNullOrWhiteSpace($existingCookieHeader)) {
+            $cookieHeader
+        }
+        else {
+            Merge-CookieHeaders -Headers @($cookieHeader, $existingCookieHeader)
+        }
+
+        if ([string]::IsNullOrWhiteSpace($cookieHeaderToPersist)) {
+            $cookieHeaderToPersist = $cookieHeader
+        }
+
+        if (Test-Path -LiteralPath $CachePath) {
+            try {
+                Copy-Item -LiteralPath $CachePath -Destination ('{0}.bak' -f $CachePath) -Force -ErrorAction SilentlyContinue
+            }
+            catch {
+            }
+        }
+
+        $cacheContentToPersist = Convert-CookieHeaderToNetscapeCookieFileContent -CookieHeader $cookieHeaderToPersist -CookieUri $CookieUri
+        if ([string]::IsNullOrWhiteSpace($cacheContentToPersist)) {
+            $cacheContentToPersist = $cookieHeaderToPersist
+        }
+
+        Set-Content -LiteralPath $CachePath -Value $cacheContentToPersist -Encoding UTF8
+        Write-Verbose ('Saved MSA auth cache to {0} in Netscape cookie format (length {1})' -f $CachePath, $cacheContentToPersist.Length)
+    }
+    else {
+        Write-Warning ('Unable to save MSA auth cache for {0}; cookie header was empty.' -f $CookieUri.Host)
+    }
+}
+
+function Get-MSAAuthenticationLockName {
+    param(
+        [parameter(Mandatory = $true)][string]$HostName
+    )
+
+    $normalizedHost = ($HostName.ToLowerInvariant() -replace '[^a-z0-9]', '_')
+    return ('Global\GetEventSession_MSAAuth_{0}' -f $normalizedHost)
+}
+
+function New-MSAAuthenticationMutex {
+    param(
+        [parameter(Mandatory = $true)][string]$HostName
+    )
+
+    $mutexName = Get-MSAAuthenticationLockName -HostName $HostName
+    try {
+        return New-Object System.Threading.Mutex($false, $mutexName)
+    }
+    catch {
+        Write-Warning ('Unable to create global MSA auth mutex {0}: {1}. Falling back to local mutex.' -f $mutexName, $_.Exception.Message)
+        return New-Object System.Threading.Mutex($false, ('Local\{0}' -f ($mutexName -replace '^Global\\', '')))
+    }
+}
+
+function Get-CustomSessionPageUri {
+    param(
+        [parameter(Mandatory = $true)][string]$CatalogUrl,
+        [parameter(Mandatory = $true)][string]$SessionCode
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SessionCode)) {
+        return $null
+    }
+
+    try {
+        $catalogPageUri = [uri](Get-CustomEventPageUri -BaseUrl $CatalogUrl -Page 1)
+    }
+    catch {
+        return $null
+    }
+
+    $rootUri = [uri]('{0}://{1}/' -f $catalogPageUri.Scheme, $catalogPageUri.Host)
+
+    $candidates = [System.Collections.ArrayList]@()
+    $null = $candidates.Add(([uri]::new($rootUri, ('sessions/{0}' -f $SessionCode))).AbsoluteUri)
+
+    $catalogPath = $catalogPageUri.AbsolutePath.Trim('/')
+    if (-not [string]::IsNullOrWhiteSpace($catalogPath) -and $catalogPath -match '(?i)^(?<prefix>.*?)/api(?:/.*)?$') {
+        $pathPrefix = $Matches.prefix.Trim('/')
+        if (-not [string]::IsNullOrWhiteSpace($pathPrefix)) {
+            $null = $candidates.Add(([uri]::new($rootUri, ('{0}/sessions/{1}' -f $pathPrefix, $SessionCode))).AbsoluteUri)
+        }
+    }
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        try {
+            return [uri]$candidate
+        }
+        catch {
+        }
+    }
+
+    return $null
+}
+
+function Test-MSAAuthenticationRequired {
+    param(
+        $Response = $null,
+        [System.Exception]$Exception = $null
+    )
+
+    $statusCode = $null
+    $location = $null
+    $responseUri = $null
+    $responseContent = $null
+
+    if ($Response) {
+        if ($Response.PSObject.Properties.Match('StatusCode').Count -gt 0) {
+            try {
+                $statusCode = [int]$Response.StatusCode
+            }
+            catch {
+                $statusCode = $null
+            }
+        }
+        if ($Response.PSObject.Properties.Match('Headers').Count -gt 0 -and $Response.Headers) {
+            try {
+                $location = [string]($Response.Headers.Location | Select-Object -First 1)
+            }
+            catch {
+                $location = $null
+            }
+        }
+
+        if ($Response.PSObject.Properties.Match('BaseResponse').Count -gt 0 -and $Response.BaseResponse -and $Response.BaseResponse.ResponseUri) {
+            try {
+                $responseUri = [string]$Response.BaseResponse.ResponseUri.AbsoluteUri
+            }
+            catch {
+                $responseUri = $null
+            }
+        }
+        elseif ($Response.PSObject.Properties.Match('ResponseUri').Count -gt 0 -and $Response.ResponseUri) {
+            try {
+                $responseUri = [string]$Response.ResponseUri.AbsoluteUri
+            }
+            catch {
+                $responseUri = $null
+            }
+        }
+
+        if ($Response.PSObject.Properties.Match('Content').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$Response.Content)) {
+            try {
+                $responseContent = [string]$Response.Content
+            }
+            catch {
+                $responseContent = $null
+            }
+        }
+    }
+
+    if (-not $statusCode -and $Exception -and $Exception.Response) {
+        try {
+            $statusCode = [int]$Exception.Response.StatusCode
+        }
+        catch {
+            $statusCode = $null
+        }
+
+        try {
+            $location = [string]($Exception.Response.Headers.Location | Select-Object -First 1)
+        }
+        catch {
+            $location = $null
+        }
+    }
+
+    if ($statusCode -in @(401, 403)) {
+        return $true
+    }
+
+    if ($statusCode -in @(301, 302, 307, 308) -and $location -match '(?i)(login|signin|oauth|microsoftonline\.com|live\.com)') {
+        return $true
+    }
+
+    if ($responseUri -match '(?i)(login\.microsoftonline\.com|login\.live\.com|msauth)') {
+        return $true
+    }
+
+    if ($responseContent -match '(?i)<title>\s*sign in to your account\s*</title>|PageID"\s+content="ConvergedSignIn"') {
+        return $true
+    }
+
+    if ($Exception -and $Exception.Message -match '(?i)(401|403|unauthori[sz]ed|forbidden|authentication required|sign.?in)') {
+        return $true
+    }
+
+    return $false
+}
+
+function Get-MSAAuthenticatedWebSession {
+    param(
+        [parameter(Mandatory = $true)][uri]$TargetUri,
+        [uri]$Proxy,
+        [switch]$ValidateCachedSession,
+        [switch]$ForceInteractive
+    )
+
+    $authCachePath = Join-Path $PSScriptRoot 'MSAAuth.cache'
+    $cookieUri = [uri]('{0}://{1}/' -f $TargetUri.Scheme, $TargetUri.Host)
+    $hostKey = $cookieUri.Host.ToLowerInvariant()
+    $authMutex = $null
+    $lockAcquired = $false
+
+    if ($ForceInteractive) {
+        $script:MSAAuthWebSession = $null
+    }
+
+    if ($script:MSAAuthWebSession) {
+        if (-not $ValidateCachedSession) {
+            return $script:MSAAuthWebSession
+        }
+
+        try {
+            $inMemoryValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $script:MSAAuthWebSession -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } -ErrorAction Stop -Verbose:$false
+            if (Test-MSAAuthenticationRequired -Response $inMemoryValidationResponse) {
+                throw 'In-memory session redirected to a sign-in page.'
+            }
+            Write-Verbose ('Using in-memory MSA authentication for {0}' -f $cookieUri.Host)
+            return $script:MSAAuthWebSession
+        }
+        catch {
+            Write-Verbose ('In-memory MSA authentication for {0} appears invalid; reacquiring session.' -f $cookieUri.Host)
+            $script:MSAAuthWebSession = $null
+        }
+    }
+
+    try {
+        $authMutex = New-MSAAuthenticationMutex -HostName $cookieUri.Host
+
+        if ($authMutex) {
+            try {
+                $lockAcquired = $authMutex.WaitOne(0)
+            }
+            catch [System.Threading.AbandonedMutexException] {
+                $lockAcquired = $true
+                Write-Warning 'Detected abandoned MSA authentication lock; continuing with lock ownership.'
+            }
+
+            if (-not $lockAcquired) {
+                Write-Host ('MSA authentication for {0} is in progress by another run; waiting for completion ...' -f $cookieUri.Host)
+                try {
+                    $authMutex.WaitOne() | Out-Null
+                    $lockAcquired = $true
+                }
+                catch [System.Threading.AbandonedMutexException] {
+                    $lockAcquired = $true
+                    Write-Warning 'Detected abandoned MSA authentication lock while waiting; continuing with lock ownership.'
+                }
+            }
+        }
+
+        # Re-check in-memory session after waiting for lock owner to finish.
+        if ($script:MSAAuthWebSession) {
+            return $script:MSAAuthWebSession
+        }
+
+        $session = Get-CachedMSAWebSession -CachePath $authCachePath -CookieUri $cookieUri
+
+        if ($session -and $ValidateCachedSession) {
+            try {
+                $validationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } -ErrorAction Stop -Verbose:$false
+                if (Test-MSAAuthenticationRequired -Response $validationResponse) {
+                    throw 'Cached session redirected to a sign-in page.'
+                }
+                Write-Host 'Using cached MSA authentication from MSAAuth.cache'
+            }
+            catch {
+                Write-Warning 'Cached MSA authentication appears invalid; interactive sign-in is required.'
+                $session = $null
+            }
+        }
+
+        if (-not $session) {
+            Write-Verbose ('Attempting silent MSA sign-in bootstrap for {0}' -f $cookieUri.Host)
+            $session = Get-MSAAuthWebSessionSilent -StartUri $TargetUri -CookieUri $cookieUri -Proxy $Proxy
+            if ($session) {
+                $silentSessionValid = $true
+                $silentCookieCount = 0
+                try {
+                    $silentValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } -ErrorAction Stop -Verbose:$false
+                    if (Test-MSAAuthenticationRequired -Response $silentValidationResponse) {
+                        throw 'Silent session redirected to a sign-in page.'
+                    }
+                }
+                catch {
+                    $silentSessionValid = $false
+                    Write-Verbose ('Silent MSA sign-in bootstrap for {0} did not produce an authenticated session; falling back to interactive sign-in.' -f $cookieUri.Host)
+                    $silentCookieHeader = Get-WebSessionCookieHeader -WebSession $session -CookieUri $cookieUri -IncludeAllDomains
+                    if (-not [string]::IsNullOrWhiteSpace($silentCookieHeader)) {
+                        $silentCookieCount = ($silentCookieHeader -split ';').Count
+                    }
+                }
+
+                if ($silentSessionValid) {
+                    Write-Verbose ('Acquired MSA authentication silently for {0}' -f $cookieUri.Host)
+                    Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session
+                }
+                elseif ($silentCookieCount -gt 0) {
+                    Write-Verbose ('Captured {0} silent-session cookie(s) for {1}, but validation still redirected; continuing to interactive sign-in.' -f $silentCookieCount, $cookieUri.Host)
+                    $session = $null
+                }
+                else {
+                    $session = $null
+                }
+            }
+
+            if (-not $session) {
+                Write-Verbose ('Silent MSA sign-in bootstrap did not yield an authenticated session for {0}' -f $cookieUri.Host)
+                if ($script:MSAAuthInteractiveAttemptedByHost.ContainsKey($hostKey) -and $script:MSAAuthInteractiveAttemptedByHost[$hostKey]) {
+                    Write-Warning ('MSA interactive sign-in for {0} was already attempted in this run and no reusable cache/session is available; skipping repeated prompt.' -f $cookieUri.Host)
+                    return $null
+                }
+
+                $script:MSAAuthInteractiveAttemptedByHost[$hostKey] = $true
+                Write-Host 'Opening Microsoft sign-in dialog (embedded browser) for event authentication'
+                $session = Get-MSAAuthWebSession -StartUri $TargetUri -CookieUri $cookieUri -Proxy $Proxy
+
+                $interactiveSessionValid = $true
+                $interactiveCookieCount = 0
+                try {
+                    $interactiveValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } -ErrorAction Stop -Verbose:$false
+                    if (Test-MSAAuthenticationRequired -Response $interactiveValidationResponse) {
+                        throw 'Interactive session redirected to a sign-in page.'
+                    }
+                }
+                catch {
+                    $interactiveSessionValid = $false
+                    Write-Warning ('Interactive MSA sign-in for {0} did not produce an authenticated session.' -f $cookieUri.Host)
+                    $interactiveCookieHeader = Get-WebSessionCookieHeader -WebSession $session -CookieUri $cookieUri -IncludeAllDomains
+                    if (-not [string]::IsNullOrWhiteSpace($interactiveCookieHeader)) {
+                        $interactiveCookieCount = ($interactiveCookieHeader -split ';').Count
+                    }
+                }
+
+                if (-not $interactiveSessionValid) {
+                    if ($interactiveCookieCount -gt 0) {
+                        Write-Verbose ('Proceeding with {0} captured interactive-session cookie(s) for {1}; validation endpoint still redirected.' -f $interactiveCookieCount, $cookieUri.Host)
+                    }
+                    else {
+                        return $null
+                    }
+                }
+
+                Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session
+            }
+        }
+
+        $script:MSAAuthWebSession = $session
+        return $session
+    }
+    finally {
+        if ($lockAcquired -and $authMutex) {
+            try {
+                $authMutex.ReleaseMutex() | Out-Null
+            }
+            catch {
+            }
+        }
+        if ($authMutex) {
+            $authMutex.Dispose()
+        }
+    }
+}
+
+function Invoke-WebRequestWithMSAAuthSupport {
+    param(
+        [parameter(Mandatory = $true)][string]$Uri,
+        [parameter(Mandatory = $true)][ValidateSet('Get', 'Head', 'Post')][string]$Method,
+        [uri]$Proxy,
+        [hashtable]$Headers = $null,
+        [string]$OutFile = $null,
+        [switch]$UseBasicParsing,
+        [int]$MaximumRedirection = 10,
+        [switch]$DisableKeepAlive
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Uri)) {
+        return $null
+    }
+
+    try {
+        [uri]$requestUri = $Uri
+    }
+    catch {
+        Write-Warning ('Skipping invalid URI: {0}' -f $Uri)
+        return $null
+    }
+
+    $invokeParams = @{
+        Uri         = $Uri
+        Method      = $Method
+        ErrorAction = 'Stop'
+        Verbose     = $false
+    }
+    if ($Proxy) { $invokeParams.Proxy = $Proxy }
+    if ($Headers) { $invokeParams.Headers = $Headers }
+    if (-not [string]::IsNullOrWhiteSpace($OutFile)) { $invokeParams.OutFile = $OutFile }
+    if ($UseBasicParsing) { $invokeParams.UseBasicParsing = $true }
+    if ($DisableKeepAlive) { $invokeParams.DisableKeepAlive = $true }
+    if ($MaximumRedirection -ge 0) { $invokeParams.MaximumRedirection = $MaximumRedirection }
+
+    if ($script:MSAContentAuthRequired -and $script:MSAAuthWebSession) {
+        $invokeParams.WebSession = $script:MSAAuthWebSession
+    }
+
+    if (-not $script:SuppressWebRequestDebugDetails) {
+        $requestUriText = $requestUri.AbsoluteUri
+        $requestQueryLength = $requestUri.Query.TrimStart('?').Length
+        if (-not [string]::IsNullOrWhiteSpace($OutFile)) {
+            Write-Debug ('WebRequest: {0} {1} with query length {2} output to {3}' -f $Method.ToUpperInvariant(), $requestUri.GetLeftPart([System.UriPartial]::Path), $requestQueryLength, $OutFile)
+        }
+        elseif ($requestQueryLength -gt 0) {
+            Write-Debug ('WebRequest: {0} {1} with query length {2}' -f $Method.ToUpperInvariant(), $requestUri.GetLeftPart([System.UriPartial]::Path), $requestQueryLength)
+        }
+        else {
+            Write-Debug ('WebRequest: {0} {1}' -f $Method.ToUpperInvariant(), $requestUriText)
+        }
+    }
+
+    try {
+        $response = Invoke-WebRequest @invokeParams
+
+        if (Test-MSAAuthenticationRequired -Response $response) {
+            throw [System.Exception]::new('Authentication required - sign-in response detected.')
+        }
+
+        $responseContentType = $null
+        if ($response -and $response.PSObject.Properties.Match('Headers').Count -gt 0 -and $response.Headers) {
+            $responseContentType = [string]$response.Headers['Content-Type']
+        }
+        if (-not $script:SuppressWebRequestDebugDetails -and $response -and $response.PSObject.Properties.Match('StatusCode').Count -gt 0) {
+            Write-Debug ('WebResponse: {0} {1}{2}' -f [int]$response.StatusCode, [string]$response.StatusDescription, (Iif -Cond ([string]::IsNullOrWhiteSpace($responseContentType)) -IfTrue '' -IfFalse (' with {0} payload' -f $responseContentType)))
+        }
+        return $response
+    }
+    catch {
+        $webException = $_.Exception
+        if (-not (Test-MSAAuthenticationRequired -Exception $webException)) {
+            return $null
+        }
+
+        if (-not $script:MSAContentAuthRequired) {
+            Write-Verbose ('Detected authentication requirement for {0}; acquiring reusable MSA session.' -f $requestUri.Host)
+        }
+        $script:MSAContentAuthRequired = $true
+
+        $needsInteractive = [bool]$script:MSAAuthWebSession
+        $session = Get-MSAAuthenticatedWebSession -TargetUri $requestUri -Proxy $Proxy -ForceInteractive:$needsInteractive
+        if (-not $session) {
+            Write-Warning ('Unable to acquire authenticated MSA session for {0}; skipping request.' -f $requestUri.Host)
+            return $null
+        }
+        $invokeParams.WebSession = $session
+
+        try {
+            $response = Invoke-WebRequest @invokeParams
+            $responseContentType = $null
+            if ($response -and $response.PSObject.Properties.Match('Headers').Count -gt 0 -and $response.Headers) {
+                $responseContentType = [string]$response.Headers['Content-Type']
+            }
+            if (-not $script:SuppressWebRequestDebugDetails -and $response -and $response.PSObject.Properties.Match('StatusCode').Count -gt 0) {
+                Write-Debug ('WebResponse: {0} {1}{2}' -f [int]$response.StatusCode, [string]$response.StatusDescription, (Iif -Cond ([string]::IsNullOrWhiteSpace($responseContentType)) -IfTrue '' -IfFalse (' with {0} payload' -f $responseContentType)))
+            }
+            return $response
+        }
+        catch {
+            $script:MSAAuthWebSession = $null
+            Write-Warning ('Authenticated request failed for {0}: {1}' -f $Uri, $_.Exception.Message)
+            return $null
+        }
+    }
+}
+
+function New-MSAWebSessionFromBrowserContext {
+    param(
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [parameter(Mandatory = $true)][uri]$StartUri,
+        [parameter(Mandatory = $true)]$Browser,
+        $VisitedUrls,
+        [uri]$Proxy
+    )
+
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $cookieHeaderCandidates = New-Object System.Collections.Generic.List[string]
+
+    try {
+        if ($Browser.Document -and -not [string]::IsNullOrWhiteSpace($Browser.Document.Cookie)) {
+            $documentCookieHeader = $Browser.Document.Cookie
+            $cookieHeaderCandidates.Add($documentCookieHeader) | Out-Null
+            Add-CookieHeaderToWebSession -WebSession $session -Uri $CookieUri -CookieHeader $documentCookieHeader
+            Add-CookieHeaderToWebSession -WebSession $session -Uri ([uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host)) -CookieHeader $documentCookieHeader
+            Write-Verbose ('Captured browser document cookies for {0} (length {1})' -f $CookieUri.Host, $documentCookieHeader.Length)
+        }
+    }
+    catch {
+        Write-Warning ('Unable to read browser document cookies for {0}: {1}' -f $CookieUri.Host, $_.Exception.Message)
+    }
+
+    $cookieUris = @(
+        $CookieUri,
+        [uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host),
+        $StartUri
+    ) | Select-Object -Unique
+
+    if ($Browser.Url -and -not [string]::IsNullOrWhiteSpace($Browser.Url.AbsoluteUri)) {
+        try {
+            $cookieUris += [uri]$Browser.Url.AbsoluteUri
+        }
+        catch {
+        }
+    }
+
+    foreach ($visitedUrl in @($VisitedUrls)) {
+        try {
+            $visitedUri = [uri]$visitedUrl
+            $cookieUris += $visitedUri
+        }
+        catch {
+        }
+    }
+
+    $cookieUris += @(
+        [uri]'https://login.live.com/',
+        [uri]'https://login.microsoftonline.com/',
+        [uri]'https://account.microsoft.com/'
+    )
+
+    $cookieUris = @($cookieUris | Select-Object -Unique)
+    Write-Verbose ('Collecting authentication cookies from {0} URL(s) for {1}' -f $cookieUris.Count, $CookieUri.Host)
+
+    foreach ($cookieTarget in $cookieUris) {
+        $cookieHeader = Get-UriCookieHeader -Uri $cookieTarget
+        if (-not [string]::IsNullOrWhiteSpace($cookieHeader)) {
+            $cookieHeaderCandidates.Add($cookieHeader) | Out-Null
+        }
+        Add-CookieHeaderToWebSession -WebSession $session -Uri $cookieTarget -CookieHeader $cookieHeader
+    }
+
+    $mergedCookieHeader = Merge-CookieHeaders -Headers @($cookieHeaderCandidates.ToArray())
+    if (-not [string]::IsNullOrWhiteSpace($mergedCookieHeader)) {
+        Add-CookieHeaderToWebSession -WebSession $session -Uri $CookieUri -CookieHeader $mergedCookieHeader
+        Add-CookieHeaderToWebSession -WebSession $session -Uri ([uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host)) -CookieHeader $mergedCookieHeader
+    }
+
+    $hostCookieCount = ($session.Cookies.GetCookies($CookieUri) | Measure-Object).Count
+    $allCookieHeader = Get-WebSessionCookieHeader -WebSession $session -CookieUri $CookieUri -IncludeAllDomains
+    $allCookieCount = 0
+    if (-not [string]::IsNullOrWhiteSpace($allCookieHeader)) {
+        $allCookieCount = ($allCookieHeader -split ';').Count
+    }
+
+    if ($hostCookieCount -eq 0 -and $allCookieCount -eq 0) {
+        $finalBrowserUrl = if ($Browser.Url) { $Browser.Url.AbsoluteUri } else { 'unknown' }
+        throw ('No cookies were captured for {0} (final browser URL: {1}). Authentication may have failed.' -f $CookieUri.Host, $finalBrowserUrl)
+    }
+
+    Write-Verbose ('Constructed browser-backed session with {0} host cookie(s) and {1} total cookie(s).' -f $hostCookieCount, $allCookieCount)
+
+    try {
+        Invoke-WebRequest -Method Head -Uri $CookieUri -WebSession $session -Proxy $Proxy -ErrorAction SilentlyContinue -Verbose:$false | Out-Null
+    }
+    catch {
+        Write-Warning ('Session warmup request returned: {0}' -f $_.Exception.Message)
+    }
+
+    return $session
+}
+
+function Get-MSAAuthWebSessionSilent {
+    param(
+        [parameter(Mandatory = $true)][uri]$StartUri,
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [uri]$Proxy,
+        [int]$TimeoutSeconds = 8
+    )
+
+    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne [System.Threading.ApartmentState]::STA) {
+        return $null
+    }
+
+    if (-not [Environment]::UserInteractive) {
+        return $null
+    }
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $state = [hashtable]::Synchronized(@{ Completed = $false })
+    $visitedUrls = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $form = $null
+    $browser = $null
+
+    try {
+        $form = New-Object System.Windows.Forms.Form
+        $form.ShowInTaskbar = $false
+        $form.StartPosition = 'Manual'
+        $form.Location = New-Object System.Drawing.Point(-32000, -32000)
+        $form.Width = 1
+        $form.Height = 1
+        $form.Opacity = 0
+
+        $browser = New-Object System.Windows.Forms.WebBrowser
+        $browser.Dock = 'Fill'
+        $browser.ScriptErrorsSuppressed = $true
+        $browser.add_DocumentCompleted({
+                param($browserSender, $e)
+                if ($browserSender.Url) {
+                    $null = $visitedUrls.Add($browserSender.Url.AbsoluteUri)
+                    if ($browserSender.Url.Host -ieq $CookieUri.Host) {
+                        $state.Completed = $true
+                    }
+                }
+            })
+
+        $form.Controls.Add($browser)
+        $form.Show()
+        $browser.Navigate($StartUri.AbsoluteUri)
+
+        $deadline = (Get-Date).AddSeconds([Math]::Max(3, $TimeoutSeconds))
+        while ((Get-Date) -lt $deadline -and -not $state.Completed) {
+            [System.Windows.Forms.Application]::DoEvents()
+            [System.Threading.Thread]::Sleep(100)
+        }
+
+        if (-not $state.Completed) {
+            return $null
+        }
+
+        return New-MSAWebSessionFromBrowserContext -CookieUri $CookieUri -StartUri $StartUri -Browser $browser -VisitedUrls $visitedUrls -Proxy $Proxy
+    }
+    catch {
+        Write-Verbose ('Silent MSA sign-in bootstrap failed: {0}' -f $_.Exception.Message)
+        return $null
+    }
+    finally {
+        if ($form) {
+            try {
+                $form.Close()
+            }
+            catch {
+            }
+            try {
+                $form.Dispose()
+            }
+            catch {
+            }
+        }
+    }
+}
+
+function Get-MSAAuthWebSession {
+    param(
+        [parameter(Mandatory = $true)][uri]$StartUri,
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [uri]$Proxy
+    )
+
+    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne [System.Threading.ApartmentState]::STA) {
+        throw 'MSA sign-in UI requires an STA runspace. Start PowerShell with -STA and retry.'
+    }
+
+    if (-not [Environment]::UserInteractive) {
+        throw 'MSA sign-in UI requires an interactive desktop session. Run the script in an interactive PowerShell terminal.'
+    }
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'Microsoft Account Sign-In'
+    $form.Width = 1200
+    $form.Height = 900
+    $form.StartPosition = 'CenterScreen'
+    $form.ShowInTaskbar = $true
+    $form.TopMost = $true
+
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.Dock = 'Top'
+    $statusLabel.Height = 30
+    $statusLabel.Text = 'Sign in with your Microsoft account and click Continue when the event page is loaded.'
+
+    $buttonPanel = New-Object System.Windows.Forms.Panel
+    $buttonPanel.Dock = 'Bottom'
+    $buttonPanel.Height = 44
+
+    $continueButton = New-Object System.Windows.Forms.Button
+    $continueButton.Text = 'Continue'
+    $continueButton.Width = 100
+    $continueButton.Height = 28
+    $continueButton.Left = 980
+    $continueButton.Top = 8
+    $continueButton.Enabled = $false
+
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = 'Cancel'
+    $cancelButton.Width = 100
+    $cancelButton.Height = 28
+    $cancelButton.Left = 1090
+    $cancelButton.Top = 8
+
+    $browser = New-Object System.Windows.Forms.WebBrowser
+    $browser.Dock = 'Fill'
+    $browser.ScriptErrorsSuppressed = $true
+    $visitedUrls = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+    $continueButton.Add_Click({
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $form.Close()
+        })
+
+    $cancelButton.Add_Click({
+            $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+            $form.Close()
+        })
+
+    $browser.add_DocumentCompleted({
+            param($browserSender, $e)
+            if ($browserSender.Url) {
+                $null = $visitedUrls.Add($browserSender.Url.AbsoluteUri)
+                $statusLabel.Text = ('Current page: {0}' -f $browserSender.Url.AbsoluteUri)
+                if ($browserSender.Url.Host -ieq $CookieUri.Host) {
+                    $continueButton.Enabled = $true
+                }
+            }
+        })
+
+    $buttonPanel.Controls.Add($continueButton)
+    $buttonPanel.Controls.Add($cancelButton)
+    $form.Controls.Add($browser)
+    $form.Controls.Add($buttonPanel)
+    $form.Controls.Add($statusLabel)
+
+    $form.Add_Shown({
+            $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+            $form.Activate()
+            $form.BringToFront()
+        })
+
+    Write-Host ('Launching Microsoft sign-in dialog in process {0}. If it is not visible, use Alt+Tab to switch to "Microsoft Account Sign-In".' -f $PID)
+    $browser.Navigate($StartUri.AbsoluteUri)
+    $dialogResult = $form.ShowDialog()
+
+    if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
+        throw 'MSA authentication cancelled.'
+    }
+
+    return New-MSAWebSessionFromBrowserContext -CookieUri $CookieUri -StartUri $StartUri -Browser $browser -VisitedUrls $visitedUrls -Proxy $Proxy
+}
+
+function Get-CustomEventCatalog {
+    param(
+        [parameter(Mandatory = $true)][string]$CatalogUrl,
+        [uri]$Proxy
+    )
+
+    $catalogUri = [uri](Get-CustomEventPageUri -BaseUrl $CatalogUrl -Page 1)
+    $session = Get-MSAAuthenticatedWebSession -TargetUri $catalogUri -Proxy $Proxy -ValidateCachedSession
+
+    $data = [System.Collections.ArrayList]@()
+    $seenSessionKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+    $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
+    $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
+
+    $page = 1
+    $totalPages = $null
+
+    while ($true) {
+        $pageUri = Get-CustomEventPageUri -BaseUrl $CatalogUrl -Page $page
+
+        $status = 'Processing page {0}' -f $page
+        $percent = 0
+        if ($totalPages) {
+            $status = 'Processing page {0} of {1}' -f $page, $totalPages
+            $percent = [Math]::Min(100, [int](($page / $totalPages) * 100))
+        }
+        Write-Progress -Id 1 -Activity 'Retrieving Session Catalog' -Status $status -PercentComplete $percent
+
+        try {
+            $response = Invoke-RestMethod -Uri $pageUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' }
+        }
+        catch {
+            throw ('Problem retrieving custom session catalog page {0}: {1}' -f $page, $error[0])
+        }
+
+        if (-not $totalPages -and $response.PSObject.Properties.Match('totalPages').Count -gt 0) {
+            $totalPages = [int]$response.totalPages
+        }
+
+        $items = @($response.items)
+        if ($items.Count -eq 0) {
+            break
+        }
+
+        foreach ($item in $items) {
+            $item.PSObject.Properties | ForEach-Object {
+                if (@('speakerNames') -icontains $_.Name) {
+                    $item.($_.Name) = @($_.Value)
+                }
+                if (@('products', 'contentCategory') -icontains $_.Name) {
+                    $item.($_.Name) = @($_.Value -replace [char]9, '/')
+                }
+                if (@('topic', 'sessionType', 'sessionLevel', 'audienceTypes', 'deliveryTypes', 'viewingOptions', 'event', 'programmingLanguages') -icontains $_.Name) {
+                    $item.($_.Name) = $_.Value.displayValue -join ','
+                }
+            }
+
+            $canonicalCode = $null
+            if ($item.PSObject.Properties.Match('scheduleCode').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.scheduleCode)) {
+                $canonicalCode = [string]$item.scheduleCode
+            }
+            elseif ($item.PSObject.Properties.Match('code').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.code)) {
+                $canonicalCode = [string]$item.code
+            }
+
+            if ($canonicalCode) {
+                Set-ObjectPropertyValue -Object $item -Name 'sessionCode' -Value $canonicalCode
+                Set-ObjectPropertyValue -Object $item -Name 'scheduleCode' -Value $canonicalCode
+                Set-ObjectPropertyValue -Object $item -Name 'code' -Value $canonicalCode
+            }
+
+            $canonicalCategory = $null
+            if ($item.PSObject.Properties.Match('contentCategory').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.contentCategory)) {
+                $canonicalCategory = [string]$item.contentCategory
+            }
+            elseif ($item.PSObject.Properties.Match('subcategoriesString').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.subcategoriesString)) {
+                $canonicalCategory = [string]$item.subcategoriesString
+            }
+
+            if ($canonicalCategory) {
+                Set-ObjectPropertyValue -Object $item -Name 'contentCategory' -Value $canonicalCategory
+            }
+
+            if ($item.PSObject.Properties.Match('langLocale').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$item.langLocale)) {
+                Set-ObjectPropertyValue -Object $item -Name 'langLocale' -Value 'en-US'
+            }
+
+            $displayCode = if ($item.PSObject.Properties.Match('sessionCode').Count -gt 0) { [string]$item.sessionCode } else { [string]$item.id }
+            Write-Verbose ('Adding info for session {0}' -f $displayCode)
+
+            $item.PSObject.TypeNames.Insert(0, 'Session.Information')
+            $item | Add-Member MemberSet PSStandardMembers $PSStandardMembers -Force
+
+            $dedupeKey = if (-not [string]::IsNullOrWhiteSpace($canonicalCode)) {
+                $canonicalCode
+            }
+            elseif ($item.PSObject.Properties.Match('id').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.id)) {
+                [string]$item.id
+            }
+            else {
+                '{0}-{1}' -f $page, [string]$item.title
+            }
+
+            if ($seenSessionKeys.Add($dedupeKey)) {
+                $data.Add($item) | Out-Null
+            }
+        }
+
+        if ($totalPages -and $page -ge $totalPages) {
+            break
+        }
+
+        $page++
+    }
+
+    Write-Progress -Id 1 -Completed -Activity 'Finished retrieval of catalog'
+    return $data
+}
+
+function Resolve-CustomSignedOnDemandUrl {
+    param(
+        [parameter(Mandatory = $true)]$Session,
+        [parameter(Mandatory = $true)][AllowNull()][AllowEmptyString()][string]$OnDemandUrl,
+        [parameter(Mandatory = $true)][string]$CatalogUrl,
+        [uri]$Proxy
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OnDemandUrl)) {
+        return $OnDemandUrl
+    }
+
+    if ($OnDemandUrl -notmatch '(?i)^https://medius\.microsoft\.com/Embed/video-aes/') {
+        return $OnDemandUrl
+    }
+
+    if ($OnDemandUrl -match '(?i)([?&]uid=|[?&]at=)') {
+        return $OnDemandUrl
+    }
+
+    $sessionCode = $null
+    foreach ($candidate in @('scheduleCode', 'sessionCode', 'code')) {
+        if ($Session.PSObject.Properties.Match($candidate).Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$Session.$candidate)) {
+            $sessionCode = [string]$Session.$candidate
+            break
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($sessionCode)) {
+        return $OnDemandUrl
+    }
+
+    if ($script:CustomSignedOnDemandAuthRequiredBySession.ContainsKey($sessionCode)) {
+        $null = $script:CustomSignedOnDemandAuthRequiredBySession.Remove($sessionCode)
+    }
+
+    if ($script:CustomSignedOnDemandUrlCache.ContainsKey($sessionCode)) {
+        return $script:CustomSignedOnDemandUrlCache[$sessionCode]
+    }
+
+    try {
+        $sessionPageUri = Get-CustomSessionPageUri -CatalogUrl $CatalogUrl -SessionCode $sessionCode
+        if (-not $sessionPageUri) {
+            return $OnDemandUrl
+        }
+        $webSession = Get-MSAAuthenticatedWebSession -TargetUri $sessionPageUri -Proxy $Proxy -ValidateCachedSession
+        if (-not $webSession) {
+            $script:CustomSignedOnDemandAuthRequiredBySession[$sessionCode] = $true
+            Write-Warning ('Unable to acquire authenticated web session for {0}; cannot resolve signed media URL.' -f $sessionCode)
+            return $OnDemandUrl
+        }
+        $sessionPage = Invoke-WebRequest -Uri $sessionPageUri.AbsoluteUri -Method Get -WebSession $webSession -Proxy $Proxy -DisableKeepAlive -ErrorAction Stop -Verbose:$false
+    }
+    catch {
+        Write-Warning ('Unable to retrieve session page for {0}: {1}' -f $sessionCode, $_.Exception.Message)
+        return $OnDemandUrl
+    }
+
+    if (Test-MSAAuthenticationRequired -Response $sessionPage) {
+        Write-Verbose ('Session page for {0} returned a sign-in response; forcing interactive authentication and retrying.' -f $sessionCode)
+        $script:MSAAuthWebSession = $null
+
+        try {
+            $webSession = Get-MSAAuthenticatedWebSession -TargetUri $sessionPageUri -Proxy $Proxy -ValidateCachedSession -ForceInteractive
+            if (-not $webSession) {
+                $script:CustomSignedOnDemandAuthRequiredBySession[$sessionCode] = $true
+                Write-Warning ('Unable to acquire authenticated web session for {0} after sign-in response; cannot resolve signed media URL.' -f $sessionCode)
+                return $OnDemandUrl
+            }
+
+            $sessionPage = Invoke-WebRequest -Uri $sessionPageUri.AbsoluteUri -Method Get -WebSession $webSession -Proxy $Proxy -DisableKeepAlive -ErrorAction Stop -Verbose:$false
+        }
+        catch {
+            Write-Warning ('Unable to retrieve authenticated session page for {0}: {1}' -f $sessionCode, $_.Exception.Message)
+            return $OnDemandUrl
+        }
+
+        if (Test-MSAAuthenticationRequired -Response $sessionPage) {
+            $script:CustomSignedOnDemandAuthRequiredBySession[$sessionCode] = $true
+            Write-Warning ('Session page for {0} still resolves to sign-in after re-authentication; signed media URL cannot be resolved.' -f $sessionCode)
+            return $OnDemandUrl
+        }
+    }
+
+    $pageContent = $sessionPage.Content
+    if ([string]::IsNullOrWhiteSpace($pageContent)) {
+        return $OnDemandUrl
+    }
+
+    $videoId = $null
+    $videoMatch = [regex]::Match($OnDemandUrl, '(?i)/video-aes/(?<id>[0-9a-f\-]+)')
+    if ($videoMatch.Success) {
+        $videoId = [regex]::Escape($videoMatch.Groups['id'].Value)
+    }
+
+    $signedUrlPattern = if ($videoId) {
+        '(?i)https://medius\.microsoft\.com/Embed/video-aes/{0}\?[^"''\s<]+' -f $videoId
+    }
+    else {
+        '(?i)https://medius\.microsoft\.com/Embed/video-aes/[^"''\s<]+\?[^"''\s<]+'
+    }
+
+    $signedUrlMatch = [regex]::Match($pageContent, $signedUrlPattern)
+    if (-not $signedUrlMatch.Success) {
+        $signedUrlEscapedPattern = if ($videoId) {
+            '(?i)https:\\/\\/medius\.microsoft\.com\\/Embed\\/video-aes\\/{0}\\?[^"''\s<]+' -f $videoId
+        }
+        else {
+            '(?i)https:\\/\\/medius\.microsoft\.com\\/Embed\\/video-aes\\/[^"''\s<]+\\?[^"''\s<]+'
+        }
+        $signedUrlMatch = [regex]::Match($pageContent, $signedUrlEscapedPattern)
+    }
+
+    if (-not $signedUrlMatch.Success) {
+        return $OnDemandUrl
+    }
+
+    $resolvedUrlRaw = $signedUrlMatch.Value
+    if ($resolvedUrlRaw -match '\\/|\\u[0-9a-fA-F]{4}') {
+        try {
+            $resolvedUrlRaw = [regex]::Unescape($resolvedUrlRaw)
+        }
+        catch {
+        }
+    }
+
+    $resolvedUrl = [System.Net.WebUtility]::HtmlDecode($resolvedUrlRaw)
+    if ($resolvedUrl -match '(?i)[?&]uid=' -and $resolvedUrl -match '(?i)[?&]at=') {
+        $script:CustomSignedOnDemandUrlCache[$sessionCode] = $resolvedUrl
+        Write-Verbose ('Resolved signed Custom on-demand URL for session {0}' -f $sessionCode)
+        return $resolvedUrl
+    }
+
+    return $OnDemandUrl
+}
+
+function Resolve-OnDemandManifestUrlFromCoreConfiguration {
+    param(
+        [parameter(Mandatory = $true)][string]$OnDemandPage
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OnDemandPage)) {
+        return $null
+    }
+
+    $coreConfigurationMatch = [regex]::Match($OnDemandPage, '(?s)let\s+coreConfiguration\s*=\s*(?<json>\{.*?\})\s*;')
+    if (-not $coreConfigurationMatch.Success) {
+        return $null
+    }
+
+    try {
+        $coreConfiguration = ($coreConfigurationMatch.Groups['json'].Value | ConvertFrom-Json -Depth 100)
+    }
+    catch {
+        Write-Warning ('Unable to parse coreConfiguration JSON from embed page: {0}' -f $_.Exception.Message)
+        return $null
+    }
+
+    $mainManifests = @($coreConfiguration.manifests.main)
+    if ($mainManifests.Count -eq 0) {
+        return $null
+    }
+
+    $manifestCandidates = $mainManifests |
+    Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.manifest) } |
+    Sort-Object -Property @{ Expression = { [int](Iif -Cond ($_.PSObject.Properties.Match('weight').Count -gt 0) -IfTrue $_.weight -IfFalse 0) }; Descending = $true }
+
+    if ($manifestCandidates.Count -eq 0) {
+        return $null
+    }
+
+    $selectedManifest = [string]($manifestCandidates | Select-Object -First 1).manifest
+    if ($selectedManifest -match '(?i)^https://') {
+        Write-Debug ('Resolved coreConfiguration manifest URL {0}' -f $selectedManifest)
+        return $selectedManifest
+    }
+
+    return $null
+}
+
+function Resolve-OnDemandCaptionsConfiguration {
+    param(
+        [parameter(Mandatory = $true)][string]$OnDemandPage
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OnDemandPage)) {
+        return $null
+    }
+
+    $captionsConfigurationPatterns = @(
+        '(?s)(?:let|const|var)\s+captionsConfiguration\s*=\s*(?<json>\{.*?\})\s*;',
+        '(?s)captionsConfiguration\s*=\s*(?<json>\{.*?\})\s*;'
+    )
+
+    foreach ($pattern in $captionsConfigurationPatterns) {
+        $captionsConfigurationMatch = [regex]::Match($OnDemandPage, $pattern)
+        if (-not $captionsConfigurationMatch.Success) {
+            continue
+        }
+
+        try {
+            $captionsConfiguration = ($captionsConfigurationMatch.Groups['json'].Value | ConvertFrom-Json -Depth 100)
+        }
+        catch {
+            Write-Warning ('Unable to parse captionsConfiguration JSON from embed page: {0}' -f $_.Exception.Message)
+            continue
+        }
+
+        $languageList = @($captionsConfiguration.languageList)
+        if ($languageList.Count -gt 0) {
+            Write-Debug ('Resolved captionsConfiguration with {0} language entries' -f $languageList.Count)
+            return $languageList
+        }
+    }
+
+    return $null
+}
+
+function Get-PreferredOnDemandYtDlpFormat {
+    param(
+        [string]$OnDemandPage,
+        [string]$Endpoint,
+        [string]$FallbackFormat = 'worstvideo+bestaudio'
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OnDemandPage) -or [string]::IsNullOrWhiteSpace($Endpoint)) {
+        return $FallbackFormat
+    }
+
+    $hasAdaptiveFormats = $false
+
+    $coreConfigurationMatch = [regex]::Match($OnDemandPage, '(?s)let\s+coreConfiguration\s*=\s*(?<json>\{.*?\})\s*;')
+    if ($coreConfigurationMatch.Success) {
+        try {
+            $coreConfiguration = ($coreConfigurationMatch.Groups['json'].Value | ConvertFrom-Json -Depth 100)
+            $mainManifests = @($coreConfiguration.manifests.main) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.manifest) }
+            if ($mainManifests.Count -gt 0) {
+                $hasAdaptiveFormats = $true
+            }
+        }
+        catch {
+            $hasAdaptiveFormats = $false
+        }
+    }
+
+    if (-not $hasAdaptiveFormats) {
+        $hasAdaptiveFormats = [bool]($OnDemandPage -match '(?i)(manifests"\s*:\s*\{\s*"main"|master\.m3u8|EXT-X-STREAM-INF)')
+    }
+
+    if (-not $hasAdaptiveFormats) {
+        return $FallbackFormat
+    }
+
+    if ($Endpoint -match '(?i)(\.m3u8($|\?)|stream\.event\.microsoft\.com)') {
+        return 'bestvideo+bestaudio/best'
+    }
+
+    return $FallbackFormat
+}
+
+function Get-OnDemandKmsBearerToken {
+    param(
+        [parameter(Mandatory = $true)][string]$OnDemandPage,
+        [parameter(Mandatory = $true)][string]$OnDemandUrl,
+        [parameter(Mandatory = $true)][string]$ManifestUrl,
+        [uri]$Proxy
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OnDemandPage) -or [string]::IsNullOrWhiteSpace($OnDemandUrl) -or [string]::IsNullOrWhiteSpace($ManifestUrl)) {
+        return $null
+    }
+
+    if ($ManifestUrl -notmatch '(?i)^https://stream\.event\.microsoft\.com/') {
+        return $null
+    }
+
+    $videoId = [regex]::Match($OnDemandPage, 'id="hdnVideoId"\s+value="(?<v>[^"]+)"').Groups['v'].Value
+    if ([string]::IsNullOrWhiteSpace($videoId)) {
+        $videoId = [regex]::Match($OnDemandPage, 'const\s+id\s*=\s*''(?<v>[^'']+)'';').Groups['v'].Value
+    }
+
+    $refreshToken = [regex]::Match($OnDemandPage, 'var\s+refreshToken\s*=\s*"(?<v>[^"]+)";').Groups['v'].Value
+    $channelKey = [regex]::Match($OnDemandPage, 'let\s+channelKey\s*=\s*"(?<v>[^"]+)";').Groups['v'].Value
+    $channelGuid = [regex]::Match($OnDemandPage, 'let\s+channelGuid\s*=\s*"(?<v>[^"]+)";').Groups['v'].Value
+
+    if ([string]::IsNullOrWhiteSpace($videoId) -or [string]::IsNullOrWhiteSpace($refreshToken) -or [string]::IsNullOrWhiteSpace($channelKey) -or [string]::IsNullOrWhiteSpace($channelGuid)) {
+        return $null
+    }
+
+    $assetId = $null
+    $arrAssetsMatch = [regex]::Match($OnDemandPage, '(?s)const\s+arrAssets\s*=\s*(?<json>\[.*?\]);')
+    if ($arrAssetsMatch.Success) {
+        try {
+            $assets = $arrAssetsMatch.Groups['json'].Value | ConvertFrom-Json -Depth 50
+            $videoAsset = @($assets | Where-Object { $_.AssetType -eq 'Video' }) | Select-Object -First 1
+            if ($videoAsset -and -not [string]::IsNullOrWhiteSpace([string]$videoAsset.AssetId)) {
+                $assetId = [string]$videoAsset.AssetId
+            }
+            elseif ($videoAsset -and -not [string]::IsNullOrWhiteSpace([string]$videoAsset.BlobName)) {
+                $assetId = [string]$videoAsset.BlobName
+            }
+        }
+        catch {
+            Write-Warning ('Unable to parse arrAssets JSON for KMS token request: {0}' -f $_.Exception.Message)
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($assetId)) {
+        $assetId = [regex]::Match($OnDemandPage, '"AssetType":"Video"[^\}]*?"AssetId":"(?<v>[^"]+)"').Groups['v'].Value
+    }
+
+    if ([string]::IsNullOrWhiteSpace($assetId)) {
+        return $null
+    }
+
+    $origin = if ($ManifestUrl -match '(?i)https://stream\.event\.microsoft\.com/prodnc') { 'origin2' } else { 'origin1' }
+
+    $kmsUrl = 'https://medius.microsoft.com/Embed/GetKMSToken/{0}?rt={1}&origin={2}&channelKey={3}&assetId={4}&channelGuid={5}' -f $videoId, [uri]::EscapeDataString($refreshToken), [uri]::EscapeDataString($origin), [uri]::EscapeDataString($channelKey), [uri]::EscapeDataString($assetId), [uri]::EscapeDataString($channelGuid)
+    Write-Debug ('Attempting KMS token retrieval for video {0} (origin={1})' -f $videoId, $origin)
+
+    try {
+        $mediusSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        $embedRequestParams = @{
+            Uri         = $OnDemandUrl
+            Method      = 'Get'
+            WebSession  = $mediusSession
+            ErrorAction = 'Stop'
+            Verbose     = $false
+        }
+        if ($Proxy) { $embedRequestParams.Proxy = $Proxy }
+        Invoke-WebRequest @embedRequestParams | Out-Null
+
+        $kmsRequestParams = @{
+            Uri         = $kmsUrl
+            Method      = 'Get'
+            WebSession  = $mediusSession
+            Headers     = @{ Referer = $OnDemandUrl; 'User-Agent' = 'Mozilla/5.0' }
+            ErrorAction = 'Stop'
+            Verbose     = $false
+        }
+        if ($Proxy) { $kmsRequestParams.Proxy = $Proxy }
+
+        $kmsResponse = Invoke-RestMethod @kmsRequestParams
+        if ($kmsResponse -and -not [string]::IsNullOrWhiteSpace([string]$kmsResponse.KMSToken)) {
+            Write-Debug 'KMS token retrieval succeeded'
+            return [string]$kmsResponse.KMSToken
+        }
+    }
+    catch {
+        Write-Warning ('Unable to retrieve KMS token: {0}' -f $_.Exception.Message)
+    }
+
+    return $null
+}
+
+function Get-KmsBearerTokenDetails {
+    param(
+        [string]$KmsBearerTokenRaw
+    )
+
+    if ([string]::IsNullOrWhiteSpace($KmsBearerTokenRaw)) {
+        return [pscustomobject]@{
+            RawToken            = $null
+            AuthorizationToken  = $null
+            ExpiryUtc           = $null
+            HasParsedJson       = $false
+        }
+    }
+
+    $authorizationToken = $KmsBearerTokenRaw
+    $expiryUtc = $null
+    $hasParsedJson = $false
+
+    if ($KmsBearerTokenRaw.TrimStart().StartsWith('{')) {
+        try {
+            $tokenJson = $KmsBearerTokenRaw | ConvertFrom-Json -Depth 20
+            $hasParsedJson = $true
+
+            if ($tokenJson.PSObject.Properties.Match('token').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$tokenJson.token)) {
+                $authorizationToken = [string]$tokenJson.token
+            }
+
+            if ($tokenJson.PSObject.Properties.Match('exp').Count -gt 0 -and $null -ne $tokenJson.exp) {
+                $expValue = $tokenJson.exp
+                if ($expValue -is [int] -or $expValue -is [long] -or $expValue -is [double] -or $expValue -is [decimal]) {
+                    $expiryUtc = [DateTimeOffset]::FromUnixTimeSeconds([int64]$expValue).UtcDateTime
+                }
+                else {
+                    $expString = [string]$expValue
+                    if ($expString -match '^\d+$') {
+                        $expiryUtc = [DateTimeOffset]::FromUnixTimeSeconds([int64]$expString).UtcDateTime
+                    }
+                    else {
+                        try {
+                            $parsedExp = [DateTimeOffset]::Parse($expString)
+                            $expiryUtc = $parsedExp.UtcDateTime
+                        }
+                        catch {
+                            $expiryUtc = $null
+                        }
+                    }
+                }
+            }
+        }
+        catch {
+            $hasParsedJson = $false
+            $authorizationToken = $KmsBearerTokenRaw
+            $expiryUtc = $null
+        }
+    }
+
+    return [pscustomobject]@{
+        RawToken            = $KmsBearerTokenRaw
+        AuthorizationToken  = $authorizationToken
+        ExpiryUtc           = $expiryUtc
+        HasParsedJson       = $hasParsedJson
+    }
+}
+
+function Test-IsMicrosoftContentUrl {
+    param(
+        [string]$Url
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        return $false
+    }
+
+    try {
+        [uri]$parsedUri = $Url
+    }
+    catch {
+        return $false
+    }
+
+    return [bool]($parsedUri.Host -match '(?i)(^|\.)microsoft\.com$')
+}
+
+function Test-IsNetscapeCookieFile {
+    param(
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+
+    try {
+        $sampleLines = Get-Content -LiteralPath $Path -TotalCount 25 -ErrorAction Stop
+    }
+    catch {
+        return $false
+    }
+
+    $firstDataLine = $sampleLines |
+    Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*#' } |
+    Select-Object -First 1
+
+    if ($sampleLines -match '^\s*#\s*Netscape HTTP Cookie File\s*$') {
+        return $true
+    }
+
+    if ([string]::IsNullOrWhiteSpace($firstDataLine)) {
+        return $false
+    }
+
+    return [bool]($firstDataLine -match '^\S+\s+(TRUE|FALSE)\s+\S+\s+(TRUE|FALSE)\s+\d+\s+\S+\s+.*$')
+}
+
+function Resolve-YtDlpCookieFile {
+    param(
+        [string]$PreferredCookieFile
+    )
+
+    $candidateFiles = [System.Collections.ArrayList]@()
+    if (-not [string]::IsNullOrWhiteSpace($PreferredCookieFile)) {
+        $null = $candidateFiles.Add($PreferredCookieFile)
+    }
+
+    $defaultCookieCandidates = @(
+        Join-Path $PSScriptRoot 'cookie.txt',
+        Join-Path $PSScriptRoot 'cookies.txt'
+    )
+
+    foreach ($candidate in $defaultCookieCandidates) {
+        if ($candidateFiles -notcontains $candidate) {
+            $null = $candidateFiles.Add($candidate)
+        }
+    }
+
+    foreach ($candidate in $candidateFiles) {
+        if (Test-IsNetscapeCookieFile -Path $candidate) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+
+    return $null
+}
+
+function Resolve-CaptionSourceByPreferredLanguage {
+    param(
+        $LanguageList,
+        [string[]]$PreferredLanguages
+    )
+
+    if (-not $LanguageList) {
+        return $null
+    }
+
+    $captions = @($LanguageList | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_.src) -and -not [string]::IsNullOrWhiteSpace($_.srclang)
+        })
+
+    if (-not $captions) {
+        return $null
+    }
+
+    $languageCandidates = [System.Collections.ArrayList]@()
+
+    foreach ($language in $PreferredLanguages) {
+        if ([string]::IsNullOrWhiteSpace($language)) {
+            continue
+        }
+
+        $normalizedLanguage = $language.Trim().ToLowerInvariant().Replace('_', '-')
+        if (-not [string]::IsNullOrWhiteSpace($normalizedLanguage) -and $languageCandidates -notcontains $normalizedLanguage) {
+            $null = $languageCandidates.Add($normalizedLanguage)
+        }
+
+        if ($normalizedLanguage -match '-') {
+            $baseLanguage = $normalizedLanguage.Split('-')[0]
+            if (-not [string]::IsNullOrWhiteSpace($baseLanguage) -and $languageCandidates -notcontains $baseLanguage) {
+                $null = $languageCandidates.Add($baseLanguage)
+            }
+        }
+    }
+
+    foreach ($candidate in $languageCandidates) {
+        $matchingCaption = $captions | Where-Object {
+            $captionLanguage = ([string]$_.srclang).ToLowerInvariant().Replace('_', '-')
+            ($captionLanguage -eq $candidate) -or ($captionLanguage.Split('-')[0] -eq $candidate)
+        } | Select-Object -First 1
+
+        if ($matchingCaption) {
+            $selectedCaptionLanguage = ([string]$matchingCaption.srclang).ToLowerInvariant().Replace('_', '-')
+            return [PSCustomObject]@{
+                Src      = $matchingCaption.src
+                Language = $selectedCaptionLanguage
+            }
+        }
+    }
+
+    return $null
+}
+
 function Clean-VideoLeftovers ( $videofile) {
     $masks = '.*.mp4.part', '.*.mp4.ytdl'
     foreach ( $mask in $masks) {
@@ -721,6 +2658,37 @@ function Clean-VideoLeftovers ( $videofile) {
             Write-Verbose ('Removing leftover file {0}' -f $_.fullname)
             Remove-Item -LiteralPath $_.fullname -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+function Stop-ProcessTree {
+    param(
+        [int]$ProcessId
+    )
+
+    if ($ProcessId -le 0) {
+        return
+    }
+
+    if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    if ($IsWindows) {
+        try {
+            & taskkill.exe /PID $ProcessId /T /F | Out-Null
+            return
+        }
+        catch {
+            Write-Warning ('taskkill failed for PID {0}: {1}' -f $ProcessId, $_.Exception.Message)
+        }
+    }
+
+    try {
+        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+        Write-Warning ('Stop-Process failed for PID {0}: {1}' -f $ProcessId, $_.Exception.Message)
     }
 }
 
@@ -755,7 +2723,6 @@ function Get-BackgroundDownloadJobs {
                 }
                 2 {
                     $isJobSuccess = Test-Path -LiteralPath $job.file
-                    $VideoInfo[ $InfoDownload]++
                     Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                 }
                 3 {
@@ -786,7 +2753,6 @@ function Get-BackgroundDownloadJobs {
                             }
                             2 {
                                 # Placeholder Video file downloaded
-                                $VideoInfo[ $InfoDownload]--
                                 $VideoInfo[ $InfoPlaceholder]++
                             }
                             3 {
@@ -801,6 +2767,10 @@ function Get-BackgroundDownloadJobs {
             }
 
             if ( $isJobSuccess -and -not $isPlaceholder) {
+
+                if ( $job.Type -eq 2) {
+                    $VideoInfo[ $InfoDownload]++
+                }
 
                 Write-Host ('Downloaded {0}' -f $job.file) -ForegroundColor Green
 
@@ -897,8 +2867,7 @@ function Stop-BackgroundDownloadJobs {
                 $BGJob.Job | Stop-Job -PassThru | Remove-Job -Force -ErrorAction SilentlyContinue
             }
             2 {
-                Stop-Process -Id $BGJob.job.id -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds 5
+                Stop-ProcessTree -ProcessId ([int]$BGJob.job.id)
                 Remove-Item -LiteralPath $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
             }
             3 {
@@ -999,7 +2968,7 @@ function Add-BackgroundDownloadJob {
 ##########
 
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.37')
+Write-Host( 'Get-EventSession v4.40')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)
@@ -1024,6 +2993,13 @@ else {
 # Determine what event URLs to use.
 # Use {0} for session code (eg BRK123), {1} for session id (guid)
 switch ( $Event) {
+    { 'Custom' -contains $_ } {
+        $EventName = 'Custom'
+        $EventType = 'CUSTOM'
+        $EventAPIUrl = $EventUrl
+        $CaptionExt = 'vtt'
+        $PreferDirect = $True
+    }
     { 'MEC', 'MEC2022' -contains $_ } {
         $EventName = 'MEC2022'
         $EventType = 'YT'
@@ -1043,34 +3019,8 @@ switch ( $Event) {
         $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2025-11-01T12:00:00.000Z","endDateTime":"2025-11-30T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
         $CaptionExt = 'vtt'
     }
-    { 'Ignite2024' -contains $_ } {
-        $EventName = 'Ignite2024'
-        $EventType = 'API'
-        $EventAPIUrl = 'https://api-v2.ignite.microsoft.com'
-        $EventSearchURI = 'api/session/search'
-        $SessionUrl = 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
-        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/IG24-{0}'
-        $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
-        $Method = 'Post'
-        # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-11-19T12:00:00.000Z","endDateTime":"2024-11-22T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-        $CaptionExt = 'vtt'
-    }
-    { 'Ignite2023' -contains $_ } {
-        $EventName = 'Ignite2023'
-        $EventType = 'API'
-        $EventAPIUrl = 'https://api.ignite.microsoft.com'
-        $EventSearchURI = 'api/session/search'
-        $SessionUrl = 'https://medius.studios.ms/Embed/video-nc/IG23-{0}'
-        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/IG23-{0}'
-        $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
-        $Method = 'Post'
-        # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-11-13T12:00:00.000Z","endDateTime":"2023-11-18T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-        $CaptionExt = 'vtt'
-    }
-    { 'Inspire', 'Inspire2023' -contains $_ } {
-        $EventName = 'Inspire2023'
+    { 'Inspire' -contains $_ } {
+        $EventName = 'Inspire'
         $EventType = 'API'
         $EventAPIUrl = 'https://api.inspire.microsoft.com'
         $EventSearchURI = 'api/session/search'
@@ -1092,30 +3042,6 @@ switch ( $Event) {
         $CaptionExt = 'vtt'
         $PreferDirect = $True
     }
-    { 'Build2024' -contains $_ } {
-        $EventName = 'Build2024'
-        $EventType = 'API'
-        $EventAPIUrl = 'https://api-v2.build.microsoft.com'
-        $EventSearchURI = 'api/session/search'
-        $SessionUrl = 'https://medius.studios.ms/video/asset/HIGHMP4/B24-{0}'
-        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/B24-{0}'
-        $SlidedeckUrl = 'https://medius.studios.ms/video/asset/PPT/B24-{0}'
-        $Method = 'Post'
-        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2024-05-21T08:00:00-05:00","endDateTime":"2024-05-24T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-        $CaptionExt = 'vtt'
-    }
-    { 'Build2023' -contains $_ } {
-        $EventName = 'Build2023'
-        $EventType = 'API'
-        $EventAPIUrl = 'https://api-v2.build.microsoft.com'
-        $EventSearchURI = 'api/session/search'
-        $SessionUrl = 'https://medius.studios.ms/video/asset/HIGHMP4/B23-{0}'
-        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/B23-{0}'
-        $SlidedeckUrl = 'https://medius.studios.ms/video/asset/PPT/B23-{0}'
-        $Method = 'Post'
-        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2023-01-01T08:00:00-05:00","endDateTime":"2023-12-31T19:00:00-05:00"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
-        $CaptionExt = 'vtt'
-    }
     default {
         Write-Host ('Unknown event: {0}' -f $Event) -ForegroundColor Red
         exit -1
@@ -1124,9 +3050,15 @@ switch ( $Event) {
 
 if (-not ($InfoOnly)) {
 
-    # If no download folder set, use system drive with event subfolder
+    # If no download folder set, use system drive root for Custom events,
+    # and system drive with event subfolder for other events.
     if ( -not( $DownloadFolder)) {
-        $DownloadFolder = '{0}\{1}' -f $ENV:SystemDrive, $EventName
+        if ($EventType -eq 'CUSTOM') {
+            $DownloadFolder = '{0}\' -f $ENV:SystemDrive
+        }
+        else {
+            $DownloadFolder = '{0}\{1}' -f $ENV:SystemDrive, $EventName
+        }
     }
 
     Add-Type -AssemblyName System.Web
@@ -1241,6 +3173,13 @@ else {
 if ( -not( $SessionCacheValid)) {
 
     switch ($EventType) {
+        'CUSTOM' {
+            Write-Host ('Reading {0} session catalog' -f $EventName)
+            $data = Get-CustomEventCatalog -CatalogUrl $EventAPIUrl -Proxy $ProxyURL
+
+            [int32]$sessionCount = ($data | Measure-Object).Count
+            Write-Host ('Processing information for {0} sessions' -f $sessionCount)
+        }
         'API2' {
             Write-Host ('Reading {0} session catalog' -f $EventName)
             $web = @{
@@ -1504,8 +3443,35 @@ if ($NoRepeats) {
     $SessionsToGet = $SessionsToGet | Where-Object { $_.sessionCode -inotmatch '^*R[1-9]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$' }
 }
 
+if ($Captions -and -not $Subs -and $PSBoundParameters.ContainsKey('Language') -and -not [string]::IsNullOrWhiteSpace([string]$Language)) {
+    Write-Warning ('Language parameter controls audio stream selection only; use Subs to select caption language preferences.')
+}
+
+# Initialize counters used by both download and info-only flows.
+$i = 0
+$DeckInfo = @(0, 0, 0)
+$VideoInfo = @(0, 0, 0)
+$InfoDownload = 0
+$InfoPlaceholder = 1
+$InfoExist = 2
+$SessionsSelected = ($SessionsToGet | Measure-Object).Count
+$cachedKmsBearerTokenRaw = $null
+$cachedKmsBearerTokenDetails = $null
+
+$myTimeZone = $null
+try {
+    $myTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById('US Eastern Standard Time')
+}
+catch {
+    $myTimeZone = [System.TimeZoneInfo]::Local
+    Write-Warning ('Unable to resolve US Eastern Standard Time, using local timezone {0}' -f $myTimeZone.Id)
+}
+
 if ( $InfoOnly) {
-    Write-Verbose ('There are {0} sessions matching your criteria.' -f (($SessionsToGet | Measure-Object).Count))
+    # Info-only mode should never queue downloads.
+    $NoVideos = $true
+    $NoSlidedecks = $true
+    Write-Verbose ('There are {0} sessions matching your criteria.' -f $SessionsSelected)
     Write-Output $SessionsToGet
 }
 else {
@@ -1514,18 +3480,8 @@ else {
         $SessionsToGet = $SessionsToGet | Out-GridView -Title 'Select Videos to Download, or Cancel for all Videos' -PassThru
     }
 
-    $i = 0
-    $DeckInfo = @(0, 0, 0)
-    $VideoInfo = @(0, 0, 0)
-    $InfoDownload = 0
-    $InfoPlaceholder = 1
-    $InfoExist = 2
-
-    $myTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById( 'US Eastern Standard Time')
-
     [console]::TreatControlCAsInput = $true
 
-    $SessionsSelected = ($SessionsToGet | Measure-Object).Count
     Write-Host ('There are {0} sessions matching your criteria.' -f $SessionsSelected)
 
     if ( $DownloadFolder -inotlike '\\?\*') {
@@ -1542,7 +3498,8 @@ else {
 foreach ($SessionToGet in $SessionsToGet) {
 
     $i++
-    Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete ($i / $SessionsSelected * 100)
+    $ProgressPercent = if ( $SessionsSelected -gt 0 ) { ($i / $SessionsSelected * 100) } else { 0 }
+    Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete $ProgressPercent
     if ( $SessionToGet.sessionCode) {
         $FileName = Fix-FileName ('{0}-{1}' -f $SessionToGet.sessionCode.Trim(), $SessionToGet.title.Trim())
     }
@@ -1550,8 +3507,14 @@ foreach ($SessionToGet in $SessionsToGet) {
         $FileName = Fix-FileName ('{0}' -f $SessionToGet.title.Trim())
     }
     if (! ([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
-        # Get session localized timestamp, undoing TZ adjustments
-        $SessionTime = [System.TimeZoneInfo]::ConvertTime((Get-Date -Date $SessionToGet.startDateTime).ToUniversalTime(), $myTimeZone ).toString('g')
+        try {
+            # Get session localized timestamp, undoing TZ adjustments
+            $SessionTime = [System.TimeZoneInfo]::ConvertTime((Get-Date -Date $SessionToGet.startDateTime).ToUniversalTime(), $myTimeZone ).toString('g')
+        }
+        catch {
+            $SessionTime = $null
+            Write-Warning ('Unable to convert startDateTime for {0}: {1}' -f $SessionToGet.sessionCode, $_.Exception.Message)
+        }
     }
     else {
         $SessionTime = $null
@@ -1618,18 +3581,44 @@ foreach ($SessionToGet in $SessionsToGet) {
                         }
                     }
 
-                    Write-Verbose ('Checking download link {0}' -f $downloadLink)
+                    if ($EventType -eq 'CUSTOM') {
+                        $downloadLink = Resolve-CustomSignedOnDemandUrl -Session $SessionToGet -OnDemandUrl $downloadLink -CatalogUrl $EventAPIUrl -Proxy $ProxyURL
+                    }
+
+                    $customSessionCode = $null
+                    foreach ($codeCandidate in @('scheduleCode', 'sessionCode', 'code')) {
+                        if ($SessionToGet.PSObject.Properties.Match($codeCandidate).Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$SessionToGet.$codeCandidate)) {
+                            $customSessionCode = [string]$SessionToGet.$codeCandidate
+                            break
+                        }
+                    }
+
+                    $customAuthRequired = $false
+                    if ($EventType -eq 'CUSTOM' -and -not [string]::IsNullOrWhiteSpace($customSessionCode)) {
+                        $customAuthRequired = [bool]($script:CustomSignedOnDemandAuthRequiredBySession.ContainsKey($customSessionCode) -and $script:CustomSignedOnDemandAuthRequiredBySession[$customSessionCode])
+                    }
+
+                    if ($customAuthRequired) {
+                        Write-Warning ('Skipping: Authentication required for Custom session {0}. Complete Microsoft sign-in and retry.' -f $customSessionCode)
+                        $Endpoint = $null
+                        $Arg = $null
+                        $downloadLink = $null
+                    }
+
                     try {
-                        $Response = Invoke-WebRequest -Method HEAD -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                        $Response = Invoke-WebRequestWithMSAAuthSupport -Method Head -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive
                         $DirectLink = @( 'video/mp4', 'video/MP2T') -contains $Response.Headers.'Content-Type'
                     }
                     catch {
                         $DirectLink = $False
                     }
 
+                    $kmsBearerToken = $null
+                    $kmsBearerAuthorizationToken = $null
+
                     if ( ! ( $DirectLink) -and $downloadLink -match '(medius\.studios\.ms\/Embed\/Video|medius\.microsoft\.com|mediastream\.microsoft\.com)' ) {
-                        $DownloadedPage = Invoke-WebRequest -Method Get -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                        $OnDemandPage = $DownloadedPage.RawContent
+                        $DownloadedPage = Invoke-WebRequestWithMSAAuthSupport -Method Get -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive
+                        $OnDemandPage = $DownloadedPage.Content
                         $Endpoint = $null
 
                         if ( $OnDemandPage -match 'StreamUrl = "(?<AzureStreamURL>https://mediusprod\.streaming\.mediaservices\.windows\.net/.*manifest)";') {
@@ -1641,15 +3630,81 @@ foreach ($SessionToGet in $SessionsToGet) {
                             $Endpoint = '{0}?(format=mpd-time-csf)' -f $matches.AzureStreamURL
                         }
 
+                        if (-not $Endpoint) {
+                            $CoreConfigurationManifestUrl = Resolve-OnDemandManifestUrlFromCoreConfiguration -OnDemandPage $OnDemandPage
+                            if ($CoreConfigurationManifestUrl) {
+                                Write-Debug ('Using coreConfiguration manifest URL {0}' -f $CoreConfigurationManifestUrl)
+                                $Endpoint = $CoreConfigurationManifestUrl
+                            }
+                        }
+
                         if ($Endpoint) {
+                            $kmsBearerToken = $null
+                            if ( $Endpoint -match '(?i)^https://stream\.event\.microsoft\.com/') {
+                                $hasActiveMsaSession = ($null -ne $script:MSAAuthWebSession)
+                                $forceFreshKmsTokenPerCustomDownload = ($EventType -eq 'CUSTOM' -and ($script:MSAContentAuthRequired -or $hasActiveMsaSession))
+                                $shouldFetchKmsToken = $true
+                                if ($forceFreshKmsTokenPerCustomDownload) {
+                                    $customSessionCodeForLog = if ([string]::IsNullOrWhiteSpace($customSessionCode)) { '<unknown>' } else { $customSessionCode }
+                                    Write-Debug ('Requesting fresh KMS bearer token for Custom session {0} because MSA authentication is required.' -f $customSessionCodeForLog)
+                                }
+                                elseif (-not [string]::IsNullOrWhiteSpace($cachedKmsBearerTokenRaw)) {
+                                    if ($null -eq $cachedKmsBearerTokenDetails) {
+                                        $cachedKmsBearerTokenDetails = Get-KmsBearerTokenDetails -KmsBearerTokenRaw $cachedKmsBearerTokenRaw
+                                    }
+
+                                    if ($cachedKmsBearerTokenDetails -and $cachedKmsBearerTokenDetails.ExpiryUtc) {
+                                        $refreshThresholdUtc = (Get-Date).ToUniversalTime().AddMinutes( $MinTokenValidityMinutes)
+                                        if ($cachedKmsBearerTokenDetails.ExpiryUtc -gt $refreshThresholdUtc) {
+                                            $shouldFetchKmsToken = $false
+                                            Write-Debug ('Reusing cached KMS bearer token (expires {0:u})' -f $cachedKmsBearerTokenDetails.ExpiryUtc)
+                                        }
+                                        else {
+                                            Write-Debug ('Cached KMS bearer token expires soon ({0:u}); requesting a new token.' -f $cachedKmsBearerTokenDetails.ExpiryUtc)
+                                        }
+                                    }
+                                    else {
+                                        # Token was previously fetched, but expiry is unavailable; keep using it unless retrieval fails.
+                                        $shouldFetchKmsToken = $false
+                                        Write-Debug 'Reusing previously fetched KMS bearer token (no parseable expiry found).'
+                                    }
+                                }
+
+                                if ($shouldFetchKmsToken) {
+                                    $kmsBearerToken = Get-OnDemandKmsBearerToken -OnDemandPage $OnDemandPage -OnDemandUrl $downloadLink -ManifestUrl $Endpoint -Proxy $ProxyURL
+                                    if (-not [string]::IsNullOrWhiteSpace($kmsBearerToken)) {
+                                        $cachedKmsBearerTokenRaw = $kmsBearerToken
+                                        $cachedKmsBearerTokenDetails = Get-KmsBearerTokenDetails -KmsBearerTokenRaw $kmsBearerToken
+                                    }
+                                }
+                                else {
+                                    $kmsBearerToken = $cachedKmsBearerTokenRaw
+                                }
+
+                                if ($kmsBearerToken) {
+                                    if ($null -eq $cachedKmsBearerTokenDetails -or $cachedKmsBearerTokenDetails.RawToken -ne $kmsBearerToken) {
+                                        $cachedKmsBearerTokenDetails = Get-KmsBearerTokenDetails -KmsBearerTokenRaw $kmsBearerToken
+                                    }
+                                    $kmsBearerAuthorizationToken = $cachedKmsBearerTokenDetails.AuthorizationToken
+                                    Write-Debug 'Resolved KMS bearer token for encrypted stream.event manifest'
+                                }
+                                else {
+                                    Write-Warning 'KMS bearer token could not be resolved; stream download may fail with 401 on key retrieval'
+                                }
+                            }
+
                             $Arg = @( ('-o "{0}"' -f ($vidFullFile -replace '%', '%%')), $Endpoint)
 
                             # Construct Format for this specific video, language and audio languages available
-                            if ( $Format) {
-                                $ThisFormat = $Format
+                            $hasUserDefinedFormat = -not [string]::IsNullOrWhiteSpace([string]$Format)
+                            if ( $hasUserDefinedFormat) {
+                                $ThisFormat = ([string]$Format).Trim()
                             }
                             else {
-                                $ThisFormat = 'worstvideo+bestaudio'
+                                $ThisFormat = Get-PreferredOnDemandYtDlpFormat -OnDemandPage $OnDemandPage -Endpoint $Endpoint -FallbackFormat 'worstvideo+bestaudio'
+                                if ($ThisFormat -ne 'worstvideo+bestaudio') {
+                                    Write-Verbose ('Detected adaptive format metadata on medius page; using preferred yt-dlp format {0}' -f $ThisFormat)
+                                }
                             }
 
                             if ( $SessionToGet.audioLanguage) {
@@ -1698,6 +3753,13 @@ foreach ($SessionToGet in $SessionsToGet) {
                                 Write-Warning ('Multiple audio streams not available, will use default audio stream')
                             }
                             $Arg += ('--format {0}' -f $ThisFormat)
+
+                            if ($kmsBearerToken) {
+                                if ([string]::IsNullOrWhiteSpace($kmsBearerAuthorizationToken)) {
+                                    $kmsBearerAuthorizationToken = $kmsBearerToken
+                                }
+                                $Arg += ('--add-headers "Authorization: Bearer {0}"' -f $kmsBearerAuthorizationToken)
+                            }
                         }
                         else {
                             # Check for embedded YouTube
@@ -1719,18 +3781,29 @@ foreach ($SessionToGet in $SessionsToGet) {
                     }
                     else {
                         # Direct
-                        Write-Verbose ('Using direct video link {0}' -f $downloadLink)
                         if ( $downloadLink) {
                             $Endpoint = $downloadLink
                             $Arg = @( ('-o "{0}"' -f $vidFullFile), $downloadLink)
                         }
                         else {
-                            Write-Warning ('No video link for {0}' -f ($SessionToGet.Title))
+                            Write-Host ('No video link for {0}' -f ($SessionToGet.Title))
                             $Endpoint = $null
                         }
                     }
                     if ( $Endpoint) {
                         # Direct, AMS or YT video found, attempt download but first define common parameters
+                        $requiresMicrosoftCookieAuth = (($EventType -eq 'CUSTOM') -or $script:MSAContentAuthRequired -or -not [string]::IsNullOrWhiteSpace($kmsBearerToken))
+                        $targetIsMicrosoftUrl = (Test-IsMicrosoftContentUrl -Url $Endpoint) -or (Test-IsMicrosoftContentUrl -Url $downloadLink)
+                        $ytDlpCookieFile = $null
+
+                        if ($requiresMicrosoftCookieAuth -and $targetIsMicrosoftUrl -and -not $CookiesFromBrowser) {
+                            $ytDlpCookieFile = Resolve-YtDlpCookieFile -PreferredCookieFile $CookiesFile
+                            if ($ytDlpCookieFile) {
+                                Write-Verbose ('Using Netscape cookie file for authenticated Microsoft download: {0}' -f $ytDlpCookieFile)
+                                $Arg += ('--cookies "{0}"' -f $ytDlpCookieFile)
+                            }
+                        }
+
                         if ( $ProxyURL) {
                             $Arg += ('--proxy "{0}"' -f $ProxyURL)
                         }
@@ -1763,21 +3836,32 @@ foreach ($SessionToGet in $SessionsToGet) {
                     }
                 }
                 if ( $Captions) {
+                    if ([string]::IsNullOrWhiteSpace($CaptionExt)) {
+                        $CaptionExt = 'vtt'
+                        Write-Verbose 'Caption extension was not set; defaulting to vtt'
+                    }
                     $captionExtFile = $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
 
                     if ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
                         Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
                     }
                     else {
+                        $captionInfoSourceUrl = $SessionToGet.onDemand
+                        if ([string]::IsNullOrWhiteSpace($captionInfoSourceUrl) -and -not [string]::IsNullOrWhiteSpace($downloadLink)) {
+                            $captionInfoSourceUrl = $downloadLink
+                        }
+                        if (($EventType -eq 'CUSTOM') -and -not [string]::IsNullOrWhiteSpace($captionInfoSourceUrl)) {
+                            $captionInfoSourceUrl = Resolve-CustomSignedOnDemandUrl -Session $SessionToGet -OnDemandUrl $captionInfoSourceUrl -CatalogUrl $EventAPIUrl -Proxy $ProxyURL
+                        }
 
                         # Caption file in AMS needs seperate download, fetch onDemand page if not already downloaded for video
                         if (! $OnDemandPage) {
-                            if ( $SessionToGet.onDemand) {
+                            if ( $captionInfoSourceUrl) {
                                 try {
-                                    Write-Host ('Fetching video page to retrieve transcript information from {0}' -f $SessionToGet.onDemand)
-                                    $DownloadedPage = Invoke-WebRequest -Uri $SessionToGet.onDemand -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
+                                    Write-Host ('Fetching video page to retrieve transcript information from {0}' -f $captionInfoSourceUrl)
+                                    $DownloadedPage = Invoke-WebRequestWithMSAAuthSupport -Method Get -Uri $captionInfoSourceUrl -Proxy $ProxyURL -DisableKeepAlive
                                     if ( $DownloadedPage) {
-                                        $OnDemandPage = $DownloadedPage.RawContent
+                                        $OnDemandPage = $DownloadedPage.Content
                                     }
                                 }
                                 catch {
@@ -1788,13 +3872,21 @@ foreach ($SessionToGet in $SessionsToGet) {
                         }
                         # Check for vtt files before we check any direct caption file (likely docx now)
                         $captionFileLink = $Null
-                        if ( $OnDemandPage -match 'captionsConfiguration = (?<CaptionsJSON>{.*});') {
-                            $CaptionConfig = ($matches.CaptionsJSON | ConvertFrom-Json).languageList
+                        $captionLanguageSelected = $null
+                        If( -not [string]::IsNullOrEmpty($OnDemandPage)) {
+                            $CaptionConfig = Resolve-OnDemandCaptionsConfiguration -OnDemandPage $OnDemandPage
+                        }
+                        if ( $CaptionConfig) {
+                            $preferredCaptionLanguages = @()
                             if ( $Subs) {
-                                $captionFileLink = ($CaptionConfig | Where-Object { $_.srclang -eq $Subs }).src
+                                $preferredCaptionLanguages += $Subs
                             }
-                            if (! $captionFileLink) {
-                                $captionFileLink = ($CaptionConfig | Where-Object { $_.srclang -eq 'en' }).src
+                            $preferredCaptionLanguages += 'en-us', 'en'
+
+                            $captionSelection = Resolve-CaptionSourceByPreferredLanguage -LanguageList $CaptionConfig -PreferredLanguages $preferredCaptionLanguages
+                            if ($captionSelection) {
+                                $captionFileLink = $captionSelection.Src
+                                $captionLanguageSelected = $captionSelection.Language
                             }
                         }
                         if ( ! $CaptionFileLink) {
@@ -1805,8 +3897,8 @@ foreach ($SessionToGet in $SessionsToGet) {
                             if (! $OnDemandPage) {
                                 # Try if there is caption file reference on page
                                 try {
-                                    $DownloadedPage = Invoke-WebRequest -Uri $downloadLink -Proxy $ProxyURL -DisableKeepAlive -ErrorAction SilentlyContinue
-                                    $OnDemandPage = $DownloadedPage.RawContent
+                                    $DownloadedPage = Invoke-WebRequestWithMSAAuthSupport -Method Get -Uri $captionInfoSourceUrl -Proxy $ProxyURL -DisableKeepAlive
+                                    $OnDemandPage = $DownloadedPage.Content
                                 }
                                 catch {
                                     $DownloadedPage = $null
@@ -1825,11 +3917,30 @@ foreach ($SessionToGet in $SessionsToGet) {
                             }
                         }
                         if ( $captionFileLink) {
+                            if ($captionLanguageSelected) {
+                                Write-Verbose ('Selected caption language {0} for session {1}' -f $captionLanguageSelected, $SessionToGet.sessioncode)
+                            }
+                            else {
+                                Write-Verbose ('Selected caption language unknown for session {0} (caption source did not expose language metadata)' -f $SessionToGet.sessioncode)
+                            }
                             Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
 
                             $captionFullFile = $captionExtFile
                             Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink, $captionFullFile)
-                            Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                            $captionNeedsAuthDownload = (Test-IsMicrosoftContentUrl -Url $captionFileLink)
+                            if ($captionNeedsAuthDownload) {
+                                Write-Verbose ('Downloading caption file with authenticated request for session {0}' -f $SessionToGet.sessioncode)
+                                $captionResponse = Invoke-WebRequestWithMSAAuthSupport -Method Get -Uri $captionFileLink -Proxy $ProxyURL -DisableKeepAlive -OutFile $captionFullFile
+                                if (-not $captionResponse -and -not ((Test-Path -LiteralPath $captionFullFile) -and ((Get-ChildItem -LiteralPath $captionFullFile -ErrorAction SilentlyContinue).Length -gt 0))) {
+                                    Write-Warning ('Problem downloading or missing captions of {0} {1}' -f $SessionToGet.scheduleCode, $SessionToGet.Title)
+                                }
+                                elseif ( $SessionTime -and $Timestamp) {
+                                    Set-ItemProperty -LiteralPath $captionFullFile -Name LastWriteTime -Value ([System.DateTime]$SessionTime).ToUniversalTime()
+                                }
+                            }
+                            else {
+                                Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                            }
 
                         }
                         else {
@@ -1861,10 +3972,10 @@ foreach ($SessionToGet in $SessionsToGet) {
                 $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
                 try {
                     if ( $downloadLink -notmatch 'confirmation\.aspx') {
-                        $ValidUrl = Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
                     }
                     else {
-                        $ValidUrl = Invoke-WebRequest -Uri $DownloadURL -Method GET -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Get -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
                     }
                 }
                 catch {
@@ -1875,7 +3986,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                     # Extra parsing for MS downloads
                     if ( $ValidUrl.RawContent -match 'href="(?<Url>https:\/\/download\.microsoft\.com\/download[\/0-9\-]*\/.*(pdf|pptx))".*click here to download manually') {
                         $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $Matches.Url)
-                        $ValidUrl = Invoke-WebRequest -Uri $DownloadURL -Method HEAD -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -ErrorAction SilentlyContinue
+                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
                     }
                 }
 
@@ -1903,7 +4014,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                 }
             }
             else {
-                Write-Warning ('No slidedeck link for {0}' -f ($SessionToGet.Title))
+                Write-Host ('No slidedeck link for {0}' -f ($SessionToGet.Title)) 
             }
         }
     }
