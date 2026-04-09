@@ -18,7 +18,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.40, April 6, 2026
+    Version 4.41, April 9, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -474,6 +474,8 @@
           Added MSA token caching mechanism
           Fixed terminate cleanup to stop yt-dlp child processes
           Some minor fixes for InfoOnly reliability and runtime summary handling
+    4.41  Fixed compatibility issue with PowerShell v5.1
+          Fixed processing non-Custom events
 
     .EXAMPLE
     Download all available contents of Ignite sessions containing the word 'Teams' in the title to D:\Ignite, and skip sessions from the CommunityTopic 'Fun and Wellness'
@@ -708,6 +710,11 @@ if ($script:SuppressWebRequestDebugDetails) {
     # Keep script-level debug traces while suppressing native HTTP request/response debug dumps.
     $PSDefaultParameterValues['Invoke-WebRequest:Debug'] = $false
     $PSDefaultParameterValues['Invoke-RestMethod:Debug'] = $false
+}
+
+# In Windows PowerShell 5.1, this avoids interactive HTML/script parsing prompts.
+if ((Get-Command Invoke-WebRequest).Parameters.ContainsKey('UseBasicParsing')) {
+    $PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true
 }
 
 function Iif($Cond, $IfTrue, $IfFalse) {
@@ -1592,7 +1599,6 @@ function Invoke-WebRequestWithMSAAuthSupport {
         [uri]$Proxy,
         [hashtable]$Headers = $null,
         [string]$OutFile = $null,
-        [switch]$UseBasicParsing,
         [int]$MaximumRedirection = 10,
         [switch]$DisableKeepAlive
     )
@@ -1618,7 +1624,6 @@ function Invoke-WebRequestWithMSAAuthSupport {
     if ($Proxy) { $invokeParams.Proxy = $Proxy }
     if ($Headers) { $invokeParams.Headers = $Headers }
     if (-not [string]::IsNullOrWhiteSpace($OutFile)) { $invokeParams.OutFile = $OutFile }
-    if ($UseBasicParsing) { $invokeParams.UseBasicParsing = $true }
     if ($DisableKeepAlive) { $invokeParams.DisableKeepAlive = $true }
     if ($MaximumRedirection -ge 0) { $invokeParams.MaximumRedirection = $MaximumRedirection }
 
@@ -2228,7 +2233,7 @@ function Resolve-CustomSignedOnDemandUrl {
 
 function Resolve-OnDemandManifestUrlFromCoreConfiguration {
     param(
-        [parameter(Mandatory = $true)][string]$OnDemandPage
+        [string]$OnDemandPage
     )
 
     if ([string]::IsNullOrWhiteSpace($OnDemandPage)) {
@@ -3506,7 +3511,7 @@ foreach ($SessionToGet in $SessionsToGet) {
     else {
         $FileName = Fix-FileName ('{0}' -f $SessionToGet.title.Trim())
     }
-    if (! ([string]::IsNullOrEmpty( $SessionToGet.startDateTime))) {
+    if (! ([string]::IsNullOrEmpty( $SessionToGet.startDateTime) -and [string]::IsNullOrWhiteSpace( $SessionToGet.startDateTime)) ) {
         try {
             # Get session localized timestamp, undoing TZ adjustments
             $SessionTime = [System.TimeZoneInfo]::ConvertTime((Get-Date -Date $SessionToGet.startDateTime).ToUniversalTime(), $myTimeZone ).toString('g')
@@ -3519,31 +3524,32 @@ foreach ($SessionToGet in $SessionsToGet) {
     else {
         $SessionTime = $null
     }
-    Write-Host ('Processing info session {0} from {1} [{2}]' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse 'No Timestamp'), $SessionToGet.langLocale)
+    Write-Host ('Processing info session {0} from {1} [{2}]' -f $FileName, (Iif -Cond $SessionTime -IfTrue $SessionTime -IfFalse '[No Timestamp]'), $SessionToGet.langLocale)
     if (!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
         Write-Verbose ('Skipping session {0}: Future session' -f $SessionToGet.sessioncode)
     }
     else {
 
-        if ( ! $NoVideos) {
+        # When storing session content in subfolders per session, override the content target folder to be the session subfolder
+        if ( $UseSessionFolders) {
+            $SessionFolder = Join-Path -Path $DownloadFolder -ChildPath $FileName
+            if ( (Test-Path $SessionFolder) -eq $false ) {
+                New-Item -Path $SessionFolder -ItemType Directory | Out-Null
+            }
+            $ContentTargetFolder = $SessionFolder
+        }
+        else {
+            $ContentTargetFolder = $DownloadFolder
+        }
 
-            if ( $UseSessionFolders) {
-                $SessionFolder = Join-Path -Path $DownloadFolder -ChildPath $FileName
-                if ( (Test-Path $SessionFolder) -eq $false ) {
-                    New-Item -Path $SessionFolder -ItemType Directory | Out-Null
-                }
-                $ContentTargetFolder = $SessionFolder
-            }
-            else {
-                $ContentTargetFolder = $DownloadFolder
-            }
+        if ( ! $NoVideos) {
 
             $onDemandPage = $null
 
             if ( $DownloadVideos -or $DownloadAMSVideos) {
 
                 $vidfileName = '{0}.mp4' -f $FileName
-                $vidFullFile = Join-Path -Path $ContentTargetFolder -ChildPath $vidfileName
+                $vidFullFile = [System.IO.Path]::Combine( $ContentTargetFolder, $vidfileName)
 
                 if ((Test-Path -LiteralPath $vidFullFile) -and -not $Overwrite) {
                     Write-Host ('Video exists {0}' -f $vidfileName) -ForegroundColor Gray
@@ -3972,10 +3978,10 @@ foreach ($SessionToGet in $SessionsToGet) {
                 $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
                 try {
                     if ( $downloadLink -notmatch 'confirmation\.aspx') {
-                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
+                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
                     }
                     else {
-                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Get -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
+                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Get -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
                     }
                 }
                 catch {
@@ -3986,7 +3992,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                     # Extra parsing for MS downloads
                     if ( $ValidUrl.RawContent -match 'href="(?<Url>https:\/\/download\.microsoft\.com\/download[\/0-9\-]*\/.*(pdf|pptx))".*click here to download manually') {
                         $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $Matches.Url)
-                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -UseBasicParsing -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
+                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
                     }
                 }
 
@@ -3998,7 +4004,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                     else {
                         $slidedeckFile = '{0}.pptx' -f $FileName
                     }
-                    $slidedeckFullFile = Join-Path -Path $ContentTargetFolder -ChildPath $slidedeckFile
+                    $slidedeckFullFile = [System.IO.Path]::Combine( $ContentTargetFolder, $slidedeckFile)
                     if ((Test-Path -LiteralPath $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
                         Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray
                         $DeckInfo[ $InfoExist]++
@@ -4068,4 +4074,3 @@ Write-Host ('Selected {0} sessions out of a total of {1}' -f $ProcessedSessions,
 Write-Host ('Downloaded {0} slide decks and {1} videos.' -f $DeckInfo[ $InfoDownload], $VideoInfo[ $InfoDownload])
 Write-Host ('Not (yet) available: {0} slide decks and {1} videos' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
 Write-Host ('Skipped {0} slide decks and {1} videos as they were already downloaded.' -f $DeckInfo[ $InfoExist], $VideoInfo[ $InfoExist])
-
