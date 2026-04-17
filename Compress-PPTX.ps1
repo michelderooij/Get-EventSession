@@ -7,15 +7,16 @@
 
     Michel de Rooij
     https://github.com/michelderooij/Get-EventSession
-    Version 1.10, December 13th, 2025
+    Version 1.12, April 17th, 2026
 
     .DESCRIPTION
     This script processes PowerPoint (.pptx) files in a specified directory, compressing embedded images
     (JPEG, PNG) and videos (MP4, WMV, AVI, MOV) to reduce overall file size while maintaining acceptable quality.
     
     The script automatically downloads ffmpeg and pngquant if not present, extracts media from the PPTX,
-    recompresses it based on specified quality settings, and updates the presentation with the optimized media.
-    Original file timestamps are preserved, and only files that result in size reduction are replaced.
+    removes unused embedded package parts, recompresses retained media based on specified quality settings,
+    and updates the presentation with the optimized content. Original file timestamps are preserved, and only
+    files that result in size reduction are replaced.
 
     .PARAMETER SourcePath
     The source directory path to search for .pptx files. The script will recursively search this directory
@@ -88,10 +89,14 @@
     
     Uses custom paths for ffmpeg and pngquant executables.
 
+    .CHANGELOG
+    1.12  Added cleanup of unreferenced embedded package parts during PPTX recompression
+
     .NOTES
     - Requires ffmpeg for video processing (auto-downloaded if not present)
     - Requires pngquant for PNG optimization (auto-downloaded if not present)
     - The script preserves creation and modification timestamps
+    - Removes unreferenced embedded package parts before rebuilding the PPTX
     - Only replaces files if the compressed version is smaller
     - Temporary files are created in %TEMP% during processing
 #>
@@ -354,44 +359,237 @@ function Reencode-MediaWithFFmpeg {
     }
 }
 
-function Update-PptxMedia {
-    param($PptxPath, $MediaDir)
+function Resolve-PptxPackagePartPath {
+    param(
+        [string]$SourcePartPath,
+        [string]$Target
+    )
+
+    if( [string]::IsNullOrWhiteSpace( $Target)) {
+        return $null
+    }
+
+    $targetWithoutFragment = $Target.Split( '#')[0]
+    if( [string]::IsNullOrWhiteSpace( $targetWithoutFragment)) {
+        return $null
+    }
+
+    if( [string]::IsNullOrWhiteSpace( $SourcePartPath)) {
+        $baseUri = [System.Uri]'http://package/'
+    }
+    else {
+        $baseUri = [System.Uri]( 'http://package/{0}' -f $SourcePartPath)
+    }
+
+    $resolvedUri = [System.Uri]::new( $baseUri, $targetWithoutFragment)
+    return [System.Uri]::UnescapeDataString( $resolvedUri.AbsolutePath).TrimStart( '/')
+}
+
+function Get-PptxRelationshipPartPath {
+    param(
+        [string]$PartPath
+    )
+
+    if( [string]::IsNullOrWhiteSpace( $PartPath)) {
+        return '_rels/.rels'
+    }
+
+    $normalizedPartPath = $PartPath -replace '\\', '/'
+    $lastSlash = $normalizedPartPath.LastIndexOf( '/')
+    if( $lastSlash -lt 0) {
+        return '_rels/{0}.rels' -f $normalizedPartPath
+    }
+
+    $partDirectory = $normalizedPartPath.Substring( 0, $lastSlash)
+    $partFileName = $normalizedPartPath.Substring( $lastSlash + 1)
+    return '{0}/_rels/{1}.rels' -f $partDirectory, $partFileName
+}
+
+function Test-PptxExtractedPartExists {
+    param(
+        [string]$ExtractedRoot,
+        [string]$PartPath
+    )
+
+    if( [string]::IsNullOrWhiteSpace( $PartPath)) {
+        return $false
+    }
+
+    $fullPath = Join-Path $ExtractedRoot ( $PartPath -replace '/', '\')
+    return Test-Path -LiteralPath $fullPath -PathType Leaf
+}
+
+function ConvertTo-PptxPackagePartPath {
+    param(
+        [string]$ExtractedRoot,
+        [string]$FullPath
+    )
+
+    $rootPath = [System.IO.Path]::GetFullPath( $ExtractedRoot)
+    if( -not $rootPath.EndsWith( [System.IO.Path]::DirectorySeparatorChar) -and -not $rootPath.EndsWith( [System.IO.Path]::AltDirectorySeparatorChar)) {
+        $rootPath += [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    $rootUri = [System.Uri]::new( $rootPath)
+    $fileUri = [System.Uri]::new( [System.IO.Path]::GetFullPath( $FullPath))
+    return [System.Uri]::UnescapeDataString( $rootUri.MakeRelativeUri( $fileUri).ToString()).Replace( '\', '/')
+}
+
+function Get-PptxInternalRelationshipTargets {
+    param(
+        [string]$ExtractedRoot,
+        [string]$SourcePartPath
+    )
+
+    $relsPartPath = Get-PptxRelationshipPartPath -PartPath $SourcePartPath
+    $relsFullPath = Join-Path $ExtractedRoot ( $relsPartPath -replace '/', '\')
+    if( -not (Test-Path -LiteralPath $relsFullPath -PathType Leaf)) {
+        return @()
+    }
+
+    try {
+        [xml]$relsXml = Get-Content -LiteralPath $relsFullPath -Raw -ErrorAction Stop
+    }
+    catch {
+        Write-Warning ('Failed to parse relationship file {0}: {1}' -f $relsFullPath, $_.Exception.Message)
+        return @()
+    }
+
+    $targets = New-Object 'System.Collections.Generic.List[string]'
+    foreach( $relationship in @( $relsXml.GetElementsByTagName( 'Relationship'))) {
+        if( -not $relationship -or [string]::Equals( $relationship.TargetMode, 'External', [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        $resolvedPartPath = Resolve-PptxPackagePartPath -SourcePartPath $SourcePartPath -Target $relationship.Target
+        if( $resolvedPartPath) {
+            $targets.Add( $resolvedPartPath)
+        }
+    }
+
+    return $targets.ToArray()
+}
+
+function Get-ReachablePptxPackageParts {
+    param(
+        [string]$ExtractedRoot
+    )
+
+    $reachableParts = [System.Collections.Generic.HashSet[string]]::new( [System.StringComparer]::OrdinalIgnoreCase)
+    $queuedParts = [System.Collections.Generic.HashSet[string]]::new( [System.StringComparer]::OrdinalIgnoreCase)
+    $partsToVisit = [System.Collections.Generic.Queue[string]]::new()
+
+    foreach( $rootTarget in Get-PptxInternalRelationshipTargets -ExtractedRoot $ExtractedRoot -SourcePartPath $null) {
+        if( (Test-PptxExtractedPartExists -ExtractedRoot $ExtractedRoot -PartPath $rootTarget) -and $queuedParts.Add( $rootTarget)) {
+            $partsToVisit.Enqueue( $rootTarget)
+        }
+    }
+
+    while( $partsToVisit.Count -gt 0) {
+        $currentPart = $partsToVisit.Dequeue()
+        if( -not $reachableParts.Add( $currentPart)) {
+            continue
+        }
+
+        foreach( $targetPart in Get-PptxInternalRelationshipTargets -ExtractedRoot $ExtractedRoot -SourcePartPath $currentPart) {
+            if( (Test-PptxExtractedPartExists -ExtractedRoot $ExtractedRoot -PartPath $targetPart) -and -not $reachableParts.Contains( $targetPart) -and $queuedParts.Add( $targetPart)) {
+                $partsToVisit.Enqueue( $targetPart)
+            }
+        }
+    }
+
+    return $reachableParts
+}
+
+function Get-UnusedEmbeddedPptxParts {
+    param(
+        [string]$ExtractedRoot
+    )
+
+    $cleanupPrefixes = @(
+        'ppt/media/'
+        'ppt/embeddings/'
+        'ppt/activeX/'
+        'ppt/activeXBin/'
+        'ppt/ctrlProps/'
+        'ppt/controlProps/'
+    )
+
+    $reachableParts = Get-ReachablePptxPackageParts -ExtractedRoot $ExtractedRoot
+    $unusedFiles = New-Object 'System.Collections.Generic.List[System.IO.FileInfo]'
+
+    foreach( $prefix in $cleanupPrefixes) {
+        $prefixPath = Join-Path $ExtractedRoot ( $prefix.TrimEnd( '/') -replace '/', '\')
+        if( -not (Test-Path -LiteralPath $prefixPath -PathType Container)) {
+            continue
+        }
+
+        foreach( $file in Get-ChildItem -LiteralPath $prefixPath -File -Recurse) {
+            $packagePartPath = ConvertTo-PptxPackagePartPath -ExtractedRoot $ExtractedRoot -FullPath $file.FullName
+            if( -not $reachableParts.Contains( $packagePartPath)) {
+                $unusedFiles.Add( $file)
+            }
+        }
+    }
+
+    return @{
+        CleanupPrefixes = $cleanupPrefixes
+        UnusedFiles = $unusedFiles.ToArray()
+    }
+}
+
+function Sync-PptxPackageContent {
+    param(
+        [string]$PptxPath,
+        [string]$ExtractedRoot,
+        [string[]]$SyncPrefixes
+    )
 
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-        # Get all media files that were processed
-        $mediaFiles = Get-ChildItem -Path $MediaDir -File
-
         # Open the PPTX for update
         $zip = [System.IO.Compression.ZipFile]::Open( $PptxPath, [System.IO.Compression.ZipArchiveMode]::Update)
 
-        foreach( $file in $mediaFiles) {
-            # Use forward slashes for ZIP entry paths
-            $entryPath = 'ppt/media/{0}' -f $file.Name
+        $normalizedSyncPrefixes = @(
+            foreach( $prefix in $SyncPrefixes) {
+                if( [string]::IsNullOrWhiteSpace( $prefix)) {
+                    continue
+                }
 
-            # Find the existing entry
-            $existingEntry = $zip.Entries | Where-Object { $_.FullName -eq $entryPath }
+                ('{0}/' -f ( $prefix.Trim().TrimStart( '/').TrimEnd( '/'))) -replace '\\', '/'
+            }
+        )
 
-            if( $existingEntry) {
+        foreach( $existingEntry in @( $zip.Entries | Where-Object {
+                $entryPath = $_.FullName
+                -not $entryPath.EndsWith( '/') -and (
+                    $normalizedSyncPrefixes | Where-Object {
+                        $prefix = $_
+                        $prefix -and $prefix.Length -gt 0 -and $entryPath.StartsWith( $prefix, [System.StringComparison]::OrdinalIgnoreCase)
+                    } | Select-Object -First 1
+                )
+            })) {
+            $entryPath = $existingEntry.FullName
+            $extractedFilePath = Join-Path $ExtractedRoot ( $entryPath -replace '/', '\')
+
+            if( Test-Path -LiteralPath $extractedFilePath -PathType Leaf) {
                 Write-Verbose ('Updating: {0}' -f $entryPath)
 
-                # Open the entry and overwrite its content
                 $entryStream = $existingEntry.Open()
-                $entryStream.SetLength( 0)  # Clear existing content
+                $entryStream.SetLength( 0)
 
-                # Copy new file content
-                $fileStream = [System.IO.File]::OpenRead( $file.FullName)
+                $fileStream = [System.IO.File]::OpenRead( $extractedFilePath)
                 $fileStream.CopyTo( $entryStream)
 
-                # Close streams
                 $fileStream.Close()
                 $fileStream.Dispose()
                 $entryStream.Close()
                 $entryStream.Dispose()
             }
             else {
-                Write-Warning ('Entry not found in archive: {0}' -f $entryPath)
+                Write-Verbose ('Removing deleted entry: {0}' -f $entryPath)
+                $existingEntry.Delete()
             }
         }
 
@@ -399,7 +597,7 @@ function Update-PptxMedia {
         return $true
 
     } catch {
-        Write-Warning ('Error updating PPTX media: {0}' -f $_)
+        Write-Warning ('Error updating PPTX content: {0}' -f $_)
         if( $zip) {
             try { $zip.Dispose() } catch { }
         }
@@ -534,6 +732,18 @@ try {
     # Expand PPTX
     Expand-Archive -Path $workingCopy -DestinationPath $tempDir -Force
 
+    $cleanupInfo = Get-UnusedEmbeddedPptxParts -ExtractedRoot $tempDir
+    $removedEmbeddedParts = 0
+    foreach( $unusedFile in $cleanupInfo.UnusedFiles) {
+        $packagePartPath = ConvertTo-PptxPackagePartPath -ExtractedRoot $tempDir -FullPath $unusedFile.FullName
+        Write-Verbose ('Removing unreferenced embedded part: {0}' -f $packagePartPath)
+        Remove-Item -LiteralPath $unusedFile.FullName -Force -ErrorAction Stop
+        $removedEmbeddedParts++
+    }
+    if( $removedEmbeddedParts -gt 0) {
+        Write-Host ('Removed {0} unreferenced embedded part{1}' -f $removedEmbeddedParts, $(if( $removedEmbeddedParts -eq 1) { '' } else { 's' })) -ForegroundColor Yellow
+    }
+
     $mediaDir = Join-Path $tempDir 'ppt\media'
     if( -not (Test-Path $mediaDir)) {
         Write-Host 'No embedded media found in PPTX.'
@@ -644,14 +854,15 @@ try {
             }
         }
 
-        # Now update the working copy with the compressed media
-        Write-Verbose 'Updating PPTX with compressed media...'
-        $updateSuccess = Update-PptxMedia -PptxPath $workingCopy -MediaDir $mediaDir
+    }
 
-        if( -not $updateSuccess) {
-            Write-Error 'Failed to update PPTX with compressed media'
-            exit 6
-        }
+    # Update the working copy with retained embedded content and remove deleted parts from the archive
+    Write-Verbose 'Updating PPTX archive with extracted content...'
+    $updateSuccess = Sync-PptxPackageContent -PptxPath $workingCopy -ExtractedRoot $tempDir -SyncPrefixes $cleanupInfo.CleanupPrefixes
+
+    if( -not $updateSuccess) {
+        Write-Error 'Failed to update PPTX archive content'
+        exit 6
     }
 
     # Replace original file only if compressed version is smaller
