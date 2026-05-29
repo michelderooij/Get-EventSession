@@ -1,5 +1,17 @@
 # Changelog
 
+## 4.43
+- Enforced TLS 1.2 only; removed TLS 1.0/1.1 fallback
+- Fixed invalid regex in -NoRepeats filter (was silently matching nothing)
+- Combined multiple session filter passes into a single pipeline pass
+- Added automatic retry with exponential back-off for catalog fetch calls
+- Added timeout to yt-dlp and ffmpeg subprocesses to prevent indefinite hangs
+- Wrapped yt-dlp/ffmpeg downloads and process execution in error handlers
+- Fixed cache file load to properly catch and report corrupt cache files
+- Hardened file name sanitisation against platform-invalid characters
+- Quoted proxy URL in yt-dlp argument string
+- Cached progress log reads in background job polling to reduce disk I/O
+
 ## 4.42
 - Added Build 2026 support
 

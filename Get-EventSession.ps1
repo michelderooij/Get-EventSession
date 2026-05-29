@@ -18,7 +18,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.42, May 30, 2026
+    Version 4.43, May 30, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -453,9 +453,11 @@ $script:YTlink = 'https://github.com/yt-dlp/yt-dlp/releases/download/2023.07.06/
 $script:FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
 
 # Fix 'Could not create SSL/TLS secure channel' issues with Invoke-WebRequest
-[Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $script:BackgroundDownloadJobs = @()
+$script:JobProgressCache = @{}
+$script:JobFileLastWrite = @{}
 $script:MSAAuthWebSession = $null
 $script:MSAContentAuthRequired = $false
 $script:CustomSignedOnDemandUrlCache = @{}
@@ -479,7 +481,9 @@ function Iif($Cond, $IfTrue, $IfFalse) {
 }
 
 function Fix-FileName ($title) {
-    return (((((((($title -replace '\]', ')') -replace '\[', '(') -replace [char]0x202f, ' ') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
+    $cleaned = (((((((($title -replace '\]', ')') -replace '\[', '(') -replace [char]0x202f, ' ') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
+    $invalidChars = [System.IO.Path]::GetInvalidFileNameChars() | ForEach-Object { [Regex]::Escape($_) }
+    return ($cleaned -replace ($invalidChars -join '|'), '')
 }
 
 function Get-IEProxy {
@@ -500,6 +504,34 @@ function Get-IEProxy {
     else {
         return $null
     }
+}
+
+function Invoke-WebWithRetry {
+    param(
+        [scriptblock]$ScriptBlock,
+        [int]$MaxAttempts = 3,
+        [int]$InitialDelaySeconds = 2
+    )
+    $attempt = 0
+    $delay = $InitialDelaySeconds
+    do {
+        $attempt++
+        try {
+            return (& $ScriptBlock)
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) { throw }
+            $statusCode = $null
+            if ($_.Exception -is [System.Net.WebException] -and $_.Exception.Response) {
+                $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+            # Don't retry client errors (4xx) except 429 Too Many Requests
+            if ($statusCode -and $statusCode -ge 400 -and $statusCode -lt 500 -and $statusCode -ne 429) { throw }
+            Write-Warning ('Request failed (attempt {0}/{1}): {2}. Retrying in {3}s...' -f $attempt, $MaxAttempts, $_.Exception.Message, $delay)
+            Start-Sleep -Seconds $delay
+            $delay *= 2
+        }
+    } while ($attempt -lt $MaxAttempts)
 }
 
 function Set-ObjectPropertyValue {
@@ -1762,7 +1794,7 @@ function Get-CustomEventCatalog {
         Write-Progress -Id 1 -Activity 'Retrieving Session Catalog' -Status $status -PercentComplete $percent
 
         try {
-            $response = Invoke-RestMethod -Uri $pageUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' }
+            $response = Invoke-WebWithRetry { Invoke-RestMethod -Uri $pageUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } }.GetNewClosure()
         }
         catch {
             throw ('Problem retrieving custom session catalog page {0}: {1}' -f $page, $error[0])
@@ -2607,11 +2639,15 @@ function Show-BackgroundDownloadJobs {
     foreach ( $job in $script:BackgroundDownloadJobs) {
         if ( $Job.Type -eq 2) {
 
-            # Get last line of YT log to display for video downloads
-            $LastLine = (Get-Content -LiteralPath $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
-            if (!( $LastLine)) {
-                $LastLine = 'Evaluating..'
+            # Get last line of yt-dlp log; cache by file mtime to avoid re-reading unchanged files
+            $jobKey = [string]$job.job.id
+            $fileInfo = Get-Item -LiteralPath $job.stdOutTempFile -ErrorAction SilentlyContinue
+            if ($fileInfo -and $script:JobFileLastWrite[$jobKey] -ne $fileInfo.LastWriteTime) {
+                $script:JobFileLastWrite[$jobKey] = $fileInfo.LastWriteTime
+                $line = (Get-Content -LiteralPath $job.stdOutTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
+                if ($line) { $script:JobProgressCache[$jobKey] = $line }
             }
+            $LastLine = if ($script:JobProgressCache[$jobKey]) { $script:JobProgressCache[$jobKey] } else { 'Evaluating..' }
             Write-Progress -Id $job.job.id -Activity ('Video {0} {1}' -f $job.scheduleCode, $Job.title) -Status $LastLine -ParentId 2
             $progressId++
         }
@@ -2848,13 +2884,18 @@ if (-not ($InfoOnly)) {
     else {
         if (-not( Test-Path $YouTubeDL)) {
             Write-Host ('{0} not found, will try to download from {1}' -f $YouTubeEXE, $YTLink)
-            Invoke-WebRequest -Uri $YTLink -OutFile $YouTubeDL -Proxy $ProxyURL
+            try {
+                Invoke-WebRequest -Uri $YTLink -OutFile $YouTubeDL -Proxy $ProxyURL -ErrorAction Stop
+            }
+            catch {
+                Write-Warning ('Failed to download {0}: {1}' -f $YouTubeEXE, $_.Exception.Message)
+            }
         }
         if ( Test-Path $YouTubeDL) {
             Write-Host ('Running self-update of {0}' -f $YouTubeEXE)
 
             $Arg = @('-U')
-            if ( $ProxyURL) { $Arg += "--proxy $ProxyURL" }
+            if ( $ProxyURL) { $Arg += ('--proxy "{0}"' -f $ProxyURL) }
 
             $pinfo = New-Object System.Diagnostics.ProcessStartInfo
             $pinfo.FileName = $YouTubeDL
@@ -2870,7 +2911,7 @@ if (-not ($InfoOnly)) {
                 $p.Start() | Out-Null
                 $stdout = $p.StandardOutput.ReadToEnd()
                 $stderr = $p.StandardError.ReadToEnd()
-                $p.WaitForExit()
+                if (-not $p.WaitForExit(300000)) { $p.Kill(); Write-Warning ('{0} self-update timed out after 5 minutes and was terminated.' -f $YouTubeEXE) }
             }
             catch {
                 throw ('Problem running {0}. Make sure this is an x86 system, and the required Visual C++ 2010 redistribution package is installed (available from https://www.microsoft.com/en-US/download/details.aspx?id=5555).' -f $YouTubeEXE)
@@ -2886,7 +2927,12 @@ if (-not ($InfoOnly)) {
 
             Write-Host ('ffmpeg.exe not found, will try to download from {0}' -f $FFMPEGlink)
             $TempFile = Join-Path $PSScriptRoot 'ffmpeg-latest-win32-static.zip'
-            Invoke-WebRequest -Uri $FFMPEGlink -OutFile $TempFile -Proxy $ProxyURL
+            try {
+                Invoke-WebRequest -Uri $FFMPEGlink -OutFile $TempFile -Proxy $ProxyURL -ErrorAction Stop
+            }
+            catch {
+                Write-Warning ('Failed to download ffmpeg: {0}' -f $_.Exception.Message)
+            }
 
             if ( Test-Path $TempFile) {
                 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -2930,7 +2976,7 @@ else {
         try {
             if ( (Get-ChildItem -LiteralPath $SessionCache).LastWriteTime -ge (Get-Date).AddHours( - $MaxCacheAge)) {
                 Write-Host 'Session cache file found, reading session information'
-                $data = Import-Clixml -LiteralPath $SessionCache -ErrorAction SilentlyContinue
+                $data = Import-Clixml -LiteralPath $SessionCache -ErrorAction Stop
                 $SessionCacheValid = $true
             }
             else {
@@ -2963,7 +3009,7 @@ if ( -not( $SessionCacheValid)) {
             }
             try {
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
-                $ResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL -Timeout $web.Timeout
+                $ResultsResponse = Invoke-WebWithRetry { Invoke-RestMethod -Uri $web.requestUri -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL -Timeout $web.Timeout }.GetNewClosure()
             }
             catch {
                 throw ('Problem retrieving session catalog: {0}' -f $error[0])
@@ -3006,7 +3052,7 @@ if ( -not( $SessionCacheValid)) {
                 $web
                 $searchBody
 
-                $searchResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
+                $searchResultsResponse = Invoke-WebWithRetry { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL }.GetNewClosure()
             }
             catch {
                 throw ('Problem retrieving session catalog: {0}' -f $error[0])
@@ -3024,7 +3070,7 @@ if ( -not( $SessionCacheValid)) {
             for ($page = 1; $page -le $PageCount; $page++) {
                 Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
                 $SearchBody = $EventSearchBody -f $web.itemsPerPage, $page
-                $searchResultsResponse = Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL
+                $searchResultsResponse = Invoke-WebWithRetry { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL }.GetNewClosure()
                 foreach ( $Item in $searchResultsResponse.data) {
                     $Item.PSObject.Properties | ForEach-Object {
                         if ($_.Name -eq 'speakerNames') { $Item.($_.Name) = @($_.Value) }
@@ -3063,10 +3109,15 @@ if ( -not( $SessionCacheValid)) {
 
             $p = New-Object System.Diagnostics.Process
             $p.StartInfo = $pinfo
-            $p.Start() | Out-Null
-            $stdout = $p.StandardOutput.ReadToEnd()
-            $stderr = $p.StandardError.ReadToEnd()
-            $p.WaitForExit()
+            try {
+                $p.Start() | Out-Null
+                $stdout = $p.StandardOutput.ReadToEnd()
+                $stderr = $p.StandardError.ReadToEnd()
+                if (-not $p.WaitForExit(300000)) { $p.Kill(); throw ('Timed out waiting for {0} to retrieve the YouTube playlist.' -f $YouTubeEXE) }
+            }
+            catch {
+                throw ('Problem starting {0}: {1}' -f $YouTubeEXE, $_.Exception.Message)
+            }
 
             if ($p.ExitCode -ne 0) {
                 throw ('Problem running {0}: {1}' -f $YouTubeEXE, $stderr)
@@ -3158,34 +3209,22 @@ if ($ExcludeCommunityTopic) {
     $SessionsToGet = $SessionsToGet | Where-Object { $ExcludeCommunityTopic -inotcontains $_.CommunityTopic }
 }
 
-if ($Speaker) {
-    Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker)
-    $SessionsToGet = $SessionsToGet | Where-Object { $_.speakerNames | Where-Object { $_ -ilike $Speaker } }
-}
-
-if ($Product) {
-    Write-Verbose ('Product specified: {0}' -f $Product)
-    $SessionsToGet = $SessionsToGet | Where-Object { $_.products | Where-Object { $_ -ilike $Product } }
-}
-
-if ($Category) {
-    Write-Verbose ('Category specified: {0}' -f $Category)
-    $SessionsToGet = $SessionsToGet | Where-Object { $_.contentCategory | Where-Object { $_ -ilike $Category } }
-}
-
-if ($SolutionArea) {
-    Write-Verbose ('SolutionArea specified: {0}' -f $SolutionArea)
-    $SessionsToGet = $SessionsToGet | Where-Object { $_.solutionArea | Where-Object { $_ -ilike $SolutionArea } }
-}
-
-if ($LearningPath) {
-    Write-Verbose ('LearningPath specified: {0}' -f $LearningPath)
-    $SessionsToGet = $SessionsToGet | Where-Object { $_.learningPath | Where-Object { $_ -ilike $LearningPath } }
-}
-
-if ($Topic) {
-    Write-Verbose ('Topic specified: {0}' -f $Topic)
-    $SessionsToGet = $SessionsToGet | Where-Object { $_.topic | Where-Object { $_ -ilike $Topic } }
+if ($Speaker -or $Product -or $Category -or $SolutionArea -or $LearningPath -or $Topic) {
+    if ($Speaker) { Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker) }
+    if ($Product) { Write-Verbose ('Product specified: {0}' -f $Product) }
+    if ($Category) { Write-Verbose ('Category specified: {0}' -f $Category) }
+    if ($SolutionArea) { Write-Verbose ('SolutionArea specified: {0}' -f $SolutionArea) }
+    if ($LearningPath) { Write-Verbose ('LearningPath specified: {0}' -f $LearningPath) }
+    if ($Topic) { Write-Verbose ('Topic specified: {0}' -f $Topic) }
+    $SessionsToGet = $SessionsToGet | Where-Object {
+        $s = $_
+        (-not $Speaker -or ($s.speakerNames | Where-Object { $_ -ilike $Speaker })) -and
+        (-not $Product -or ($s.products | Where-Object { $_ -ilike $Product })) -and
+        (-not $Category -or ($s.contentCategory | Where-Object { $_ -ilike $Category })) -and
+        (-not $SolutionArea -or ($s.solutionArea | Where-Object { $_ -ilike $SolutionArea })) -and
+        (-not $LearningPath -or ($s.learningPath | Where-Object { $_ -ilike $LearningPath })) -and
+        (-not $Topic -or ($s.topic | Where-Object { $_ -ilike $Topic }))
+    }
 }
 
 if ($Locale) {
@@ -3217,7 +3256,7 @@ if ($Keyword) {
 
 if ($NoRepeats) {
     Write-Verbose ('Skipping repeated sessions')
-    $SessionsToGet = $SessionsToGet | Where-Object { $_.sessionCode -inotmatch '^*R[1-9]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$' }
+    $SessionsToGet = $SessionsToGet | Where-Object { $_.sessionCode -inotmatch 'R[1-9]?$' -and $_.sessionCode -inotmatch '^[A-Z]+[0-9]+[B-C]+$' }
 }
 
 if ($Captions -and -not $Subs -and $PSBoundParameters.ContainsKey('Language') -and -not [string]::IsNullOrWhiteSpace([string]$Language)) {
