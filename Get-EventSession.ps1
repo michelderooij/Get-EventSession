@@ -18,7 +18,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.43, May 30, 2026
+    Version 4.44, June 3, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -459,6 +459,7 @@ $script:BackgroundDownloadJobs = @()
 $script:JobProgressCache = @{}
 $script:JobFileLastWrite = @{}
 $script:MSAAuthWebSession = $null
+$script:MSABearerToken = $null
 $script:MSAContentAuthRequired = $false
 $script:CustomSignedOnDemandUrlCache = @{}
 $script:CustomSignedOnDemandAuthRequiredBySession = @{}
@@ -957,6 +958,19 @@ function Get-CachedMSAWebSession {
 
     Write-Verbose ('Loaded auth cache data from {0} (length {1})' -f $CachePath, $cacheContent.Length)
 
+    # Restore cached bearer token if present and still valid.
+    $bearerMatch = [regex]::Match($cacheContent, '(?m)^#\s*msa_bearer:\s*(\S+)')
+    if ($bearerMatch.Success) {
+        $cachedToken = $bearerMatch.Groups[1].Value.Trim()
+        if (Test-JwtTokenValid -Token $cachedToken -MinValidityMinutes $script:MinTokenValidityMinutes) {
+            $script:MSABearerToken = $cachedToken
+            Write-Verbose ('Restored MSA bearer token from auth cache (still valid).')
+        }
+        else {
+            Write-Verbose ('Cached MSA bearer token has expired; will require fresh sign-in for token.')
+        }
+    }
+
     $cookieHeader = Convert-CacheContentToCookieHeader -CacheContent $cacheContent -CookieUri $CookieUri
     if ([string]::IsNullOrWhiteSpace($cookieHeader)) {
         Write-Warning ('Auth cache file {0} did not contain usable cookies for {1}.' -f $CachePath, $CookieUri.Host)
@@ -1037,12 +1051,31 @@ function Save-MSAAuthCookieHeader {
         if ([string]::IsNullOrWhiteSpace($cacheContentToPersist)) {
             $cacheContentToPersist = $cookieHeaderToPersist
         }
+        else {
+            # Persist a valid bearer token so the next session can reuse it without re-authenticating.
+            if (-not [string]::IsNullOrWhiteSpace($script:MSABearerToken) -and
+                (Test-JwtTokenValid -Token $script:MSABearerToken -MinValidityMinutes $script:MinTokenValidityMinutes)) {
+                $cacheContentToPersist = ('{0}{1}# msa_bearer: {2}' -f $cacheContentToPersist, [Environment]::NewLine, $script:MSABearerToken)
+            }
+        }
 
         Set-Content -LiteralPath $CachePath -Value $cacheContentToPersist -Encoding UTF8
         Write-Verbose ('Saved MSA auth cache to {0} in Netscape cookie format (length {1})' -f $CachePath, $cacheContentToPersist.Length)
     }
     else {
-        Write-Warning ('Unable to save MSA auth cache for {0}; cookie header was empty.' -f $CookieUri.Host)
+        # WAM auth produces no cookies — persist the Bearer token alone so the next run can skip re-auth.
+        if (-not [string]::IsNullOrWhiteSpace($script:MSABearerToken) -and
+            (Test-JwtTokenValid -Token $script:MSABearerToken -MinValidityMinutes $script:MinTokenValidityMinutes)) {
+            if (Test-Path -LiteralPath $CachePath) {
+                try { Copy-Item -LiteralPath $CachePath -Destination ('{0}.bak' -f $CachePath) -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            $tokenOnlyCache = ('# Netscape HTTP Cookie File{0}# msa_bearer: {1}' -f [Environment]::NewLine, $script:MSABearerToken)
+            Set-Content -LiteralPath $CachePath -Value $tokenOnlyCache -Encoding UTF8
+            Write-Verbose ('Saved WAM Bearer token to MSA auth cache {0}' -f $CachePath)
+        }
+        else {
+            Write-Warning ('Unable to save MSA auth cache for {0}; cookie header was empty.' -f $CookieUri.Host)
+        }
     }
 }
 
@@ -1206,6 +1239,48 @@ function Test-MSAAuthenticationRequired {
     return $false
 }
 
+function Test-JwtTokenValid {
+    param(
+        [string]$Token,
+        [int]$MinValidityMinutes = 5
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Token)) { return $false }
+
+    $parts = $Token.Split('.')
+    if ($parts.Count -lt 2) { return $false }
+
+    try {
+        $base64 = $parts[1] -replace '-', '+' -replace '_', '/'
+        $pad = 4 - ($base64.Length % 4)
+        if ($pad -ne 4) { $base64 += ('=' * $pad) }
+        $payloadBytes = [Convert]::FromBase64String($base64)
+        $payloadJson = [System.Text.Encoding]::UTF8.GetString($payloadBytes)
+        $payload = $payloadJson | ConvertFrom-Json
+        if ($payload.PSObject.Properties.Match('exp').Count -gt 0) {
+            $expiry = [DateTimeOffset]::FromUnixTimeSeconds([long]$payload.exp)
+            return ($expiry -gt [DateTimeOffset]::UtcNow.AddMinutes($MinValidityMinutes))
+        }
+    }
+    catch {}
+
+    return $true
+}
+
+function Get-MSAAuthApiHeaders {
+    $headers = @{ 'Accept' = 'application/json' }
+    if (-not [string]::IsNullOrWhiteSpace($script:MSABearerToken)) {
+        if (Test-JwtTokenValid -Token $script:MSABearerToken -MinValidityMinutes $script:MinTokenValidityMinutes) {
+            $headers['Authorization'] = ('Bearer {0}' -f $script:MSABearerToken)
+        }
+        else {
+            Write-Verbose 'Cached MSA bearer token has expired; excluding from request.'
+            $script:MSABearerToken = $null
+        }
+    }
+    return $headers
+}
+
 function Get-MSAAuthenticatedWebSession {
     param(
         [parameter(Mandatory = $true)][uri]$TargetUri,
@@ -1230,7 +1305,7 @@ function Get-MSAAuthenticatedWebSession {
         }
 
         try {
-            $inMemoryValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $script:MSAAuthWebSession -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } -ErrorAction Stop -Verbose:$false
+            $inMemoryValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $script:MSAAuthWebSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
             if (Test-MSAAuthenticationRequired -Response $inMemoryValidationResponse) {
                 throw 'In-memory session redirected to a sign-in page.'
             }
@@ -1277,7 +1352,7 @@ function Get-MSAAuthenticatedWebSession {
 
         if ($session -and $ValidateCachedSession) {
             try {
-                $validationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } -ErrorAction Stop -Verbose:$false
+                $validationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
                 if (Test-MSAAuthenticationRequired -Response $validationResponse) {
                     throw 'Cached session redirected to a sign-in page.'
                 }
@@ -1289,6 +1364,27 @@ function Get-MSAAuthenticatedWebSession {
             }
         }
 
+        # If -CookiesFromBrowser was specified, try importing cookies from that browser via yt-dlp
+        # before falling back to the silent/interactive sign-in flows.
+        if (-not $session -and -not [string]::IsNullOrWhiteSpace($CookiesFromBrowser)) {
+            $browserImportSession = Get-MSAAuthFromBrowserCookies -Browser $CookiesFromBrowser -CookieUri $cookieUri -YtDlpPath $script:YouTubeDL -CachePath $authCachePath -Proxy $Proxy
+            if ($browserImportSession) {
+                try {
+                    $browserImportValidation = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $browserImportSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
+                    if (-not (Test-MSAAuthenticationRequired -Response $browserImportValidation)) {
+                        Write-Host ('Using cookies imported from {0} for {1}.' -f $CookiesFromBrowser, $CookieUri.Host)
+                        $session = $browserImportSession
+                    }
+                    else {
+                        Write-Warning ('Cookies from {0} did not authenticate with {1}; falling back to sign-in dialog.' -f $CookiesFromBrowser, $CookieUri.Host)
+                    }
+                }
+                catch {
+                    Write-Warning ('Could not validate {0} cookies for {1}: {2}' -f $CookiesFromBrowser, $CookieUri.Host, $_.Exception.Message)
+                }
+            }
+        }
+
         if (-not $session) {
             Write-Verbose ('Attempting silent MSA sign-in bootstrap for {0}' -f $cookieUri.Host)
             $session = Get-MSAAuthWebSessionSilent -StartUri $TargetUri -CookieUri $cookieUri -Proxy $Proxy
@@ -1296,7 +1392,7 @@ function Get-MSAAuthenticatedWebSession {
                 $silentSessionValid = $true
                 $silentCookieCount = 0
                 try {
-                    $silentValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } -ErrorAction Stop -Verbose:$false
+                    $silentValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
                     if (Test-MSAAuthenticationRequired -Response $silentValidationResponse) {
                         throw 'Silent session redirected to a sign-in page.'
                     }
@@ -1337,7 +1433,7 @@ function Get-MSAAuthenticatedWebSession {
                 $interactiveSessionValid = $true
                 $interactiveCookieCount = 0
                 try {
-                    $interactiveValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } -ErrorAction Stop -Verbose:$false
+                    $interactiveValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
                     if (Test-MSAAuthenticationRequired -Response $interactiveValidationResponse) {
                         throw 'Interactive session redirected to a sign-in page.'
                     }
@@ -1353,7 +1449,7 @@ function Get-MSAAuthenticatedWebSession {
 
                 if (-not $interactiveSessionValid) {
                     if ($interactiveCookieCount -gt 0) {
-                        Write-Verbose ('Proceeding with {0} captured interactive-session cookie(s) for {1}; validation endpoint still redirected.' -f $interactiveCookieCount, $cookieUri.Host)
+                        Write-Verbose ('Proceeding with {0} captured cookie(s) for {1}; API access may be limited.' -f $interactiveCookieCount, $cookieUri.Host)
                     }
                     else {
                         return $null
@@ -1416,8 +1512,17 @@ function Invoke-WebRequestWithMSAAuthSupport {
     if ($DisableKeepAlive) { $invokeParams.DisableKeepAlive = $true }
     if ($MaximumRedirection -ge 0) { $invokeParams.MaximumRedirection = $MaximumRedirection }
 
-    if ($script:MSAContentAuthRequired -and $script:MSAAuthWebSession) {
-        $invokeParams.WebSession = $script:MSAAuthWebSession
+    if ($script:MSAContentAuthRequired) {
+        if ($script:MSAAuthWebSession) {
+            $invokeParams.WebSession = $script:MSAAuthWebSession
+        }
+        if (-not [string]::IsNullOrWhiteSpace($script:MSABearerToken) -and
+            (Test-JwtTokenValid -Token $script:MSABearerToken -MinValidityMinutes $script:MinTokenValidityMinutes)) {
+            if (-not $invokeParams.ContainsKey('Headers')) { $invokeParams.Headers = @{} }
+            if (-not $invokeParams.Headers.ContainsKey('Authorization')) {
+                $invokeParams.Headers['Authorization'] = ('Bearer {0}' -f $script:MSABearerToken)
+            }
+        }
     }
 
     if (-not $script:SuppressWebRequestDebugDetails) {
@@ -1513,11 +1618,12 @@ function New-MSAWebSessionFromBrowserContext {
         Write-Warning ('Unable to read browser document cookies for {0}: {1}' -f $CookieUri.Host, $_.Exception.Message)
     }
 
-    $cookieUris = @(
+    # Wrap with @() so a single unique result stays an array and += works on all PS versions.
+    $cookieUris = @(@(
         $CookieUri,
         [uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host),
         $StartUri
-    ) | Select-Object -Unique
+    ) | Select-Object -Unique)
 
     if ($Browser.Url -and -not [string]::IsNullOrWhiteSpace($Browser.Url.AbsoluteUri)) {
         try {
@@ -1631,7 +1737,10 @@ function Get-MSAAuthWebSessionSilent {
 
         $form.Controls.Add($browser)
         $form.Show()
-        $browser.Navigate($StartUri.AbsoluteUri)
+
+        # Navigate to the portal root, not the API endpoint, so the SPA login flow is triggered.
+        $portalRootUri = [uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host)
+        $browser.Navigate($portalRootUri.AbsoluteUri)
 
         $deadline = (Get-Date).AddSeconds([Math]::Max(3, $TimeoutSeconds))
         while ((Get-Date) -lt $deadline -and -not $state.Completed) {
@@ -1643,7 +1752,7 @@ function Get-MSAAuthWebSessionSilent {
             return $null
         }
 
-        return New-MSAWebSessionFromBrowserContext -CookieUri $CookieUri -StartUri $StartUri -Browser $browser -VisitedUrls $visitedUrls -Proxy $Proxy
+        return New-MSAWebSessionFromBrowserContext -CookieUri $CookieUri -StartUri $portalRootUri -Browser $browser -VisitedUrls $visitedUrls -Proxy $Proxy
     }
     catch {
         Write-Verbose ('Silent MSA sign-in bootstrap failed: {0}' -f $_.Exception.Message)
@@ -1665,6 +1774,874 @@ function Get-MSAAuthWebSessionSilent {
     }
 }
 
+function Get-EdgeExecutablePath {
+    $candidates = @(
+        (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\Application\msedge.exe')
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath $c) { return $c }
+    }
+    $fromPath = Get-Command msedge.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+    if ($fromPath -and (Test-Path -LiteralPath $fromPath)) { return $fromPath }
+    return $null
+}
+
+function Invoke-EdgeCDPCommand {
+    param(
+        [parameter(Mandatory = $true)][string]$WebSocketUrl,
+        [parameter(Mandatory = $true)][string]$Method,
+        [hashtable]$Params = @{},
+        [int]$TimeoutSeconds = 15
+    )
+
+    $ws = New-Object System.Net.WebSockets.ClientWebSocket
+    $cts = New-Object System.Threading.CancellationTokenSource
+    $connectTask = $ws.ConnectAsync([uri]$WebSocketUrl, $cts.Token)
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while (-not $connectTask.IsCompleted -and [DateTime]::UtcNow -lt $deadline) {
+        [System.Threading.Thread]::Sleep(100)
+    }
+    if (-not $connectTask.IsCompleted -or $ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) {
+        $cts.Cancel()
+        $ws.Dispose()
+        throw ('CDP WebSocket connect timed out or failed for {0}' -f $WebSocketUrl)
+    }
+
+    $payload = @{ id = 1; method = $Method; params = $Params } | ConvertTo-Json -Compress -Depth 5
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+    $sendTask = $ws.SendAsync(
+        [ArraySegment[byte]]::new($bytes),
+        [System.Net.WebSockets.WebSocketMessageType]::Text,
+        $true,
+        $cts.Token)
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while (-not $sendTask.IsCompleted -and [DateTime]::UtcNow -lt $deadline) {
+        [System.Threading.Thread]::Sleep(100)
+    }
+
+    $receiveBuffer = New-Object byte[] 65536
+    $resultText = New-Object System.Text.StringBuilder
+    $receiveDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+
+    while ([DateTime]::UtcNow -lt $receiveDeadline) {
+        $receiveTask = $ws.ReceiveAsync([ArraySegment[byte]]::new($receiveBuffer), $cts.Token)
+        $receiveDeadline2 = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        while (-not $receiveTask.IsCompleted -and [DateTime]::UtcNow -lt $receiveDeadline2) {
+            [System.Threading.Thread]::Sleep(50)
+        }
+        if (-not $receiveTask.IsCompleted) { break }
+        $result = $receiveTask.GetAwaiter().GetResult()
+        $chunk = [System.Text.Encoding]::UTF8.GetString($receiveBuffer, 0, $result.Count)
+        $null = $resultText.Append($chunk)
+        if ($result.EndOfMessage) { break }
+    }
+
+    try { $ws.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, '', $cts.Token) | Out-Null } catch {}
+    $ws.Dispose()
+
+    if ($resultText.Length -eq 0) {
+        throw 'CDP command returned empty response.'
+    }
+    return $resultText.ToString() | ConvertFrom-Json
+}
+
+function New-MSAWebSessionFromCDPCookies {
+    param(
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [parameter(Mandatory = $true)][array]$Cookies,
+        [uri]$Proxy
+    )
+
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $targetHost = $CookieUri.Host.ToLowerInvariant()
+    $addedCount = 0
+
+    foreach ($c in $Cookies) {
+        $cookieDomain = ([string]$c.domain).TrimStart('.').ToLowerInvariant()
+        if ($cookieDomain -ine $targetHost -and -not $targetHost.EndsWith(('.{0}' -f $cookieDomain), [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        $netCookie = New-Object System.Net.Cookie
+        $netCookie.Name    = [string]$c.name
+        $netCookie.Value   = [string]$c.value
+        $netCookie.Path    = if ([string]::IsNullOrWhiteSpace([string]$c.path)) { '/' } else { [string]$c.path }
+        $netCookie.Domain  = $targetHost
+        $netCookie.Secure  = [bool]$c.secure
+        $netCookie.HttpOnly = [bool]$c.httpOnly
+
+        try {
+            $session.Cookies.Add($CookieUri, $netCookie)
+            $addedCount++
+        }
+        catch {
+            Write-Verbose ('Skipping CDP cookie {0}: {1}' -f $netCookie.Name, $_.Exception.Message)
+        }
+    }
+
+    Write-Verbose ('Constructed CDP-backed session with {0} cookies for {1}.' -f $addedCount, $targetHost)
+
+    try {
+        Invoke-WebRequest -Method Head -Uri $CookieUri -WebSession $session -Proxy $Proxy -ErrorAction SilentlyContinue -Verbose:$false | Out-Null
+    }
+    catch {
+        Write-Verbose ('Session warmup request returned: {0}' -f $_.Exception.Message)
+    }
+
+    return $session
+}
+
+function Get-MSALAccessTokenFromStorageJson {
+    param(
+        [string]$StorageJson
+    )
+
+    if ([string]::IsNullOrWhiteSpace($StorageJson) -or $StorageJson -eq 'null' -or $StorageJson -eq '{}') {
+        return $null
+    }
+
+    try {
+        $storage = $StorageJson | ConvertFrom-Json
+    }
+    catch { return $null }
+
+    $bestToken = $null
+    $bestExpiry = $null
+
+    foreach ($key in $storage.PSObject.Properties.Name) {
+        $rawValue = [string]$storage.$key
+        if ([string]::IsNullOrWhiteSpace($rawValue)) { continue }
+
+        $token = $null
+        $expiry = $null
+
+        if ($rawValue.TrimStart().StartsWith('{')) {
+            try {
+                $tokenObj = $rawValue | ConvertFrom-Json
+                if ($tokenObj.PSObject.Properties.Match('secret').Count -gt 0) {
+                    $s = [string]$tokenObj.secret
+                    if (-not [string]::IsNullOrWhiteSpace($s) -and $s.StartsWith('eyJ')) {
+                        $token = $s
+                    }
+                }
+                if ($tokenObj.PSObject.Properties.Match('expiresOn').Count -gt 0) {
+                    try { $expiry = [DateTimeOffset]::FromUnixTimeSeconds([long]$tokenObj.expiresOn) } catch {}
+                }
+            }
+            catch {}
+        }
+        elseif ($rawValue.StartsWith('eyJ')) {
+            $token = $rawValue
+        }
+
+        if ($token -and (-not $bestToken -or ($expiry -and (-not $bestExpiry -or $expiry -gt $bestExpiry)))) {
+            $bestToken = $token
+            $bestExpiry = $expiry
+        }
+    }
+
+    return $bestToken
+}
+
+function Get-MSALAccessTokenFromCdpPage {
+    param(
+        [parameter(Mandatory = $true)][int]$DebugPort,
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [int]$TimeoutSeconds = 10
+    )
+
+    try {
+        $cdpPagesJson = Invoke-RestMethod -Uri ('http://127.0.0.1:{0}/json' -f $DebugPort) -Method Get -ErrorAction Stop -Verbose:$false
+    }
+    catch {
+        Write-Verbose ('Unable to list CDP pages on port {0}: {1}' -f $DebugPort, $_.Exception.Message)
+        return $null
+    }
+
+    $targetPages = New-Object System.Collections.Generic.List[psobject]
+    foreach ($cdpPage in @($cdpPagesJson)) {
+        if ($cdpPage.type -ne 'page' -or -not $cdpPage.webSocketDebuggerUrl -or -not $cdpPage.url) { continue }
+        try {
+            if (([uri]$cdpPage.url).Host -ieq $CookieUri.Host) {
+                $targetPages.Add($cdpPage) | Out-Null
+            }
+        }
+        catch {}
+    }
+
+    if ($targetPages.Count -eq 0) {
+        Write-Verbose ('No CDP pages found for host {0} to extract MSAL token from.' -f $CookieUri.Host)
+        return $null
+    }
+
+    # Extract only accesstoken-keyed entries to minimise data transfer
+    $jsExpression = @'
+(function(){var r={},s=[window.sessionStorage,window.localStorage];for(var i=0;i<s.length;i++){try{var t=s[i];for(var j=0;j<t.length;j++){var k=t.key(j);if(k&&k.toLowerCase().indexOf('accesstoken')!==-1){r[k]=t.getItem(k);}}}catch(e){}}return JSON.stringify(r);})()
+'@
+
+    foreach ($page in $targetPages) {
+        $pageWsUrl = [string]$page.webSocketDebuggerUrl
+        Write-Verbose ('Querying page storage for MSAL token at {0}' -f $page.url)
+
+        try {
+            $evalResponse = Invoke-EdgeCDPCommand -WebSocketUrl $pageWsUrl -Method 'Runtime.evaluate' -Params @{
+                expression    = $jsExpression
+                returnByValue = $true
+            } -TimeoutSeconds $TimeoutSeconds
+        }
+        catch {
+            Write-Verbose ('CDP Runtime.evaluate failed for {0}: {1}' -f $page.url, $_.Exception.Message)
+            continue
+        }
+
+        $storageJson = $null
+        if ($evalResponse -and $evalResponse.result -and $evalResponse.result.result) {
+            $storageJson = [string]$evalResponse.result.result.value
+        }
+
+        $token = Get-MSALAccessTokenFromStorageJson -StorageJson $storageJson
+        if ($token) {
+            Write-Verbose ('Extracted MSAL access token from page {0}' -f $page.url)
+            return $token
+        }
+    }
+
+    Write-Verbose ('No MSAL access token found in page storage for {0}.' -f $CookieUri.Host)
+    return $null
+}
+
+function Get-MSAAuthFromBrowserCookies {
+    param(
+        [parameter(Mandatory = $true)][string]$Browser,
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [parameter(Mandatory = $true)][string]$YtDlpPath,
+        [parameter(Mandatory = $true)][string]$CachePath,
+        [uri]$Proxy
+    )
+
+    if (-not (Test-Path -LiteralPath $YtDlpPath)) {
+        Write-Verbose 'yt-dlp not found; cannot import browser cookies.'
+        return $null
+    }
+
+    Write-Host ('Importing {0} cookies for {1} via yt-dlp...' -f $Browser, $CookieUri.Host)
+
+    $tempCookieFile = Join-Path $env:TEMP ('GetEventSession_cookies_{0}.txt' -f [System.IO.Path]::GetRandomFileName())
+
+    try {
+        # --cookies FILE acts as both source and sink: yt-dlp writes the full cookie jar
+        # (including the --cookies-from-browser import) back to the file on exit.
+        $ytArgs = @(
+            '--cookies-from-browser', $Browser,
+            '--cookies', $tempCookieFile,
+            '--simulate',
+            '--ignore-errors',
+            '--no-warnings',
+            '--quiet',
+            $CookieUri.AbsoluteUri
+        )
+        if ($Proxy) { $ytArgs += '--proxy', $Proxy.AbsoluteUri }
+
+        $proc = Start-Process -FilePath $YtDlpPath -ArgumentList $ytArgs -Wait -PassThru -WindowStyle Hidden -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+
+        if (-not (Test-Path -LiteralPath $tempCookieFile)) {
+            Write-Warning ('yt-dlp did not produce a cookie file for {0}; {1} browser cookies may not be accessible.' -f $CookieUri.Host, $Browser)
+            return $null
+        }
+
+        $cacheContent = Get-Content -LiteralPath $tempCookieFile -Raw -ErrorAction SilentlyContinue
+        if ([string]::IsNullOrWhiteSpace($cacheContent)) {
+            Write-Warning ('Browser cookie file is empty; no cookies were exported from {0}.' -f $Browser)
+            return $null
+        }
+
+        $cookieHeader = Convert-CacheContentToCookieHeader -CacheContent $cacheContent -CookieUri $CookieUri
+        if ([string]::IsNullOrWhiteSpace($cookieHeader)) {
+            Write-Warning ('No cookies found for {0} in the {1} browser profile.' -f $CookieUri.Host, $Browser)
+            return $null
+        }
+
+        $session = New-WebSessionFromCookieHeader -CookieHeader $cookieHeader -CookieUri $CookieUri
+        $cookieCount = ($session.Cookies.GetCookies($CookieUri) | Measure-Object).Count
+        Write-Verbose ('Imported {0} cookie(s) for {1} from {2}.' -f $cookieCount, $CookieUri.Host, $Browser)
+
+        Save-MSAAuthCookieHeader -CachePath $CachePath -CookieUri $CookieUri -CookieHeader $cookieHeader
+        return $session
+    }
+    catch {
+        Write-Warning ('Failed to import {0} browser cookies: {1}' -f $Browser, $_.Exception.Message)
+        return $null
+    }
+    finally {
+        if (Test-Path -LiteralPath $tempCookieFile) {
+            Remove-Item -LiteralPath $tempCookieFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Get-MSAAuthFromCookiePaste {
+    param(
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [parameter(Mandatory = $true)][string]$CachePath,
+        [uri]$Proxy
+    )
+
+    if (-not [Environment]::UserInteractive) { return $null }
+    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne [System.Threading.ApartmentState]::STA) { return $null }
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'Manual Cookie Import'
+    $form.Width = 680
+    $form.Height = 500
+    $form.StartPosition = 'CenterScreen'
+    $form.ShowInTaskbar = $true
+    $form.TopMost = $true
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Left = 12
+    $label.Top = 12
+    $label.Width = 644
+    $label.Height = 130
+    $label.Text = (
+        "The embedded browser could not authenticate with {0}.`n`n" +
+        "To sign in manually:`n" +
+        "  1. Open Firefox / Chrome / Edge and sign in to {0}`n" +
+        "  2. Press F12 to open Developer Tools`n" +
+        "  3. Go to the Network tab and reload the page`n" +
+        "  4. Click any request to {0} in the list`n" +
+        "  5. In the request headers panel, find the 'Cookie:' line`n" +
+        "  6. Copy the entire value (the long text after 'Cookie: ')`n" +
+        "  7. Paste it into the box below and click Import"
+    ) -f $CookieUri.Host
+
+    $textBox = New-Object System.Windows.Forms.TextBox
+    $textBox.Left = 12
+    $textBox.Top = 148
+    $textBox.Width = 644
+    $textBox.Height = 256
+    $textBox.Multiline = $true
+    $textBox.ScrollBars = 'Vertical'
+    $textBox.WordWrap = $true
+    $textBox.Font = New-Object System.Drawing.Font('Consolas', 8)
+
+    $importButton = New-Object System.Windows.Forms.Button
+    $importButton.Text = 'Import'
+    $importButton.Width = 100
+    $importButton.Height = 28
+    $importButton.Left = 452
+    $importButton.Top = 416
+
+    $skipButton = New-Object System.Windows.Forms.Button
+    $skipButton.Text = 'Skip'
+    $skipButton.Width = 100
+    $skipButton.Height = 28
+    $skipButton.Left = 560
+    $skipButton.Top = 416
+
+    $importButton.Add_Click({ $form.DialogResult = [System.Windows.Forms.DialogResult]::OK; $form.Close() })
+    $skipButton.Add_Click({ $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel; $form.Close() })
+
+    $form.Controls.AddRange(@($label, $textBox, $importButton, $skipButton))
+    $form.Add_Shown({ $form.Activate(); $form.BringToFront(); $textBox.Focus() })
+
+    $dialogResult = $form.ShowDialog()
+
+    if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+
+    $cookieString = $textBox.Text.Trim()
+    if ([string]::IsNullOrWhiteSpace($cookieString)) { return $null }
+
+    $session = New-WebSessionFromCookieHeader -CookieHeader $cookieString -CookieUri $CookieUri
+    if (-not $session) { return $null }
+
+    Save-MSAAuthCookieHeader -CachePath $CachePath -CookieUri $CookieUri -CookieHeader $cookieString
+    Write-Host ('Imported browser cookies for {0} and saved to auth cache.' -f $CookieUri.Host)
+    return $session
+}
+
+function Resolve-OAuthChallenge {
+    param(
+        [parameter(Mandatory = $true)][uri]$TargetUri,
+        [uri]$Proxy
+    )
+
+    $result = @{ ClientId = $null; TenantId = 'common'; Scope = $null }
+
+    $reqParams = @{ Uri = $TargetUri.AbsoluteUri; MaximumRedirection = 0; ErrorAction = 'Stop'; Verbose = $false }
+    if ($Proxy) { $reqParams.Proxy = $Proxy }
+
+    $location = $null
+    $wwwAuth   = $null
+
+    try {
+        $null = Invoke-WebRequest @reqParams
+    }
+    catch {
+        if ($_.Exception.Response) {
+            $sc = [int]$_.Exception.Response.StatusCode
+            if ($sc -in @(301, 302, 307, 308)) {
+                $location = [string]($_.Exception.Response.Headers.Location | Select-Object -First 1)
+            }
+            elseif ($sc -eq 401) {
+                $wwwAuth = [string]($_.Exception.Response.Headers['WWW-Authenticate'] | Select-Object -First 1)
+            }
+        }
+    }
+
+    # Follow up to 5 redirects if a 302 was not captured above (server may return 200 after redirect).
+    if (-not $location -and -not $wwwAuth) {
+        try {
+            $followParams = @{ Uri = $TargetUri.AbsoluteUri; MaximumRedirection = 5; ErrorAction = 'Stop'; Verbose = $false }
+            if ($Proxy) { $followParams.Proxy = $Proxy }
+            $followed = Invoke-WebRequest @followParams
+            $finalUri = $null
+            if ($followed.PSObject.Properties.Match('BaseResponse').Count -gt 0 -and $followed.BaseResponse.ResponseUri) {
+                $finalUri = $followed.BaseResponse.ResponseUri.AbsoluteUri
+            }
+            elseif ($followed.PSObject.Properties.Match('ResponseUri').Count -gt 0 -and $followed.ResponseUri) {
+                $finalUri = $followed.ResponseUri.AbsoluteUri
+            }
+            if ($finalUri -and $finalUri -match '(?i)(microsoftonline\.com|login\.live\.com|login\.microsoft\.com)') {
+                $location = $finalUri
+            }
+        }
+        catch {}
+    }
+
+    if ($location) {
+        if ($location -match '(?i)client_id=([^&#]+)')  { $result.ClientId = [Uri]::UnescapeDataString($Matches[1].Trim()) }
+        if ($location -match '(?i)/([a-f0-9\-]{36}|common|consumers|organizations)/') { $result.TenantId = $Matches[1] }
+        if ($location -match '(?i)[?&]scope=([^&#]+)')  { $result.Scope    = [Uri]::UnescapeDataString($Matches[1].Trim()) }
+    }
+
+    if ($wwwAuth) {
+        if ($wwwAuth -match 'client_id="([^"]+)"')          { $result.ClientId = $Matches[1] }
+        if ($wwwAuth -match 'authorization_uri="[^"]*/([a-f0-9\-]{36}|common|consumers|organizations)/') { $result.TenantId = $Matches[1] }
+        if ($wwwAuth -match 'resource="([^"]+)"')            { $result.Scope    = $Matches[1] + '/.default' }
+    }
+
+    return $result
+}
+
+function Get-WAMHelperType {
+    # Returns a compiled C# WAM helper type, or $null when the Windows SDK is absent.
+    # Compiled once per session; subsequent calls return the cached type immediately.
+    $typeName = 'GetEventSession.Internal.WAMHelper'
+    $existing = $typeName -as [type]
+    if ($existing) { return $existing }
+
+    # The union Windows.winmd ships with the Windows SDK.  Find the newest copy.
+    $sdkBase  = 'C:\Program Files (x86)\Windows Kits\10\UnionMetadata'
+    $winMdPath = if (Test-Path $sdkBase -PathType Container) {
+        Get-ChildItem -LiteralPath $sdkBase -Filter 'Windows.winmd' -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+    }
+    if ([string]::IsNullOrWhiteSpace($winMdPath)) {
+        Write-Verbose 'WAM C# helper unavailable: Windows.winmd not found (Windows SDK not installed?).'
+        return $null
+    }
+
+    # System.Runtime.WindowsRuntime.dll supplies the AsTask() extension for IAsyncOperation<T>.
+    $runtimeDir   = Split-Path ([System.Object].Assembly.Location)
+    $winRtDllPath = Join-Path $runtimeDir 'System.Runtime.WindowsRuntime.dll'
+    $refs = [System.Collections.Generic.List[string]]::new()
+    $refs.Add($winMdPath)
+    if (Test-Path -LiteralPath $winRtDllPath) { $refs.Add($winRtDllPath) }
+
+    $csSrc = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Runtime.InteropServices.WindowsRuntime;
+using Windows.Security.Authentication.Web.Core;
+using Windows.Security.Credentials;
+
+namespace GetEventSession.Internal {
+    public static class WAMHelper {
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetConsoleWindow();
+
+        public static string RequestToken(string authority, string clientId, string scope) {
+            string    token = null;
+            Exception err   = null;
+            var done = new ManualResetEventSlim(false);
+            try {
+                var t = new Thread(() => {
+                    try {
+                        IntPtr hwnd = GetConsoleWindow();
+
+                        WebAccountProvider provider = null;
+                        var pt1 = WebAuthenticationCoreManager.FindAccountProviderAsync(authority).AsTask();
+                        pt1.Wait(30000);
+                        provider = pt1.IsCompleted ? pt1.Result : null;
+
+                        if (provider == null &&
+                            !authority.EndsWith("/consumers", StringComparison.OrdinalIgnoreCase)) {
+                            var pt2 = WebAuthenticationCoreManager.FindAccountProviderAsync(
+                                "https://login.microsoft.com/consumers").AsTask();
+                            pt2.Wait(10000);
+                            if (pt2.IsCompleted) provider = pt2.Result;
+                        }
+
+                        if (provider == null) { done.Set(); return; }
+
+                        var req = new WebTokenRequest(provider, scope ?? "openid profile email", clientId);
+                        var rt  = WebAuthenticationCoreManager.RequestTokenForWindowAsync(hwnd, req).AsTask();
+                        rt.Wait(62000);
+                        if (!rt.IsCompleted) { done.Set(); return; }
+                        var res = rt.Result;
+
+                        if (res.ResponseStatus == WebTokenRequestStatus.Success) {
+                            token = res.ResponseData[0].Token;
+                        } else if (res.ResponseStatus == WebTokenRequestStatus.UserCancel) {
+                            err = new OperationCanceledException("MSA authentication cancelled.");
+                        } else {
+                            string code = res.ResponseError != null
+                                ? res.ResponseError.ErrorCode.ToString() : "?";
+                            string msg  = res.ResponseError != null
+                                ? res.ResponseError.ErrorMessage : string.Empty;
+                            err = new Exception(string.Format("WAM failed ({0}): {1}", code, msg));
+                        }
+                    } catch (Exception ex) { err = ex; }
+                    finally { done.Set(); }
+                });
+                t.SetApartmentState(ApartmentState.STA);
+                t.IsBackground = true;
+                t.Start();
+                done.Wait(65000);
+            } finally { done.Dispose(); }
+
+            if (err != null) throw err;
+            return token;
+        }
+    }
+}
+'@
+
+    try {
+        Add-Type -TypeDefinition $csSrc -ReferencedAssemblies $refs.ToArray() -ErrorAction Stop
+        Write-Verbose ('WAM C# helper compiled (Windows.winmd: {0}).' -f $winMdPath)
+        return ($typeName -as [type])
+    }
+    catch {
+        Write-Verbose ('WAM C# helper compilation failed: {0}' -f $_.Exception.Message)
+        return $null
+    }
+}
+
+function Get-WAMAccessToken {
+    param(
+        [parameter(Mandatory = $true)][string]$ClientId,
+        [parameter(Mandatory = $true)][string]$TenantId,
+        [string]$Scope
+    )
+
+    $authority      = ('https://login.microsoft.com/{0}' -f $TenantId)
+    $effectiveScope = if ([string]::IsNullOrWhiteSpace($Scope)) { 'openid profile email offline_access' } else { $Scope }
+
+    # ── Try native PS WinRT type loading (PS5.1, and PS7 where the WinRT projection is present) ──
+    $winRTLoadError = $null
+    try {
+        $null = [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows.Security.Authentication.Web.Core, ContentType=WindowsRuntime]
+        $null = [Windows.Security.Authentication.Web.Core.WebTokenRequest, Windows.Security.Authentication.Web.Core, ContentType=WindowsRuntime]
+        $null = [Windows.Security.Authentication.Web.Core.WebTokenRequestStatus, Windows.Security.Authentication.Web.Core, ContentType=WindowsRuntime]
+    }
+    catch {
+        $winRTLoadError = $_
+    }
+
+    if ($winRTLoadError) {
+        # ContentType=WindowsRuntime is unavailable in PS7/.NET 6+.
+        # Fall back to the C# helper that references Windows.winmd from the Windows SDK.
+        $helperType = Get-WAMHelperType
+        if (-not $helperType) {
+            throw ('WinRT not available for WAM: {0}' -f $winRTLoadError.Exception.Message)
+        }
+        Write-Verbose 'Using compiled WAM C# helper (native WinRT type projection unavailable in this PS version).'
+        return $helperType::RequestToken($authority, $ClientId, $effectiveScope)
+    }
+
+    # ── Native PS WinRT path (PS5.1) ─────────────────────────────────────────
+    if (-not ('WinAPI.ConsoleWindow' -as [type])) {
+        Add-Type -Namespace 'WinAPI' -Name 'ConsoleWindow' -MemberDefinition `
+            '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();' -ErrorAction SilentlyContinue
+    }
+
+    $shared = [hashtable]::Synchronized(@{ Token = $null; Error = $null })
+
+    $staThread = [System.Threading.Thread]::new([System.Threading.ThreadStart]{
+            try {
+                $hwnd = [IntPtr]::Zero
+                if ('WinAPI.ConsoleWindow' -as [type]) {
+                    $hwnd = [WinAPI.ConsoleWindow]::GetConsoleWindow()
+                }
+
+                $findTask = [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager]::FindAccountProviderAsync($authority)
+                $provider = $findTask.AsTask().GetAwaiter().GetResult()
+
+                if (-not $provider -and $authority -notmatch '(?i)/consumers/?$') {
+                    $consumersAuthority = 'https://login.microsoft.com/consumers'
+                    $findTask2 = [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager]::FindAccountProviderAsync($consumersAuthority)
+                    $provider  = $findTask2.AsTask().GetAwaiter().GetResult()
+                }
+
+                if (-not $provider) {
+                    $shared.Error = ('WAM: no account provider found for {0}.' -f $authority)
+                    return
+                }
+
+                $tokenReq    = [Windows.Security.Authentication.Web.Core.WebTokenRequest]::new($provider, $effectiveScope, $ClientId)
+                $requestTask = [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager]::RequestTokenForWindowAsync($hwnd, $tokenReq)
+                $tokenResult = $requestTask.AsTask().GetAwaiter().GetResult()
+
+                $status = $tokenResult.ResponseStatus
+                if ($status -eq [Windows.Security.Authentication.Web.Core.WebTokenRequestStatus]::Success) {
+                    $shared.Token = [string]$tokenResult.ResponseData[0].Token
+                }
+                elseif ($status -eq [Windows.Security.Authentication.Web.Core.WebTokenRequestStatus]::UserCancel) {
+                    $shared.Error = 'UserCancel'
+                }
+                else {
+                    $errCode = if ($tokenResult.ResponseError) { $tokenResult.ResponseError.ErrorCode } else { '?' }
+                    $errMsg  = if ($tokenResult.ResponseError) { [string]$tokenResult.ResponseError.ErrorMessage } else { '' }
+                    $shared.Error = ('WAM request failed ({0}): code={1} {2}' -f $status, $errCode, $errMsg)
+                }
+            }
+            catch {
+                $shared.Error = $_.Exception.Message
+            }
+        })
+
+    $staThread.SetApartmentState([System.Threading.ApartmentState]::STA)
+    $staThread.IsBackground = $true
+    $staThread.Start()
+    $staThread.Join(60000) | Out-Null
+
+    if ($shared.Error -eq 'UserCancel') { throw 'MSA authentication cancelled.' }
+    if (-not [string]::IsNullOrWhiteSpace($shared.Error)) { throw $shared.Error }
+    if ([string]::IsNullOrWhiteSpace($shared.Token)) {
+        if ($staThread.IsAlive) {
+            Write-Warning 'WAM sign-in dialog did not complete within 60 seconds; falling back to Edge CDP.'
+        }
+        throw 'WAM returned no token.'
+    }
+
+    return $shared.Token
+}
+
+function Invoke-EdgeCDPAuthSession {
+    param(
+        [parameter(Mandatory = $true)][uri]$CookieUri,
+        [parameter(Mandatory = $true)][uri]$PortalRootUri,
+        [uri]$Proxy
+    )
+
+    $edgePath = Get-EdgeExecutablePath
+    if (-not $edgePath) {
+        throw 'Microsoft Edge not found on this machine.'
+    }
+
+    # Pick a random unprivileged debug port and guarantee uniqueness for this PID.
+    $debugPort    = Get-Random -Minimum 19200 -Maximum 19999
+    $tempProfile  = Join-Path $env:TEMP ('EdgeAuth_{0}_{1}' -f $PID, [System.IO.Path]::GetRandomFileName().Replace('.', ''))
+
+    $edgeArgs = @(
+        ('--remote-debugging-port={0}' -f $debugPort),
+        ('--user-data-dir={0}'         -f $tempProfile),
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-sync',
+        '--disable-extensions',
+        '--start-maximized',
+        $PortalRootUri.AbsoluteUri
+    )
+
+    $edgeProcess = $null
+    try {
+        $edgeProcess = Start-Process -FilePath $edgePath -ArgumentList $edgeArgs -PassThru -ErrorAction Stop
+
+        # Show the instruction dialog immediately; Edge opens in parallel.
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text            = 'Microsoft Account Sign-In'
+        $form.Width           = 560
+        $form.Height          = 230
+        $form.StartPosition   = 'CenterScreen'
+        $form.ShowInTaskbar   = $true
+        $form.TopMost         = $true
+        $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+        $form.MaximizeBox     = $false
+        $form.MinimizeBox     = $false
+
+        $lbl = New-Object System.Windows.Forms.Label
+        $lbl.Left   = 16; $lbl.Top = 16; $lbl.Width = 516; $lbl.Height = 80
+        $lbl.Text   = ('Edge is opening — wait for it to appear, sign in at {0}, then click Continue.{1}Also accept any cookie consent prompt so the script can reuse your sign-in.' -f $CookieUri.Host, [Environment]::NewLine)
+
+        $statusLbl = New-Object System.Windows.Forms.Label
+        $statusLbl.Left = 16; $statusLbl.Top = 104; $statusLbl.Width = 516; $statusLbl.Height = 20
+        $statusLbl.ForeColor = [System.Drawing.SystemColors]::GrayText
+
+        $btnOK  = New-Object System.Windows.Forms.Button
+        $btnOK.Text   = 'Continue'; $btnOK.Width = 100; $btnOK.Height = 28
+        $btnOK.Left   = 336;        $btnOK.Top   = 138
+
+        $btnCxl = New-Object System.Windows.Forms.Button
+        $btnCxl.Text  = 'Cancel'; $btnCxl.Width = 100; $btnCxl.Height = 28
+        $btnCxl.Left  = 444;      $btnCxl.Top   = 138
+
+        # Validate process liveness and show when Edge's CDP endpoint is ready.
+        $timer = New-Object System.Windows.Forms.Timer
+        $timer.Interval = 2000
+        $timer.Add_Tick({
+                if ($edgeProcess.HasExited) {
+                    $statusLbl.Text              = 'Edge closed unexpectedly.'
+                    $form.DialogResult           = [System.Windows.Forms.DialogResult]::Abort
+                    $form.Close()
+                    return
+                }
+                if ($statusLbl.Tag -ne 'ready') {
+                    try {
+                        $null = Invoke-RestMethod -Uri ('http://127.0.0.1:{0}/json/version' -f $debugPort) -ErrorAction Stop -Verbose:$false
+                        $statusLbl.Text      = 'Edge is ready. Sign in, then click Continue.'
+                        $statusLbl.ForeColor = [System.Drawing.Color]::DarkGreen
+                        $statusLbl.Tag       = 'ready'
+                    }
+                    catch {}
+                }
+            })
+
+        $btnOK.Add_Click({  $form.DialogResult = [System.Windows.Forms.DialogResult]::OK;     $form.Close() })
+        $btnCxl.Add_Click({ $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel; $form.Close() })
+
+        $form.Controls.AddRange(@($lbl, $statusLbl, $btnOK, $btnCxl))
+        $form.Add_Shown({ $timer.Start(); $form.Activate(); $form.BringToFront() })
+
+        Write-Host ('Edge sign-in window opened for {0}. Complete sign-in, then click Continue.' -f $CookieUri.Host)
+
+        $allCookies    = @()
+        $targetCookies = @()
+        $cdpVersionUrl = ('http://127.0.0.1:{0}/json/version' -f $debugPort)
+        $maxCDPAttempts = 3
+
+        for ($cdpAttempt = 1; $cdpAttempt -le $maxCDPAttempts; $cdpAttempt++) {
+            if ($cdpAttempt -gt 1) {
+                $statusLbl.Text      = ('No sign-in detected — sign in to Edge and click Continue ({0}/{1}).' -f $cdpAttempt, $maxCDPAttempts)
+                $statusLbl.ForeColor = [System.Drawing.Color]::DarkOrange
+                $statusLbl.Tag       = $null
+                $form.DialogResult   = [System.Windows.Forms.DialogResult]::None
+            }
+
+            $dialogResult = $form.ShowDialog()
+            $timer.Stop()
+
+            if ($dialogResult -eq [System.Windows.Forms.DialogResult]::Cancel) {
+                throw 'MSA authentication cancelled.'
+            }
+            if ($dialogResult -eq [System.Windows.Forms.DialogResult]::Abort) {
+                throw 'Edge process exited before authentication completed.'
+            }
+            if ($edgeProcess.HasExited) {
+                throw 'Edge process exited before cookies could be collected.'
+            }
+
+            # Wait for the debug endpoint to become available (Edge may still be finishing startup).
+            $cdpVersion  = $null
+            $cdpDeadline = (Get-Date).AddSeconds(15)
+            while ((Get-Date) -lt $cdpDeadline -and -not $edgeProcess.HasExited) {
+                try {
+                    $cdpVersion = Invoke-RestMethod -Uri $cdpVersionUrl -Method Get -ErrorAction Stop -Verbose:$false
+                    break
+                }
+                catch { [System.Threading.Thread]::Sleep(500) }
+            }
+
+            if (-not $cdpVersion -or [string]::IsNullOrWhiteSpace([string]$cdpVersion.webSocketDebuggerUrl)) {
+                throw ('CDP endpoint on port {0} did not respond. Edge may not have started with remote debugging.' -f $debugPort)
+            }
+
+            $browserWsUrl = [string]$cdpVersion.webSocketDebuggerUrl
+            Write-Verbose ('CDP: collecting cookies via browser endpoint {0}' -f $browserWsUrl)
+
+            # Storage.getCookies is the browser-level command; Network.getAllCookies only works on page-level endpoints.
+            $cdpCookies = Invoke-EdgeCDPCommand -WebSocketUrl $browserWsUrl -Method 'Storage.getCookies'
+            if (-not $cdpCookies -or -not $cdpCookies.result -or -not $cdpCookies.result.cookies) {
+                if ($cdpAttempt -lt $maxCDPAttempts) {
+                    Write-Host ('No cookies returned by CDP (attempt {0}/{1}); please sign in and click Continue again.' -f $cdpAttempt, $maxCDPAttempts)
+                    continue
+                }
+                throw 'CDP Storage.getCookies returned no cookies; sign-in may not have completed.'
+            }
+            $allCookies = @($cdpCookies.result.cookies)
+
+            $targetCookies = @($allCookies | Where-Object {
+                    $d = ([string]$_.domain).TrimStart('.').ToLowerInvariant()
+                    $d -ieq $CookieUri.Host -or $CookieUri.Host.EndsWith(('.{0}' -f $d), [System.StringComparison]::OrdinalIgnoreCase)
+                })
+            Write-Verbose ('CDP: {0} total / {1} host-matched cookies for {2}.' -f $allCookies.Count, $targetCookies.Count, $CookieUri.Host)
+
+            if ($targetCookies.Count -gt 0) {
+                break
+            }
+
+            if ($cdpAttempt -lt $maxCDPAttempts) {
+                Write-Host ('No cookies found for {0} (attempt {1}/{2}); please complete sign-in and click Continue again.' -f $CookieUri.Host, $cdpAttempt, $maxCDPAttempts)
+            }
+        }
+
+        if ($targetCookies.Count -eq 0) {
+            throw ('No cookies collected for {0} via CDP after {1} attempts. Was sign-in completed?' -f $CookieUri.Host, $maxCDPAttempts)
+        }
+
+        # Wait for the portal SPA to load and MSAL.js to store the access token in sessionStorage.
+        # The redirect from the login page back to the portal may still be in progress when the
+        # user clicks Continue, so we poll until the token appears or a 20-second window closes.
+        $msalToken  = $null
+        $msalCutoff = (Get-Date).AddSeconds(20)
+        Write-Verbose ('CDP: waiting for portal page and MSAL token on {0}...' -f $CookieUri.Host)
+        while (-not $msalToken -and (Get-Date) -lt $msalCutoff -and -not $edgeProcess.HasExited) {
+            $msalToken = Get-MSALAccessTokenFromCdpPage -DebugPort $debugPort -CookieUri $CookieUri
+            if (-not $msalToken) { [System.Threading.Thread]::Sleep(1500) }
+        }
+        if ($msalToken) {
+            $script:MSABearerToken = $msalToken
+            Write-Verbose ('CDP: captured MSAL access token for {0}.' -f $CookieUri.Host)
+        }
+        else {
+            Write-Verbose ('CDP: MSAL token not found for {0} after waiting; proceeding with cookies only.' -f $CookieUri.Host)
+        }
+
+        return New-MSAWebSessionFromCDPCookies -CookieUri $CookieUri -Cookies $allCookies -Proxy $Proxy
+    }
+    finally {
+        # Graceful close first, hard kill if Edge is still running after 2 s.
+        if ($edgeProcess -and -not $edgeProcess.HasExited) {
+            try {
+                $browserWsUrl = (Invoke-RestMethod -Uri ('http://127.0.0.1:{0}/json/version' -f $debugPort) -ErrorAction SilentlyContinue -Verbose:$false).webSocketDebuggerUrl
+                if ($browserWsUrl) {
+                    Invoke-EdgeCDPCommand -WebSocketUrl $browserWsUrl -Method 'Browser.close' -TimeoutSeconds 3 | Out-Null
+                }
+            }
+            catch {}
+            $edgeProcess.WaitForExit(2000) | Out-Null
+            if (-not $edgeProcess.HasExited) {
+                try { $edgeProcess.Kill() } catch {}
+            }
+        }
+        if ($edgeProcess) { $edgeProcess.Dispose() }
+        if ($tempProfile -and (Test-Path -LiteralPath $tempProfile)) {
+            try { Remove-Item -LiteralPath $tempProfile -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+}
+
 function Get-MSAAuthWebSession {
     param(
         [parameter(Mandatory = $true)][uri]$StartUri,
@@ -1672,96 +2649,180 @@ function Get-MSAAuthWebSession {
         [uri]$Proxy
     )
 
-    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne [System.Threading.ApartmentState]::STA) {
-        throw 'MSA sign-in UI requires an STA runspace. Start PowerShell with -STA and retry.'
-    }
-
     if (-not [Environment]::UserInteractive) {
         throw 'MSA sign-in UI requires an interactive desktop session. Run the script in an interactive PowerShell terminal.'
     }
 
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
+    # Navigate to the portal root so the SPA login flow fires instead of returning raw JSON.
+    $portalRootUri = [uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host)
 
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'Microsoft Account Sign-In'
-    $form.Width = 1200
-    $form.Height = 900
-    $form.StartPosition = 'CenterScreen'
-    $form.ShowInTaskbar = $true
-    $form.TopMost = $true
+    # ── PATH 1: WAM (Windows Authentication Manager) ─────────────────────────
+    # Auto-discovers the AAD client_id from the 302/401 challenge, then shows
+    # the native Windows account picker — no browser window required.
+    Write-Verbose ('Probing {0} for OAuth2 challenge parameters...' -f $StartUri.Host)
+    $challenge = Resolve-OAuthChallenge -TargetUri $StartUri -Proxy $Proxy
 
-    $statusLabel = New-Object System.Windows.Forms.Label
-    $statusLabel.Dock = 'Top'
-    $statusLabel.Height = 30
-    $statusLabel.Text = 'Sign in with your Microsoft account and click Continue when the event page is loaded.'
-
-    $buttonPanel = New-Object System.Windows.Forms.Panel
-    $buttonPanel.Dock = 'Bottom'
-    $buttonPanel.Height = 44
-
-    $continueButton = New-Object System.Windows.Forms.Button
-    $continueButton.Text = 'Continue'
-    $continueButton.Width = 100
-    $continueButton.Height = 28
-    $continueButton.Left = 980
-    $continueButton.Top = 8
-    $continueButton.Enabled = $false
-
-    $cancelButton = New-Object System.Windows.Forms.Button
-    $cancelButton.Text = 'Cancel'
-    $cancelButton.Width = 100
-    $cancelButton.Height = 28
-    $cancelButton.Left = 1090
-    $cancelButton.Top = 8
-
-    $browser = New-Object System.Windows.Forms.WebBrowser
-    $browser.Dock = 'Fill'
-    $browser.ScriptErrorsSuppressed = $true
-    $visitedUrls = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-
-    $continueButton.Add_Click({
-            $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
-            $form.Close()
-        })
-
-    $cancelButton.Add_Click({
-            $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-            $form.Close()
-        })
-
-    $browser.add_DocumentCompleted({
-            param($browserSender, $e)
-            if ($browserSender.Url) {
-                $null = $visitedUrls.Add($browserSender.Url.AbsoluteUri)
-                $statusLabel.Text = ('Current page: {0}' -f $browserSender.Url.AbsoluteUri)
-                if ($browserSender.Url.Host -ieq $CookieUri.Host) {
-                    $continueButton.Enabled = $true
-                }
+    if (-not [string]::IsNullOrWhiteSpace($challenge.ClientId)) {
+        Write-Verbose ('OAuth2 challenge: client_id={0}  tenant={1}' -f $challenge.ClientId, $challenge.TenantId)
+        try {
+            Write-Host ('Requesting sign-in via Windows Authentication Manager for {0}...' -f $CookieUri.Host)
+            $bearerToken = Get-WAMAccessToken -ClientId $challenge.ClientId -TenantId $challenge.TenantId -Scope $challenge.Scope
+            if (-not [string]::IsNullOrWhiteSpace($bearerToken)) {
+                $script:MSABearerToken = $bearerToken
+                Write-Verbose 'WAM sign-in succeeded; Bearer token stored.'
+                $wamSession            = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+                $wamSession.UserAgent  = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+                return $wamSession
             }
-        })
-
-    $buttonPanel.Controls.Add($continueButton)
-    $buttonPanel.Controls.Add($cancelButton)
-    $form.Controls.Add($browser)
-    $form.Controls.Add($buttonPanel)
-    $form.Controls.Add($statusLabel)
-
-    $form.Add_Shown({
-            $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
-            $form.Activate()
-            $form.BringToFront()
-        })
-
-    Write-Host ('Launching Microsoft sign-in dialog in process {0}. If it is not visible, use Alt+Tab to switch to "Microsoft Account Sign-In".' -f $PID)
-    $browser.Navigate($StartUri.AbsoluteUri)
-    $dialogResult = $form.ShowDialog()
-
-    if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
-        throw 'MSA authentication cancelled.'
+        }
+        catch {
+            if ($_.Exception.Message -match '(?i)cancelled|UserCancel') { throw 'MSA authentication cancelled.' }
+            Write-Warning ('WAM sign-in failed: {0}' -f $_.Exception.Message)
+            Write-Host 'Falling back to Edge CDP sign-in...'
+        }
+    }
+    else {
+        Write-Verbose 'No OAuth2 challenge parameters detected; skipping WAM and going directly to Edge CDP.'
     }
 
-    return New-MSAWebSessionFromBrowserContext -CookieUri $CookieUri -StartUri $StartUri -Browser $browser -VisitedUrls $visitedUrls -Proxy $Proxy
+    # ── PATH 2: Edge CDP ──────────────────────────────────────────────────────
+    # Opens a dedicated Edge instance with remote debugging. User completes sign-in
+    # in the browser; cookies are extracted via Chrome DevTools Protocol.
+    $edgePath = Get-EdgeExecutablePath
+    if ($edgePath) {
+        return Invoke-EdgeCDPAuthSession -CookieUri $CookieUri -PortalRootUri $portalRootUri -Proxy $Proxy
+    }
+
+    # ── PATH 3: Embedded IE/Trident with paste-box fallback ───────────────────
+    # Last resort for machines without Edge. Requires STA apartment; only works on sites that render in IE11.
+    if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -eq [System.Threading.ApartmentState]::STA) {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+
+        # Synchronized state shared between the form's event handlers and the outer scope.
+        $formState = [hashtable]::Synchronized(@{ PastedCookies = $null })
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = 'Microsoft Account Sign-In'
+        $form.Width = 1200
+        $form.Height = 1020
+        $form.StartPosition = 'CenterScreen'
+        $form.ShowInTaskbar = $true
+        $form.TopMost = $true
+
+        $statusLabel = New-Object System.Windows.Forms.Label
+        $statusLabel.Dock = 'Top'
+        $statusLabel.Height = 30
+        $statusLabel.Text = ('Sign in at {0} in the browser below, then click Continue.' -f $CookieUri.Host)
+
+        # Bottom panel: cookie-paste fallback + Continue/Cancel buttons
+        $bottomPanel = New-Object System.Windows.Forms.Panel
+        $bottomPanel.Dock = 'Bottom'
+        $bottomPanel.Height = 148
+
+        $pasteLabel = New-Object System.Windows.Forms.Label
+        $pasteLabel.Left = 8
+        $pasteLabel.Top = 6
+        $pasteLabel.Width = 1168
+        $pasteLabel.Height = 36
+        $pasteLabel.Text = (
+            'If the embedded browser cannot sign in: open {0} in Firefox/Chrome/Edge, press F12, ' +
+            'go to the Network tab, click any request to the site, copy the Cookie: header value, and paste it below.'
+        ) -f $CookieUri.Host
+
+        $pasteBox = New-Object System.Windows.Forms.TextBox
+        $pasteBox.Left = 8
+        $pasteBox.Top = 46
+        $pasteBox.Width = 1168
+        $pasteBox.Height = 54
+        $pasteBox.Multiline = $true
+        $pasteBox.ScrollBars = 'Horizontal'
+        $pasteBox.WordWrap = $false
+        $pasteBox.Font = New-Object System.Drawing.Font('Consolas', 8)
+
+        $continueButton = New-Object System.Windows.Forms.Button
+        $continueButton.Text = 'Continue'
+        $continueButton.Width = 100
+        $continueButton.Height = 28
+        $continueButton.Left = 980
+        $continueButton.Top = 112
+        $continueButton.Enabled = $false
+
+        $cancelButton = New-Object System.Windows.Forms.Button
+        $cancelButton.Text = 'Cancel'
+        $cancelButton.Width = 100
+        $cancelButton.Height = 28
+        $cancelButton.Left = 1090
+        $cancelButton.Top = 112
+
+        $browser = New-Object System.Windows.Forms.WebBrowser
+        $browser.Dock = 'Fill'
+        $browser.ScriptErrorsSuppressed = $true
+        $visitedUrls = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+        $continueButton.Add_Click({
+                $formState.PastedCookies = $pasteBox.Text.Trim()
+                $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+                $form.Close()
+            })
+
+        $cancelButton.Add_Click({
+                $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+                $form.Close()
+            })
+
+        # Enable Continue when the browser lands on the portal host.
+        $browser.add_DocumentCompleted({
+                param($browserSender, $e)
+                if ($browserSender.Url) {
+                    $null = $visitedUrls.Add($browserSender.Url.AbsoluteUri)
+                    $statusLabel.Text = ('Current page: {0}' -f $browserSender.Url.AbsoluteUri)
+                    if ($browserSender.Url.Host -ieq $CookieUri.Host) {
+                        $continueButton.Enabled = $true
+                    }
+                }
+            })
+
+        # Also enable Continue as soon as the user pastes anything into the cookie box.
+        $pasteBox.add_TextChanged({
+                $continueButton.Enabled = (-not [string]::IsNullOrWhiteSpace($pasteBox.Text))
+            })
+
+        $bottomPanel.Controls.AddRange(@($pasteLabel, $pasteBox, $continueButton, $cancelButton))
+        $form.Controls.Add($browser)
+        $form.Controls.Add($bottomPanel)
+        $form.Controls.Add($statusLabel)
+
+        $form.Add_Shown({
+                $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+                $form.Activate()
+                $form.BringToFront()
+            })
+
+        Write-Host ('Launching Microsoft sign-in dialog. If it is not visible, use Alt+Tab to switch to "Microsoft Account Sign-In".')
+        $browser.Navigate($portalRootUri.AbsoluteUri)
+        $dialogResult = $form.ShowDialog()
+
+        if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK) {
+            throw 'MSA authentication cancelled.'
+        }
+
+        # If the user pasted cookies, build and return a session from those (they take priority
+        # over WinInet because the embedded IE engine cannot complete modern MSAL flows).
+        $pastedCookieString = $formState.PastedCookies
+        if (-not [string]::IsNullOrWhiteSpace($pastedCookieString)) {
+            $pastedSession = New-WebSessionFromCookieHeader -CookieHeader $pastedCookieString -CookieUri $CookieUri
+            if ($pastedSession) {
+                Write-Verbose ('Using pasted cookies for {0} ({1} cookie(s)).' -f $CookieUri.Host, ($pastedSession.Cookies.GetCookies($CookieUri) | Measure-Object).Count)
+                return $pastedSession
+            }
+        }
+
+        # Fall back to WinInet cookies captured from the embedded browser session.
+        return New-MSAWebSessionFromBrowserContext -CookieUri $CookieUri -StartUri $portalRootUri -Browser $browser -VisitedUrls $visitedUrls -Proxy $Proxy
+    }
+
+    throw 'MSA sign-in requires WAM (no AAD challenge detected), Microsoft Edge (not found), or an STA runspace (use powershell.exe -STA). None of these are available in this session.'
 }
 
 function Get-CustomEventCatalog {
@@ -1772,6 +2833,11 @@ function Get-CustomEventCatalog {
 
     $catalogUri = [uri](Get-CustomEventPageUri -BaseUrl $CatalogUrl -Page 1)
     $session = Get-MSAAuthenticatedWebSession -TargetUri $catalogUri -Proxy $Proxy -ValidateCachedSession
+
+    # Use a browser-like User-Agent so the API returns full session data rather than null placeholders.
+    if ($session) {
+        $session.UserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+    }
 
     $data = [System.Collections.ArrayList]@()
     $seenSessionKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -1794,7 +2860,8 @@ function Get-CustomEventCatalog {
         Write-Progress -Id 1 -Activity 'Retrieving Session Catalog' -Status $status -PercentComplete $percent
 
         try {
-            $response = Invoke-WebWithRetry { Invoke-RestMethod -Uri $pageUri -Method Get -WebSession $session -Proxy $Proxy -Headers @{ 'Accept' = 'application/json'; 'Content-Type' = 'application/json; charset=utf-8' } }.GetNewClosure()
+            $requestHeaders = Get-MSAAuthApiHeaders
+            $response = Invoke-WebWithRetry { Invoke-RestMethod -Uri $pageUri -Method Get -WebSession $session -Proxy $Proxy -Headers $requestHeaders }.GetNewClosure()
         }
         catch {
             throw ('Problem retrieving custom session catalog page {0}: {1}' -f $page, $error[0])
@@ -1804,7 +2871,7 @@ function Get-CustomEventCatalog {
             $totalPages = [int]$response.totalPages
         }
 
-        $items = @($response.items)
+        $items = @($response.items | Where-Object { $null -ne $_ })
         if ($items.Count -eq 0) {
             break
         }
@@ -1881,6 +2948,16 @@ function Get-CustomEventCatalog {
     }
 
     Write-Progress -Id 1 -Completed -Activity 'Finished retrieval of catalog'
+
+    if ($data.Count -eq 0) {
+        Write-Warning ('No sessions were retrieved from the catalog at {0}.' -f $CatalogUrl)
+        Write-Warning ('If the portal requires a culture or locale parameter (e.g. ?culture=en-us), include it in -EventUrl.')
+        Write-Warning ('Example: -EventUrl ''https://summit.microsoft.com/api/sessions?culture=en-us''')
+    }
+    else {
+        Write-Verbose ('Retrieved {0} session(s) from catalog.' -f $data.Count)
+    }
+
     return $data
 }
 

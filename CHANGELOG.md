@@ -1,5 +1,8 @@
 # Changelog
 
+## 4.44
+- Updated authentication for Custom events that need it
+
 ## 4.43
 - Enforced TLS 1.2 only; removed TLS 1.0/1.1 fallback
 - Fixed invalid regex in -NoRepeats filter (was silently matching nothing)
