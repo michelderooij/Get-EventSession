@@ -1,3 +1,4 @@
+#requires -version 5.1
 <#
     .SYNOPSIS
     Script to assist in downloading Microsoft Ignite, Inspire, Build, MEC or Custom event contents, or return
@@ -18,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.44, June 3, 2026
+    Version 4.45, June 4, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -148,6 +149,15 @@
 
     .PARAMETER Topic
     Only retrieve sessions for this topic area. Wildcards are allowed.
+
+    .PARAMETER ProgrammingLanguage
+    Only retrieve sessions tagged with one or more of the specified programming languages.
+    When multiple languages are specified, sessions matching any of the specified languages are included.
+
+    .PARAMETER SessionLevel
+    Only retrieve sessions at the specified level(s). Valid values are 100 (Foundational), 200 (Intermediate),
+    300 (Advanced), and 400 (Expert). When not specified, sessions at all levels are included, as well as
+    sessions without a level designation.
 
     .PARAMETER ScheduleCode
     Only retrieve sessions with this session code. You can use one or more codes.
@@ -305,6 +315,18 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [string]$Topic,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [ValidateSet('.NET', 'ASP.NET Core', 'C', 'C#', 'C++', 'CUDA', 'Java', 'JavaScript', 'Node.js', 'Python', 'Spark', 'TypeScript', 'sgs')]
+    [string[]]$ProgrammingLanguage,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [ValidateSet(100, 200, 300, 400)]
+    [int[]]$SessionLevel,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'Info')]
@@ -510,6 +532,7 @@ function Get-IEProxy {
 function Invoke-WebWithRetry {
     param(
         [scriptblock]$ScriptBlock,
+        [hashtable]$Variables = @{},
         [int]$MaxAttempts = 3,
         [int]$InitialDelaySeconds = 2
     )
@@ -518,6 +541,7 @@ function Invoke-WebWithRetry {
     do {
         $attempt++
         try {
+            foreach ($kv in $Variables.GetEnumerator()) { Set-Variable -Name $kv.Key -Value $kv.Value -Scope 0 }
             return (& $ScriptBlock)
         }
         catch {
@@ -1286,8 +1310,13 @@ function Get-MSAAuthenticatedWebSession {
         [parameter(Mandatory = $true)][uri]$TargetUri,
         [uri]$Proxy,
         [switch]$ValidateCachedSession,
-        [switch]$ForceInteractive
+        [switch]$ForceInteractive,
+        [switch]$PersistCache
     )
+
+    # Suppress IWR progress for all validation requests in this function.
+    # The assignment is function-scoped and does not affect the caller's $ProgressPreference.
+    $ProgressPreference = 'SilentlyContinue'
 
     $authCachePath = Join-Path $PSScriptRoot 'MSAAuth.cache'
     $cookieUri = [uri]('{0}://{1}/' -f $TargetUri.Scheme, $TargetUri.Host)
@@ -1305,7 +1334,7 @@ function Get-MSAAuthenticatedWebSession {
         }
 
         try {
-            $inMemoryValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $script:MSAAuthWebSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
+            $inMemoryValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $script:MSAAuthWebSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
             if (Test-MSAAuthenticationRequired -Response $inMemoryValidationResponse) {
                 throw 'In-memory session redirected to a sign-in page.'
             }
@@ -1352,7 +1381,7 @@ function Get-MSAAuthenticatedWebSession {
 
         if ($session -and $ValidateCachedSession) {
             try {
-                $validationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
+                $validationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
                 if (Test-MSAAuthenticationRequired -Response $validationResponse) {
                     throw 'Cached session redirected to a sign-in page.'
                 }
@@ -1370,7 +1399,7 @@ function Get-MSAAuthenticatedWebSession {
             $browserImportSession = Get-MSAAuthFromBrowserCookies -Browser $CookiesFromBrowser -CookieUri $cookieUri -YtDlpPath $script:YouTubeDL -CachePath $authCachePath -Proxy $Proxy
             if ($browserImportSession) {
                 try {
-                    $browserImportValidation = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $browserImportSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
+                    $browserImportValidation = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $browserImportSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
                     if (-not (Test-MSAAuthenticationRequired -Response $browserImportValidation)) {
                         Write-Host ('Using cookies imported from {0} for {1}.' -f $CookiesFromBrowser, $CookieUri.Host)
                         $session = $browserImportSession
@@ -1392,7 +1421,7 @@ function Get-MSAAuthenticatedWebSession {
                 $silentSessionValid = $true
                 $silentCookieCount = 0
                 try {
-                    $silentValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
+                    $silentValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
                     if (Test-MSAAuthenticationRequired -Response $silentValidationResponse) {
                         throw 'Silent session redirected to a sign-in page.'
                     }
@@ -1408,7 +1437,7 @@ function Get-MSAAuthenticatedWebSession {
 
                 if ($silentSessionValid) {
                     Write-Verbose ('Acquired MSA authentication silently for {0}' -f $cookieUri.Host)
-                    Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session
+                    if ($PersistCache) { Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session }
                 }
                 elseif ($silentCookieCount -gt 0) {
                     Write-Verbose ('Captured {0} silent-session cookie(s) for {1}, but validation still redirected; continuing to interactive sign-in.' -f $silentCookieCount, $cookieUri.Host)
@@ -1433,7 +1462,7 @@ function Get-MSAAuthenticatedWebSession {
                 $interactiveSessionValid = $true
                 $interactiveCookieCount = 0
                 try {
-                    $interactiveValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Get -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
+                    $interactiveValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
                     if (Test-MSAAuthenticationRequired -Response $interactiveValidationResponse) {
                         throw 'Interactive session redirected to a sign-in page.'
                     }
@@ -1456,7 +1485,7 @@ function Get-MSAAuthenticatedWebSession {
                     }
                 }
 
-                Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session
+                if ($PersistCache) { Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session }
             }
         }
 
@@ -1540,7 +1569,9 @@ function Invoke-WebRequestWithMSAAuthSupport {
     }
 
     try {
-        $response = Invoke-WebRequest @invokeParams
+        $savedProgressPref = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        try { $response = Invoke-WebRequest @invokeParams } finally { $ProgressPreference = $savedProgressPref }
 
         if (Test-MSAAuthenticationRequired -Response $response) {
             throw [System.Exception]::new('Authentication required - sign-in response detected.')
@@ -1575,6 +1606,7 @@ function Invoke-WebRequestWithMSAAuthSupport {
         $invokeParams.WebSession = $session
 
         try {
+            $ProgressPreference = 'SilentlyContinue'
             $response = Invoke-WebRequest @invokeParams
             $responseContentType = $null
             if ($response -and $response.PSObject.Properties.Match('Headers').Count -gt 0 -and $response.Headers) {
@@ -2832,7 +2864,7 @@ function Get-CustomEventCatalog {
     )
 
     $catalogUri = [uri](Get-CustomEventPageUri -BaseUrl $CatalogUrl -Page 1)
-    $session = Get-MSAAuthenticatedWebSession -TargetUri $catalogUri -Proxy $Proxy -ValidateCachedSession
+    $session = Get-MSAAuthenticatedWebSession -TargetUri $catalogUri -Proxy $Proxy -ValidateCachedSession -PersistCache
 
     # Use a browser-like User-Agent so the API returns full session data rather than null placeholders.
     if ($session) {
@@ -2861,7 +2893,7 @@ function Get-CustomEventCatalog {
 
         try {
             $requestHeaders = Get-MSAAuthApiHeaders
-            $response = Invoke-WebWithRetry { Invoke-RestMethod -Uri $pageUri -Method Get -WebSession $session -Proxy $Proxy -Headers $requestHeaders }.GetNewClosure()
+            $response = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $pageUri -Method Get -WebSession $session -Proxy $Proxy -Headers $requestHeaders } -Variables @{ pageUri = $pageUri; session = $session; Proxy = $Proxy; requestHeaders = $requestHeaders }
         }
         catch {
             throw ('Problem retrieving custom session catalog page {0}: {1}' -f $page, $error[0])
@@ -3006,7 +3038,7 @@ function Resolve-CustomSignedOnDemandUrl {
         if (-not $sessionPageUri) {
             return $OnDemandUrl
         }
-        $webSession = Get-MSAAuthenticatedWebSession -TargetUri $sessionPageUri -Proxy $Proxy -ValidateCachedSession
+        $webSession = Get-MSAAuthenticatedWebSession -TargetUri $sessionPageUri -Proxy $Proxy -ValidateCachedSession -PersistCache
         if (-not $webSession) {
             $script:CustomSignedOnDemandAuthRequiredBySession[$sessionCode] = $true
             Write-Warning ('Unable to acquire authenticated web session for {0}; cannot resolve signed media URL.' -f $sessionCode)
@@ -3024,7 +3056,7 @@ function Resolve-CustomSignedOnDemandUrl {
         $script:MSAAuthWebSession = $null
 
         try {
-            $webSession = Get-MSAAuthenticatedWebSession -TargetUri $sessionPageUri -Proxy $Proxy -ValidateCachedSession -ForceInteractive
+            $webSession = Get-MSAAuthenticatedWebSession -TargetUri $sessionPageUri -Proxy $Proxy -ValidateCachedSession -ForceInteractive -PersistCache
             if (-not $webSession) {
                 $script:CustomSignedOnDemandAuthRequiredBySession[$sessionCode] = $true
                 Write-Warning ('Unable to acquire authenticated web session for {0} after sign-in response; cannot resolve signed media URL.' -f $sessionCode)
@@ -3380,7 +3412,7 @@ function Get-KmsBearerTokenDetails {
     }
 }
 
-function Test-IsMicrosoftContentUrl {
+function Test-IsProtectedContentUrl {
     param(
         [string]$Url
     )
@@ -3393,6 +3425,11 @@ function Test-IsMicrosoftContentUrl {
         [uri]$parsedUri = $Url
     }
     catch {
+        return $false
+    }
+
+    # URLs with Azure SAS token parameters are already self-authenticated; MSA auth is not needed.
+    if ($parsedUri.Query -match '(?i)[?&]sig=') {
         return $false
     }
 
@@ -3564,18 +3601,19 @@ function Stop-ProcessTree {
 }
 
 function Get-BackgroundDownloadJobs {
+    param([switch]$SuppressShow)
     $Temp = @()
     foreach ( $job in $script:BackgroundDownloadJobs) {
 
         switch ( $job.Type) {
             1 {
-                $isJobRunning = $job.job.State -eq 'Running'
+                $isJobRunning = $job.job.State -in 'NotStarted', 'Running', 'Blocked'
             }
             2 {
                 $isJobRunning = -not $job.job.hasExited
             }
             3 {
-                $isJobRunning = $job.job.State -eq 'Running'
+                $isJobRunning = $job.job.State -in 'NotStarted', 'Running', 'Blocked'
             }
             default {
                 $isJobRunning = $false
@@ -3590,7 +3628,7 @@ function Get-BackgroundDownloadJobs {
                 1 {
                     $isJobSuccess = $job.job.State -eq 'Completed'
                     $DeckInfo[ $InfoDownload]++
-                    Write-Progress -Id $job.job.Id -Activity ('Slidedeck {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
+                    Write-Progress -Id ($job.job.Id + 1000) -Activity ('Slidedeck {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                 }
                 2 {
                     $isJobSuccess = Test-Path -LiteralPath $job.file
@@ -3598,13 +3636,14 @@ function Get-BackgroundDownloadJobs {
                 }
                 3 {
                     $isJobSuccess = Test-Path -LiteralPath $job.file
-                    Write-Progress -Id $job.job.Id -Activity ('Captions {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
+                    Write-Progress -Id ($job.job.Id + 2000) -Activity ('Captions {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                 }
                 default {
                     $isJobSuccess = $false
                 }
             }
 
+            Write-Host ('Testing placeholders against {0} {1}' -f $job.scheduleCode, $job.file)
             # Test if file is placeholder
             $isPlaceholder = $false
             if ( Test-Path -LiteralPath $job.file) {
@@ -3631,8 +3670,10 @@ function Get-BackgroundDownloadJobs {
                             }
                         }
                     }
+
                     else {
                         # Placeholder different text?
+                        Write-Warning ('File {0} for {1} {2} is smaller than 1KB but does not contain expected placeholder text; leaving in place for manual review' -f $job.file, $job.scheduleCode, $job.title)
                     }
                 }
             }
@@ -3688,7 +3729,7 @@ function Get-BackgroundDownloadJobs {
     }
     $Num = ($Temp | Measure-Object).Count
     $script:BackgroundDownloadJobs = $Temp
-    Show-BackgroundDownloadJobs
+    if (-not $SuppressShow) { Show-BackgroundDownloadJobs }
     return $Num
 }
 
@@ -3714,6 +3755,22 @@ function Show-BackgroundDownloadJobs {
     Write-Progress -Id 2 -Activity 'Background Download Jobs' -Status ('Total {0} in progress ({1} slidedeck, {2} video and {3} caption files)' -f $Num, $NumDeck, $NumVid, $NumCaption)
 
     foreach ( $job in $script:BackgroundDownloadJobs) {
+        if ( $Job.Type -eq 1) {
+            Write-Progress -Id ($job.job.id + 1000) -Activity ('Slidedeck {0} {1}' -f $job.scheduleCode, $Job.title) -Status 'Downloading...' -ParentId 2
+        }
+        if ( $Job.Type -eq 3) {
+            $captionFileInfo = Get-Item -LiteralPath $job.file -ErrorAction SilentlyContinue
+            $captionDownloaded = if ($captionFileInfo) { $captionFileInfo.Length } else { 0 }
+            if ($job.totalBytes -gt 0) {
+                $captionPct = [int][Math]::Min(99, [Math]::Round($captionDownloaded / $job.totalBytes * 100))
+                $captionStatus = 'Downloaded: {0:F1} KB of {1:F1} KB' -f ($captionDownloaded / 1KB), ($job.totalBytes / 1KB)
+                Write-Progress -Id ($job.job.id + 2000) -Activity ('Caption {0} {1}' -f $job.scheduleCode, $Job.title) -Status $captionStatus -PercentComplete $captionPct -ParentId 2
+            }
+            else {
+                $captionStatus = if ($captionDownloaded -gt 0) { 'Downloaded: {0:F1} KB' -f ($captionDownloaded / 1KB) } else { 'Starting...' }
+                Write-Progress -Id ($job.job.id + 2000) -Activity ('Caption {0} {1}' -f $job.scheduleCode, $Job.title) -Status $captionStatus -ParentId 2
+            }
+        }
         if ( $Job.Type -eq 2) {
 
             # Get last line of yt-dlp log; cache by file mtime to avoid re-reading unchanged files
@@ -3754,6 +3811,60 @@ function Stop-BackgroundDownloadJobs {
     }
 }
 
+function Get-MSADownloadAuthHeaders {
+    # Returns a headers hashtable (Authorization and/or Cookie) suitable for passing to
+    # Add-BackgroundDownloadJob for authenticated downloads from Microsoft content URLs.
+    # Acquires an MSA session interactively if one is not already cached.
+    param(
+        [parameter(Mandatory = $true)][string]$Url,
+        [uri]$Proxy
+    )
+
+    $headers = @{}
+
+    # If we don't have auth credentials yet, acquire them now (may prompt interactively).
+    if (-not $script:MSAContentAuthRequired -or
+        (-not $script:MSAAuthWebSession -and [string]::IsNullOrWhiteSpace($script:MSABearerToken))) {
+        try {
+            [uri]$contentUri = $Url
+            $acquiredSession = Get-MSAAuthenticatedWebSession -TargetUri $contentUri -Proxy $Proxy -ValidateCachedSession
+            if ($acquiredSession) {
+                $script:MSAAuthWebSession = $acquiredSession
+                $script:MSAContentAuthRequired = $true
+            }
+        }
+        catch {
+            Write-Warning ('Unable to acquire MSA authentication for background download: {0}' -f $_.Exception.Message)
+        }
+    }
+
+    # Add Bearer token as Authorization header when valid.
+    if (-not [string]::IsNullOrWhiteSpace($script:MSABearerToken) -and
+        (Test-JwtTokenValid -Token $script:MSABearerToken -MinValidityMinutes $script:MinTokenValidityMinutes)) {
+        $headers['Authorization'] = ('Bearer {0}' -f $script:MSABearerToken)
+    }
+
+    # Extract cookies from the web session as a plain string so the value survives job serialization.
+    if ($script:MSAAuthWebSession) {
+        try {
+            [uri]$contentUri = $Url
+            $cookieHeader = Get-WebSessionCookieHeader -WebSession $script:MSAAuthWebSession -CookieUri $contentUri -IncludeAllDomains
+            if (-not [string]::IsNullOrWhiteSpace($cookieHeader)) {
+                $headers['Cookie'] = $cookieHeader
+            }
+        }
+        catch {
+            Write-Verbose ('Unable to extract cookies for background download auth headers: {0}' -f $_.Exception.Message)
+        }
+    }
+
+    if ($headers.Count -eq 0) {
+        return $null
+    }
+
+    return $headers
+}
+
 function Add-BackgroundDownloadJob {
     param(
         $Type,
@@ -3763,9 +3874,11 @@ function Add-BackgroundDownloadJob {
         $File,
         $Timestamp = $null,
         $Title = '',
-        $ScheduleCode = ''
+        $ScheduleCode = '',
+        [hashtable]$Headers = $null,
+        [uri]$Proxy = $null
     )
-    $JobsRunning = Get-BackgroundDownloadJobs
+    $JobsRunning = Get-BackgroundDownloadJobs -SuppressShow
     if ( $JobsRunning -ge $MaxDownloadJobs) {
         Write-Host ('Maximum background download jobs reached ({0}), waiting for free slot - press Ctrl-C once to abort..' -f $JobsRunning)
         while ( $JobsRunning -ge $MaxDownloadJobs) {
@@ -3784,12 +3897,30 @@ function Add-BackgroundDownloadJob {
     switch ( $Type) {
         1 {
             # Slidedeck
-            $job = Start-Job -ScriptBlock {
-                param( $url, $file)
-                $wc = New-Object System.Net.WebClient
-                $wc.Encoding = [System.Text.Encoding]::UTF8
-                $wc.DownloadFile( $url, $file)
-            } -ArgumentList $DownloadUrl, $FilePath
+            if ($Headers) {
+                $job = Start-Job -ScriptBlock {
+                    param($url, $file, $headers, $proxy)
+                    $ProgressPreference = 'SilentlyContinue'
+                    $invokeParams = @{
+                        Uri         = $url
+                        Method      = 'Get'
+                        OutFile     = $file
+                        ErrorAction = 'Stop'
+                        Verbose     = $false
+                    }
+                    if ($headers) { $invokeParams.Headers = $headers }
+                    if ($proxy)   { $invokeParams.Proxy   = $proxy }
+                    Invoke-WebRequest @invokeParams | Out-Null
+                } -ArgumentList $DownloadUrl, $FilePath, $Headers, $Proxy
+            }
+            else {
+                $job = Start-Job -ScriptBlock {
+                    param( $url, $file)
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Encoding = [System.Text.Encoding]::UTF8
+                    $wc.DownloadFile( $url, $file)
+                } -ArgumentList $DownloadUrl, $FilePath
+            }
             $stdOutTempFile = $null
             $stdErrTempFile = $null
         }
@@ -3812,12 +3943,42 @@ function Add-BackgroundDownloadJob {
         }
         3 {
             # Caption
-            $job = Start-Job -ScriptBlock {
-                param( $url, $file)
-                $wc = New-Object System.Net.WebClient
-                $wc.Encoding = [System.Text.Encoding]::UTF8
-                $wc.DownloadFile( $url, $file)
-            } -ArgumentList $DownloadUrl, $FilePath
+            $totalBytes = $null
+            try {
+                $headParams = @{ Uri = $DownloadUrl; Method = 'Head'; ErrorAction = 'Stop'; Verbose = $false }
+                if ($Headers) { $headParams.Headers = $Headers }
+                if ($Proxy)   { $headParams.Proxy   = $Proxy }
+                $savedPP = $ProgressPreference ; $ProgressPreference = 'SilentlyContinue'
+                try { $headResponse = Invoke-WebRequest @headParams } finally { $ProgressPreference = $savedPP }
+                if ($headResponse -and $headResponse.Headers['Content-Length']) {
+                    $totalBytes = [long]$headResponse.Headers['Content-Length']
+                }
+            }
+            catch { }
+            if ($Headers) {
+                $job = Start-Job -ScriptBlock {
+                    param($url, $file, $headers, $proxy)
+                    $ProgressPreference = 'SilentlyContinue'
+                    $invokeParams = @{
+                        Uri         = $url
+                        Method      = 'Get'
+                        OutFile     = $file
+                        ErrorAction = 'Stop'
+                        Verbose     = $false
+                    }
+                    if ($headers) { $invokeParams.Headers = $headers }
+                    if ($proxy)   { $invokeParams.Proxy   = $proxy }
+                    Invoke-WebRequest @invokeParams | Out-Null
+                } -ArgumentList $DownloadUrl, $FilePath, $Headers, $Proxy
+            }
+            else {
+                $job = Start-Job -ScriptBlock {
+                    param( $url, $file)
+                    $wc = New-Object System.Net.WebClient
+                    $wc.Encoding = [System.Text.Encoding]::UTF8
+                    $wc.DownloadFile( $url, $file)
+                } -ArgumentList $DownloadUrl, $FilePath
+            }
             $stdOutTempFile = $null
             $stdErrTempFile = $null
         }
@@ -3832,6 +3993,7 @@ function Add-BackgroundDownloadJob {
         timestamp      = $timestamp
         stdOutTempFile = $stdOutTempFile
         stdErrTempFile = $stdErrTempFile
+        totalBytes     = $totalBytes
     }
 
     $script:BackgroundDownloadJobs += $object
@@ -3843,7 +4005,7 @@ function Add-BackgroundDownloadJob {
 ##########
 
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.40')
+Write-Host( 'Get-EventSession v4.45')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)
@@ -4086,7 +4248,7 @@ if ( -not( $SessionCacheValid)) {
             }
             try {
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
-                $ResultsResponse = Invoke-WebWithRetry { Invoke-RestMethod -Uri $web.requestUri -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL -Timeout $web.Timeout }.GetNewClosure()
+                $ResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $web.requestUri -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL -Timeout $web.Timeout } -Variables @{ web = $web; Method = $Method; session = $session; ProxyURL = $ProxyURL }
             }
             catch {
                 throw ('Problem retrieving session catalog: {0}' -f $error[0])
@@ -4129,7 +4291,7 @@ if ( -not( $SessionCacheValid)) {
                 $web
                 $searchBody
 
-                $searchResultsResponse = Invoke-WebWithRetry { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL }.GetNewClosure()
+                $searchResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL } -Variables @{ web = $web; searchbody = $searchbody; Method = $Method; session = $session; ProxyURL = $ProxyURL }
             }
             catch {
                 throw ('Problem retrieving session catalog: {0}' -f $error[0])
@@ -4147,7 +4309,7 @@ if ( -not( $SessionCacheValid)) {
             for ($page = 1; $page -le $PageCount; $page++) {
                 Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
                 $SearchBody = $EventSearchBody -f $web.itemsPerPage, $page
-                $searchResultsResponse = Invoke-WebWithRetry { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL }.GetNewClosure()
+                $searchResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL } -Variables @{ web = $web; searchbody = $searchbody; Method = $Method; session = $session; ProxyURL = $ProxyURL }
                 foreach ( $Item in $searchResultsResponse.data) {
                     $Item.PSObject.Properties | ForEach-Object {
                         if ($_.Name -eq 'speakerNames') { $Item.($_.Name) = @($_.Value) }
@@ -4286,13 +4448,15 @@ if ($ExcludeCommunityTopic) {
     $SessionsToGet = $SessionsToGet | Where-Object { $ExcludeCommunityTopic -inotcontains $_.CommunityTopic }
 }
 
-if ($Speaker -or $Product -or $Category -or $SolutionArea -or $LearningPath -or $Topic) {
-    if ($Speaker) { Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker) }
-    if ($Product) { Write-Verbose ('Product specified: {0}' -f $Product) }
-    if ($Category) { Write-Verbose ('Category specified: {0}' -f $Category) }
-    if ($SolutionArea) { Write-Verbose ('SolutionArea specified: {0}' -f $SolutionArea) }
-    if ($LearningPath) { Write-Verbose ('LearningPath specified: {0}' -f $LearningPath) }
-    if ($Topic) { Write-Verbose ('Topic specified: {0}' -f $Topic) }
+if ($Speaker -or $Product -or $Category -or $SolutionArea -or $LearningPath -or $Topic -or $ProgrammingLanguage -or $SessionLevel) {
+    if ($Speaker)             { Write-Verbose ('Speaker keyword specified: {0}' -f $Speaker) }
+    if ($Product)             { Write-Verbose ('Product specified: {0}' -f $Product) }
+    if ($Category)            { Write-Verbose ('Category specified: {0}' -f $Category) }
+    if ($SolutionArea)        { Write-Verbose ('SolutionArea specified: {0}' -f $SolutionArea) }
+    if ($LearningPath)        { Write-Verbose ('LearningPath specified: {0}' -f $LearningPath) }
+    if ($Topic)               { Write-Verbose ('Topic specified: {0}' -f $Topic) }
+    if ($ProgrammingLanguage) { Write-Verbose ('Programming language(s) specified: {0}' -f ($ProgrammingLanguage -join ',')) }
+    if ($SessionLevel)        { Write-Verbose ('Session level(s) specified: {0}' -f ($SessionLevel -join ',')) }
     $SessionsToGet = $SessionsToGet | Where-Object {
         $s = $_
         (-not $Speaker -or ($s.speakerNames | Where-Object { $_ -ilike $Speaker })) -and
@@ -4300,7 +4464,16 @@ if ($Speaker -or $Product -or $Category -or $SolutionArea -or $LearningPath -or 
         (-not $Category -or ($s.contentCategory | Where-Object { $_ -ilike $Category })) -and
         (-not $SolutionArea -or ($s.solutionArea | Where-Object { $_ -ilike $SolutionArea })) -and
         (-not $LearningPath -or ($s.learningPath | Where-Object { $_ -ilike $LearningPath })) -and
-        (-not $Topic -or ($s.topic | Where-Object { $_ -ilike $Topic }))
+        (-not $Topic -or ($s.topic | Where-Object { $_ -ilike $Topic })) -and
+        (-not $ProgrammingLanguage -or (
+            -not [string]::IsNullOrWhiteSpace($s.programmingLanguages) -and
+            ($s.programmingLanguages -split ',' | Where-Object { $ProgrammingLanguage -icontains $_ })
+        )) -and
+        (-not $SessionLevel -or (
+            -not [string]::IsNullOrWhiteSpace($s.sessionLevel) -and
+            $s.sessionLevel -match '^\((\d+)\)' -and
+            $SessionLevel -contains [int]$Matches[1]
+        ))
     }
 }
 
@@ -4583,7 +4756,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                                     Write-Debug 'Resolved KMS bearer token for encrypted stream.event manifest'
                                 }
                                 else {
-                                    Write-Warning 'KMS bearer token could not be resolved; stream download may fail with 401 on key retrieval'
+                                    Write-Debug 'KMS bearer token could not be resolved; stream download may fail with 401 on key retrieval'
                                 }
                             }
 
@@ -4687,7 +4860,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                     if ( $Endpoint) {
                         # Direct, AMS or YT video found, attempt download but first define common parameters
                         $requiresMicrosoftCookieAuth = (($EventType -eq 'CUSTOM') -or $script:MSAContentAuthRequired -or -not [string]::IsNullOrWhiteSpace($kmsBearerToken))
-                        $targetIsMicrosoftUrl = (Test-IsMicrosoftContentUrl -Url $Endpoint) -or (Test-IsMicrosoftContentUrl -Url $downloadLink)
+                        $targetIsMicrosoftUrl = (Test-IsProtectedContentUrl -Url $Endpoint) -or (Test-IsProtectedContentUrl -Url $downloadLink)
                         $ytDlpCookieFile = $null
 
                         if ($requiresMicrosoftCookieAuth -and $targetIsMicrosoftUrl -and -not $CookiesFromBrowser) {
@@ -4821,20 +4994,13 @@ foreach ($SessionToGet in $SessionsToGet) {
 
                             $captionFullFile = $captionExtFile
                             Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink, $captionFullFile)
-                            $captionNeedsAuthDownload = (Test-IsMicrosoftContentUrl -Url $captionFileLink)
+                            $captionNeedsAuthDownload = (Test-IsProtectedContentUrl -Url $captionFileLink)
+                            $captionAuthHeaders = $null
                             if ($captionNeedsAuthDownload) {
-                                Write-Verbose ('Downloading caption file with authenticated request for session {0}' -f $SessionToGet.sessioncode)
-                                $captionResponse = Invoke-WebRequestWithMSAAuthSupport -Method Get -Uri $captionFileLink -Proxy $ProxyURL -DisableKeepAlive -OutFile $captionFullFile
-                                if (-not $captionResponse -and -not ((Test-Path -LiteralPath $captionFullFile) -and ((Get-ChildItem -LiteralPath $captionFullFile -ErrorAction SilentlyContinue).Length -gt 0))) {
-                                    Write-Warning ('Problem downloading or missing captions of {0} {1}' -f $SessionToGet.scheduleCode, $SessionToGet.Title)
-                                }
-                                elseif ( $SessionTime -and $Timestamp) {
-                                    Set-ItemProperty -LiteralPath $captionFullFile -Name LastWriteTime -Value ([System.DateTime]$SessionTime).ToUniversalTime()
-                                }
+                                Write-Verbose ('Caption file requires authenticated download for session {0}' -f $SessionToGet.sessioncode)
+                                $captionAuthHeaders = Get-MSADownloadAuthHeaders -Url $captionFileLink -Proxy $ProxyURL
                             }
-                            else {
-                                Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
-                            }
+                            Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Headers $captionAuthHeaders -Proxy $ProxyURL
 
                         }
                         else {
@@ -4899,7 +5065,12 @@ foreach ($SessionToGet in $SessionsToGet) {
                     }
                     else {
                         Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL, $slidedeckFullFile)
-                        Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                        $slidedeckAuthHeaders = $null
+                        if (Test-IsProtectedContentUrl -Url $DownloadURL) {
+                            Write-Verbose ('Slidedeck requires authenticated download for session {0}' -f $SessionToGet.sessioncode)
+                            $slidedeckAuthHeaders = Get-MSADownloadAuthHeaders -Url $DownloadURL -Proxy $ProxyURL
+                        }
+                        Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Headers $slidedeckAuthHeaders -Proxy $ProxyURL
                     }
                 }
                 else {

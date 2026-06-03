@@ -1,7 +1,15 @@
 # Changelog
 
+## 4.45
+- Routed caption file downloads through the background download engine instead of synchronously
+- Extended Add-BackgroundDownloadJob slidedeck (Type 1) and caption (Type 3) jobs to use Invoke-WebRequest with auth headers when available, falling back to WebClient otherwise
+- Added Get-MSADownloadAuthHeaders helper to acquire and serialize MSA Bearer token and session cookies for background job use
+- Fixed GetNewClosure compatibility issue on PowerShell 5.x
+- Added -ProgrammingLanguage filter parameter to select sessions by programming language (OR logic across specified languages)
+- Added -SessionLevel filter parameter to select sessions by level (100/200/300/400)
+
 ## 4.44
-- Updated authentication for Custom events that need it
+- Updated authentication for Custom events that need it due to changes in IE/Trident
 
 ## 4.43
 - Enforced TLS 1.2 only; removed TLS 1.0/1.1 fallback
