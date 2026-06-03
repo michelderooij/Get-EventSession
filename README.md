@@ -2,26 +2,30 @@
 
 ## Getting Started
 
-Script to assist in downloading Microsoft Ignite, Inspire, Build or MEC contents or return 
-session information for easier digesting. 
+Script to assist in downloading Microsoft Ignite, Inspire, Build, MEC or Custom event contents, or return
+session information for easier digesting.
 
-Video downloads will leverage a utility which can be downloaded
-from https://yt-dl.org/latest/youtube-dl.exe, and needs to reside in the same folder
-as the script. The script itself will try to download the utility when the utility is not present.
+Video downloads leverage yt-dlp, which the script will download automatically when not present.
+ffmpeg is also required to merge separate video and audio streams; the script will download it automatically as well.
 
-To prevent retrieving session information for every run, the script will cache session information.
+To prevent retrieving session information for every run, the script caches session information locally.
 
 ### Prerequisites
 
-* PowerShell 3.0
-* YouTube-dl.exe (automatic download from [here](https://yt-dl.org))
-* ffmpeg, (automatic download from [here](https://ffmpeg.zeranoe.com/builds/win32/static/ffmpeg-latest-win32-static.zip)) 
+* PowerShell 5.1 or later (PowerShell 7 recommended)
+* yt-dlp.exe (automatic download from [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/latest))
+* ffmpeg.exe (automatic download from [github.com/BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases))
 
 ### Usage
 
-Download all available contents of sessions containing the word 'Exchange' in the title to D:\Ignite:
+Download all available contents of Build 2026 sessions containing the word 'AI' in the title to D:\Build:
 ```
-.\Get-EventSession.ps1 -DownloadFolder D:\Ignite -Format 18 -Keyword 'Exchange'
+.\Get-EventSession.ps1 -Event Build2026 -DownloadFolder D:\Build -Keyword 'AI'
+```
+
+Download only 200- and 300-level Python sessions from Build 2026:
+```
+.\Get-EventSession.ps1 -Event Build2026 -DownloadFolder D:\Build -ProgrammingLanguage Python -SessionLevel 200,300
 ```
 
 Get information of all sessions, and output only location and time information for sessions (co-)presented by Tony Redmond:
@@ -29,21 +33,33 @@ Get information of all sessions, and output only location and time information f
 .\Get-EventSession.ps1 -InfoOnly | Where {$_.Speakers -contains 'Tony Redmond'} | Select Title, location, startDateTime
 ```
 
-Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite
+Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite:
 ```
 .\Get-EventSession.ps1 -DownloadFolder D:\Ignite -ScheduleCode BRK3248,BRK3186
 ```
 
 ## FAQ
 
+### MSA authentication for protected content
+Some events (Custom events or sessions with protected slidedecks) require you to sign in with a Microsoft account.
+When the script detects this, it will open an embedded sign-in dialog automatically. After signing in once, the
+session is cached for the remainder of the run so you are not prompted again.
+
+For Custom events, specify the base URL with `-EventUrl` and use `-Event Custom`:
+```
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://example.com/sessions -DownloadFolder D:\Event
+```
+
 ### YouTube authentication
-Recently, YouTube started requiring authentication to prevent automated downloads. Symptom is that you will see yt-dlp operations
-resulting in "ERROR [youtube] XXXXXXXXXX : Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication" errors.
-To support this, you can either:
-* Use direct downloads when available, by using PreferDirect. Disadvantage is that you cannot specify a format, and you may end up with large files. However, you can
-compress and descale those in bulk afterwards using the Compress-MP4.ps1 script from this same repository.
-* Use yt-dlp.exe with downloaded cookies (NetScape format) or cookies from a browser. See https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies
-on how to export cookies. Be advised that your account might get flagged, so using a burner account is recommended when downloading lots of videos.
+YouTube requires authentication to prevent automated downloads. You will see yt-dlp errors like
+"Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication".
+To work around this, you can either:
+* Use direct downloads when available with `-PreferDirect`. You may end up with larger files, but you can
+  compress and downscale them afterwards using the `Compress-MP4.ps1` script in this repository.
+* Pass cookies to yt-dlp from a cookies file (Netscape format) or directly from a browser. See
+  [yt-dlp cookie export docs](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies) for details.
+  Using a separate account is recommended when downloading large numbers of videos.
+
 Syntax:
 ```
 .\Get-EventSession.ps1 .. -CookiesFile <File>
