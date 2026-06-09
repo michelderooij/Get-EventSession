@@ -1,5 +1,8 @@
 # Changelog
 
+## 4.46
+- Fixed: Custom event MSA authentication by leveraging MS Edge
+
 ## 4.45
 - Routed caption file downloads through the background download engine instead of synchronously
 - Extended Add-BackgroundDownloadJob slidedeck (Type 1) and caption (Type 3) jobs to use Invoke-WebRequest with auth headers when available, falling back to WebClient otherwise
