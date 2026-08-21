@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.47
+- Added support for Ignite archive portal
+- Ignite Archive portal requires pagination, except for Ignite 2025 which has a full JSON fallback endpoint
+
 ## 4.46
 - Fixed: Custom event MSA authentication by leveraging MS Edge
 

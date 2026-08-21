@@ -19,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.46, June 9, 2026
+    Version 4.47, August 21, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -193,7 +193,7 @@
     Options are:
     - Custom                                       : Custom event endpoint requiring MSA login and page-based paging
     - Ignite                                       : Ignite contents (current)
-    - Ignite2025                                    : Ignite contents from that year/time
+    - Ignite2025                                   : Ignite contents from that year
     - Inspire                                      : Inspire contents (current)
     - Build                                        : Build contents (current)
     - Build2025                                    : Build contents from that year
@@ -369,7 +369,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Inspire', 'Build', 'Build2026', 'Build2025', 'Custom')]
+    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Inspire', 'Build', 'Build2026', 'Build2025', 'Custom', 'Ignite2024', 'Ignite2023','Ignite2022','Ignite2021H1','Ignite2021H2','Ignite2020')]
     [string]$Event = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -4677,7 +4677,7 @@ function Add-BackgroundDownloadJob {
 ##########
 
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.46')
+Write-Host( 'Get-EventSession v4.47')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)
@@ -4719,14 +4719,48 @@ switch ( $Event) {
     { 'Ignite', 'Ignite2025' -contains $_ } {
         $EventName = 'Ignite2025'
         $EventType = 'API2'
-        $EventAPIUrl = 'https://api-v2.ignite.microsoft.com/api/session/all/en-US'
+        $EventAPIUrl = 'https://eventtools.event.microsoft.com/ignite2025-prod/fallback/session-all-en-us.json'
         $SessionUrl = 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
-        $CaptionURL = 'https://medius.studios.ms/video/asset/CAPTION/IG25-{0}'
+        $CaptionURL = 'https://medius.microsoft.com/video/asset/CAPTION/{0}'
         $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
-        $Method = 'GET'
-        # Note: to have literal accolades and not string formatter evaluate interior, use a pair:
-        $EventSearchBody = '{{"itemsPerPage":{0},"searchFacets":{{"dateFacet":[{{"startDateTime":"2025-11-01T12:00:00.000Z","endDateTime":"2025-11-30T21:59:00.000Z"}}]}},"searchPage":{1},"searchText":"*","sortOption":"Chronological"}}'
+        $Method = 'Get'
         $CaptionExt = 'vtt'
+        $PreferDirect = $True
+    }
+    { 'Ignite2024', 'Ignite2023', 'Ignite2022', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020' -contains $_ } {
+        $EventName = $Event
+        $EventType = 'Archive'
+        $EventAPIUrl = 'https://medius.microsoft.com'
+        Switch( $Event) {
+            'Ignite2024' {
+                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2024%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+            }
+            'Ignite2023' {
+                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2023%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+            }
+            'Ignite2022' {
+                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2022%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+            }
+            'Ignite2021H1' {
+                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+March+2021%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+            }
+            'Ignite2021H2' {
+                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+Falls+-+November+2021%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+            }
+            'Ignite2020' {
+                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2020%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+            }
+            default {
+                Throw( 'Error (Unsupported Ignite event: {0})' -f $Event)
+                exit -1
+            }
+        }
+        $SessionUrl = 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
+        $CaptionURL = 'https://medius.microsoft.com/video/asset/CAPTION/{0}'
+        $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
+        $Method = 'Get'
+        $CaptionExt = 'vtt'
+        $PreferDirect = $True
     }
     { 'Inspire' -contains $_ } {
         $EventName = 'Inspire'
@@ -4910,6 +4944,246 @@ if ( -not( $SessionCacheValid)) {
             [int32]$sessionCount = ($data | Measure-Object).Count
             Write-Host ('Processing information for {0} sessions' -f $sessionCount)
         }
+        'Archive' {
+            Write-Host ('Reading {0} archived session catalog' -f $EventName)
+            $web = @{
+                userAgent    = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
+                requestUri   = $null
+            }
+            $data = [System.Collections.ArrayList]@()
+            $seenSessionKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+            $searchUriTemplate = ($EventSearchURI -replace '\{\{0\}\}', '{0}')
+            $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet', [string[]]('sessionCode', 'title'))
+            $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
+
+            $page = 1
+            while ($true) {
+                Write-Progress -Id 1 -Activity 'Retrieving Session Catalog' -Status ('Processing page {0}' -f $page)
+
+                $web.requestUri = [uri]('{0}/{1}' -f $EventAPIUrl, ($searchUriTemplate -f $page))
+                try {
+                    Write-Verbose ('Using URI {0}' -f $web.requestUri)
+                    $searchResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-WebRequest -Uri $web.requestUri -Method Get -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL } -Variables @{ web = $web; session = $session; ProxyURL = $ProxyURL }
+                }
+                catch {
+                    if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+                    throw ('Problem retrieving archived session catalog page {0}: {1}' -f $page, $error[0])
+                }
+
+                $html = [string]$searchResultsResponse.Content
+                if ([string]::IsNullOrWhiteSpace($html)) {
+                    break
+                }
+
+                $cardMatches = [regex]::Matches($html, '(?is)<li class="col mb-4 cards-session">(?<card>.*?)</li>')
+                if ($cardMatches.Count -eq 0) {
+                    break
+                }
+
+                $addedThisPage = 0
+                foreach ($cardMatch in $cardMatches) {
+                    $cardHtml = [string]$cardMatch.Groups['card'].Value
+
+                    $shortCode = [regex]::Match($cardHtml, 'data-shortcode="(?<v>[^"]+)"', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase).Groups['v'].Value
+                    if ([string]::IsNullOrWhiteSpace($shortCode)) {
+                        $shortCode = [regex]::Match($cardHtml, 'data-shortCode="(?<v>[^"]+)"', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase).Groups['v'].Value
+                    }
+                    if ([string]::IsNullOrWhiteSpace($shortCode)) {
+                        continue
+                    }
+                    if (-not $seenSessionKeys.Add($shortCode)) {
+                        continue
+                    }
+
+                    $sessionCode = $shortCode
+                    if ($shortCode -match '^[^-]+-(?<code>.+)$') {
+                        $sessionCode = $Matches.code
+                    }
+
+                    # Archive cards also contain non-session videos where the shortcode tail is an internal media id
+                    # (for example he*/ct* hex-like values). Keep only schedule-like session codes.
+                    $isScheduleStyleCode = ($sessionCode -cmatch '^[A-Z][A-Za-z0-9-]*$') -or ($sessionCode -cmatch '^ct\d{9}$')
+                    if (-not $isScheduleStyleCode) {
+                        Write-Debug ('Skipping non-session archive card with code token {0}' -f $sessionCode)
+                        continue
+                    }
+
+                    $sessionTitleRaw = [regex]::Match($cardHtml, '(?is)<a class="text-black text-dec-default openvideo"[^>]*>(?<v>.*?)</a>').Groups['v'].Value
+                    if ([string]::IsNullOrWhiteSpace($sessionTitleRaw)) {
+                        $sessionTitleRaw = [regex]::Match($cardHtml, 'aria-label="(?<v>[^"]+)"').Groups['v'].Value
+                    }
+                    $sessionTitle = [string][System.Net.WebUtility]::HtmlDecode(($sessionTitleRaw -replace '<[^>]+>', '').Trim())
+
+                    $channelRaw = [regex]::Match($cardHtml, '(?is)<p class="keynote-text[^"]*">(?<v>.*?)</p>').Groups['v'].Value
+                    $channel = [string][System.Net.WebUtility]::HtmlDecode(($channelRaw -replace '<[^>]+>', '').Trim())
+
+                    $duration = [System.Net.WebUtility]::HtmlDecode(([regex]::Match($cardHtml, '(?is)<p class="glyph-prepend glyph-prepend-circle-fill durationmin[^"]*">(?<v>.*?)</p>').Groups['v'].Value -replace '<[^>]+>', '').Trim())
+                    $thumbnail = [System.Net.WebUtility]::HtmlDecode([regex]::Match($cardHtml, '(?is)<img\s+[^>]*class="[^"]*thumbnail-grid[^"]*"[^>]*\ssrc="(?<v>[^"]+)"').Groups['v'].Value)
+
+                    $startDateTime = $null
+                    $endDateTime = $null
+                    $publishDateRaw = [regex]::Match($cardHtml, 'localPublishDateTime\s*=\s*new\s+Date\("(?<v>[^"]+)"\)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase).Groups['v'].Value
+                    if (-not [string]::IsNullOrWhiteSpace($publishDateRaw) -and $publishDateRaw -notmatch '^0001-01-01\s') {
+                        try {
+                            $startDateTime = [datetime]::Parse($publishDateRaw, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
+                        }
+                        catch {
+                            Write-Verbose ('Could not parse archive publish date "{0}" for session {1}' -f $publishDateRaw, $sessionCode)
+                        }
+                    }
+
+                    $durationTimeSpan = $null
+                    $durationInMinutes = $null
+                    $durationHourMinuteMatch = [regex]::Match($duration, '^(?<h>\d{1,2}):(?<m>\d{2})(?::(?<s>\d{2}))?\s*min$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                    if ($durationHourMinuteMatch.Success) {
+                        $hours = [int]$durationHourMinuteMatch.Groups['h'].Value
+                        $minutes = [int]$durationHourMinuteMatch.Groups['m'].Value
+                        $seconds = if ($durationHourMinuteMatch.Groups['s'].Success) { [int]$durationHourMinuteMatch.Groups['s'].Value } else { 0 }
+                        try {
+                            $durationTimeSpan = New-TimeSpan -Hours $hours -Minutes $minutes -Seconds $seconds
+                        }
+                        catch {
+                            $durationTimeSpan = $null
+                        }
+                        if ($durationTimeSpan) {
+                            $durationInMinutes = [int][math]::Round($durationTimeSpan.TotalMinutes, 0)
+                        }
+                    }
+                    else {
+                        $durationMinuteMatch = [regex]::Match($duration, '^(?<m>\d{1,4})\s*min$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                        if ($durationMinuteMatch.Success) {
+                            try {
+                                $durationInMinutes = [int]$durationMinuteMatch.Groups['m'].Value
+                                $durationTimeSpan = New-TimeSpan -Minutes $durationInMinutes
+                            }
+                            catch {
+                                $durationTimeSpan = $null
+                                $durationInMinutes = $null
+                            }
+                        }
+                    }
+
+                    if (-not $startDateTime) {
+                        # Keep a deterministic non-future placeholder datetime when the card has no publish date.
+                        $startDateTime = [datetime]'1900-01-01 09:00:00'
+                    }
+
+                    if ($startDateTime -and $durationTimeSpan) {
+                        $endDateTime = $startDateTime.Add($durationTimeSpan)
+                    }
+
+                    $speakers = [System.Collections.ArrayList]@()
+                    foreach ($speakerMatch in [regex]::Matches($cardHtml, '(?is)<(p|span|a)[^>]*class="[^"]*speaker[^"]*"[^>]*>(?<v>.*?)</(p|span|a)>')) {
+                        $speakerText = [System.Net.WebUtility]::HtmlDecode(($speakerMatch.Groups['v'].Value -replace '<[^>]+>', '').Trim())
+                        if ($speakerText -and $speakerText -notmatch '^(Speaker|Speakers)$') {
+                            foreach ($speakerName in ($speakerText -split ',|;')) {
+                                $candidate = $speakerName.Trim()
+                                if ($candidate) {
+                                    $speakers.Add($candidate) | Out-Null
+                                }
+                            }
+                        }
+                    }
+                    $speakerNames = @($speakers | Select-Object -Unique)
+
+                    $otherAssets = @()
+                    $otherLinksRaw = [regex]::Match($cardHtml, '(?is)let\s+BoxViewOtherLinks\s*=\s*"(?<v>.*?)";').Groups['v'].Value
+                    if (-not [string]::IsNullOrWhiteSpace($otherLinksRaw)) {
+                        try {
+                            $otherAssets = @(([regex]::Unescape($otherLinksRaw) | ConvertFrom-Json))
+                        }
+                        catch {
+                            Write-Verbose ('Could not parse BoxViewOtherLinks for session {0}: {1}' -f $sessionCode, $_.Exception.Message)
+                        }
+                    }
+
+                    $captionAssets = @()
+                    $captionLinksRaw = [regex]::Match($cardHtml, '(?is)let\s+BoxViewCaptionUrl\s*=\s*"(?<v>.*?)";').Groups['v'].Value
+                    if (-not [string]::IsNullOrWhiteSpace($captionLinksRaw)) {
+                        try {
+                            $captionAssets = @(([regex]::Unescape($captionLinksRaw) | ConvertFrom-Json))
+                        }
+                        catch {
+                            Write-Verbose ('Could not parse BoxViewCaptionUrl for session {0}: {1}' -f $sessionCode, $_.Exception.Message)
+                        }
+                    }
+
+                    $videoLink = ($otherAssets | Where-Object { $_.AssetType -eq 'HighQualityUrl' } | Select-Object -First 1).LinkUrl
+                    $slideDeckLink = ($otherAssets | Where-Object { $_.AssetType -eq 'PPTUrl' } | Select-Object -First 1).LinkUrl
+                    $captionLink = ($otherAssets | Where-Object { $_.AssetType -eq 'CaptionUrl' } | Select-Object -First 1).LinkUrl
+                    $captionLanguage = $null
+                    if (-not $captionLink) {
+                        $preferredCaptionAsset = ($captionAssets | Where-Object { $_.FileName -match '(?i)Caption_(?<lang>[A-Za-z]{2}[-_][A-Za-z]{2})\.vtt$' -and $Matches.lang -match '^(?i)(en-us|en-gb)$' } | Select-Object -First 1)
+                        if ($preferredCaptionAsset) {
+                            $captionLink = $preferredCaptionAsset.StreamUrl
+                            if ($preferredCaptionAsset.FileName -match '(?i)Caption_(?<lang>[A-Za-z]{2}[-_][A-Za-z]{2})\.vtt$') {
+                                $captionLanguage = ($Matches.lang -replace '_', '-').ToLowerInvariant()
+                            }
+                        }
+                    }
+                    if (-not $captionLink) {
+                        $fallbackCaptionAsset = ($captionAssets | Select-Object -First 1)
+                        if ($fallbackCaptionAsset) {
+                            $captionLink = $fallbackCaptionAsset.StreamUrl
+                            if ($fallbackCaptionAsset.FileName -match '(?i)Caption_(?<lang>[A-Za-z]{2}[-_][A-Za-z]{2})\.vtt$') {
+                                $captionLanguage = ($Matches.lang -replace '_', '-').ToLowerInvariant()
+                            }
+                        }
+                    }
+                    if (-not $captionLanguage -and $captionLink) {
+                        $captionAssetByUrl = ($captionAssets | Where-Object { $_.StreamUrl -eq $captionLink } | Select-Object -First 1)
+                        if ($captionAssetByUrl -and $captionAssetByUrl.FileName -match '(?i)Caption_(?<lang>[A-Za-z]{2}[-_][A-Za-z]{2})\.vtt$') {
+                            $captionLanguage = ($Matches.lang -replace '_', '-').ToLowerInvariant()
+                        }
+                    }
+                    if (-not $captionLanguage -and $captionLink -match '(?i)Caption_(?<lang>[A-Za-z]{2}[-_][A-Za-z]{2})\.vtt') {
+                        $captionLanguage = ($Matches.lang -replace '_', '-').ToLowerInvariant()
+                    }
+
+                    $item = [PSCustomObject]@{
+                        sessionCode       = $sessionCode
+                        scheduleCode      = $sessionCode
+                        code              = $sessionCode
+                        title             = $sessionTitle
+                        description       = $null
+                        speakerNames      = $speakerNames
+                        products          = @($channel)
+                        contentCategory   = @($channel)
+                        langLocale        = 'en-US'
+                        startDateTime     = $startDateTime
+                        endDateTime       = $endDateTime
+                        durationInMinutes = $durationInMinutes
+                        onDemand          = $null
+                        downloadVideoLink = $videoLink
+                        onDemandThumbnail = $thumbnail
+                        slideDeck         = $slideDeckLink
+                        captionFileLink   = $captionLink
+                        transcriptFileLink = $captionLink
+                        captionLanguage   = $captionLanguage
+                    }
+
+                    Write-Verbose ('Adding info for session {0}' -f $item.sessionCode)
+                    $item.PSObject.TypeNames.Insert(0, 'Session.Information')
+                    $item | Add-Member MemberSet PSStandardMembers $PSStandardMembers -Force
+                    $data.Add($item) | Out-Null
+                    $addedThisPage++
+                }
+
+                if ($addedThisPage -eq 0) {
+                    break
+                }
+
+                $page++
+                if ($page -gt 1000) {
+                    Write-Warning 'Reached pagination safety limit while scraping archive catalog; stopping at page 1000.'
+                    break
+                }
+            }
+
+            [int32]$sessionCount = ($data | Measure-Object).Count
+            Write-Host ('Processing information for {0} sessions' -f $sessionCount)
+            Write-Progress -Id 1 -Completed -Activity "Finished retrieval of catalog"
+        }
         'API2' {
             Write-Host ('Reading {0} session catalog' -f $EventName)
             $web = @{
@@ -4960,10 +5234,6 @@ if ( -not( $SessionCacheValid)) {
             try {
                 $SearchBody = $EventSearchBody -f '1', '1'
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
-
-                $web
-                $searchBody
-
                 $searchResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL } -Variables @{ web = $web; searchbody = $searchbody; Method = $Method; session = $session; ProxyURL = $ProxyURL }
             }
             catch {

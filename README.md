@@ -28,6 +28,11 @@ Download only 200- and 300-level Python sessions from Build 2026:
 .\Get-EventSession.ps1 -Event Build2026 -DownloadFolder D:\Build -ProgrammingLanguage Python -SessionLevel 200,300
 ```
 
+Get archived Ignite 2024 sessions from the Ignite archive portal and show their info:
+```
+.\Get-EventSession.ps1 -Event Ignite2024 -InfoOnly 
+```
+
 Get information of all sessions, and output only location and time information for sessions (co-)presented by Tony Redmond:
 ```
 .\Get-EventSession.ps1 -InfoOnly | Where {$_.Speakers -contains 'Tony Redmond'} | Select Title, location, startDateTime
@@ -49,6 +54,11 @@ For Custom events, specify the base URL with `-EventUrl` and use `-Event Custom`
 ```
 .\Get-EventSession.ps1 -Event Custom -EventUrl https://example.com/sessions -DownloadFolder D:\Event
 ```
+
+### Archive-backed event metadata
+Archive-backed events such as Ignite2024 are derived from HTML session cards instead of a structured catalog API.
+For those events, the script stamps properties when the card exposes enough information.
+Some metadata remains source-dependent, so property availability can vary between event types.
 
 ### YouTube authentication
 YouTube requires authentication to prevent automated downloads. You will see yt-dlp errors like
