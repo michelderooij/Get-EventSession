@@ -223,6 +223,12 @@
     Tells script to change the timestamp of the downloaded media files to match the original
     session timestamp, when available.
 
+    .PARAMETER UseSessionFolders
+    Stores the content of each session in its own subfolder of the download folder, instead of
+    saving everything directly in the download folder. The subfolder is named after the session,
+    matching the name used for the video file, and receives all artifacts of that session such
+    as the video, slidedeck and caption files. Session folders that end up empty are removed.
+
     .PARAMETER Locale
     When supported by the event, filters sessions on localization.
     Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR.
@@ -507,6 +513,377 @@ function Fix-FileName ($title) {
     $cleaned = (((((((($title -replace '\]', ')') -replace '\[', '(') -replace [char]0x202f, ' ') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
     $invalidChars = [System.IO.Path]::GetInvalidFileNameChars() | ForEach-Object { [Regex]::Escape($_) }
     return ($cleaned -replace ($invalidChars -join '|'), '')
+}
+
+function ConvertTo-ArgumentString {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return '""'
+    }
+
+    $stringValue = [string]$Value
+    $escapedValue = $stringValue -replace '(\\*)"', '$1$1\"'
+    $escapedValue = $escapedValue -replace '(\\+)$', '$1$1'
+    return '"{0}"' -f $escapedValue
+}
+
+function Get-ObjectPropertyValue {
+    param(
+        [parameter(Mandatory = $true)][object]$Object,
+        [parameter(Mandatory = $true)][string[]]$Name
+    )
+
+    foreach ($propertyName in $Name) {
+        if ($Object.PSObject.Properties.Match($propertyName).Count -gt 0) {
+            $value = $Object.$propertyName
+            if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace([string]$value)) {
+                return $value
+            }
+        }
+    }
+
+    return $null
+}
+
+function ConvertTo-MetadataValueList {
+    param([AllowNull()][object]$Value)
+
+    $items = [System.Collections.ArrayList]@()
+    if ($null -eq $Value) {
+        return @()
+    }
+
+    foreach ($entry in @($Value)) {
+        if ($null -eq $entry) {
+            continue
+        }
+
+        if ($entry -is [string]) {
+            foreach ($part in ($entry -split [char]9)) {
+                $candidate = $part.Trim()
+                if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                    $items.Add($candidate) | Out-Null
+                }
+            }
+            continue
+        }
+
+        $displayValue = Get-ObjectPropertyValue -Object $entry -Name @('displayValue', 'name', 'title', 'logicalValue')
+        if ($displayValue) {
+            $items.Add([string]$displayValue) | Out-Null
+        }
+        else {
+            $candidate = ([string]$entry).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                $items.Add($candidate) | Out-Null
+            }
+        }
+    }
+
+    return @($items | Select-Object -Unique)
+}
+
+function Format-MetadataValueList {
+    param([AllowNull()][object]$Value)
+
+    return (ConvertTo-MetadataValueList -Value $Value) -join '; '
+}
+
+function ConvertTo-SessionDateTime {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [datetime]) {
+        return $Value
+    }
+
+    $stringValue = ([string]$Value).Trim()
+    if ([string]::IsNullOrWhiteSpace($stringValue)) {
+        return $null
+    }
+
+    # Catalogs publish US-style timestamps, which fail to parse under other cultures
+    $parsed = [datetime]::MinValue
+    $formats = [string[]]@('MM/dd/yyyy HH:mm:ss', 'M/d/yyyy H:mm:ss', 'MM/dd/yyyy', 'yyyy-MM-ddTHH:mm:ss', 'yyyy-MM-dd HH:mm:ss', 'yyyy-MM-dd', 'yyyyMMdd')
+    if ([datetime]::TryParseExact($stringValue, $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+        return $parsed
+    }
+
+    if ([datetime]::TryParse($stringValue, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+        return $parsed
+    }
+
+    if ([datetime]::TryParse($stringValue, [System.Globalization.CultureInfo]::CurrentCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+        return $parsed
+    }
+
+    return $null
+}
+
+function Get-SessionPresentationUrl {
+    param(
+        [parameter(Mandatory = $true)][object]$Session,
+        [AllowNull()][string]$FallbackSlidedeckUrl
+    )
+
+    $presentationUrl = Get-ObjectPropertyValue -Object $Session -Name @('slideDeck', 'slidedeck', 'presentationUrl')
+    if ($presentationUrl) {
+        return [string]$presentationUrl
+    }
+
+    $sessionCode = Get-ObjectPropertyValue -Object $Session -Name @('sessionCode', 'scheduleCode', 'code')
+    if ($FallbackSlidedeckUrl -and $sessionCode) {
+        # The fallback is a template for most events but is a scraped URL for custom events, so
+        # substitute the placeholder literally: -f would throw on a URL containing other braces.
+        return $FallbackSlidedeckUrl.Replace('{0}', [string]$sessionCode)
+    }
+
+    return $null
+}
+
+function Get-SessionOriginalVideoUrl {
+    param(
+        [parameter(Mandatory = $true)][object]$Session,
+        [AllowNull()][string]$EventName,
+        [AllowNull()][string]$FallbackVideoUrl
+    )
+
+    if ($EventName -like 'Build*') {
+        $localizedId = Get-ObjectPropertyValue -Object $Session -Name @('localizedId')
+        if ($localizedId) {
+            $locale = Get-ObjectPropertyValue -Object $Session -Name @('langLocale')
+            if (-not $locale) {
+                $locale = 'en-US'
+            }
+            return 'https://build.microsoft.com/{0}/sessions/{1}' -f $locale, $localizedId
+        }
+    }
+
+    $sessionUrl = Get-ObjectPropertyValue -Object $Session -Name @('onDemand', 'webpage_url', 'registrationLink')
+    if ($sessionUrl) {
+        return [string]$sessionUrl
+    }
+
+    return $FallbackVideoUrl
+}
+
+function Get-SessionRepositoryUrl {
+    param(
+        [parameter(Mandatory = $true)][object]$Session
+    )
+
+    # GitHub paths that look like owner/repo but are product or marketing pages
+    $nonRepositoryOwners = @('about', 'apps', 'collections', 'customer-stories', 'enterprise', 'events', 'explore', 'features', 'login', 'marketplace', 'organizations', 'orgs', 'pricing', 'readme', 'resources', 'security', 'settings', 'solutions', 'sponsors', 'team', 'topics', 'trending')
+
+    $candidates = [System.Collections.ArrayList]@()
+    foreach ($propertyName in @('relatedResources', 'nextStep', 'sessionLinks')) {
+        if ($Session.PSObject.Properties.Match($propertyName).Count -eq 0) {
+            continue
+        }
+
+        foreach ($resource in @($Session.$propertyName)) {
+            if ($null -eq $resource) {
+                continue
+            }
+
+            if ($resource -is [string]) {
+                $link = $resource
+                $category = ''
+            }
+            else {
+                $link = Get-ObjectPropertyValue -Object $resource -Name @('link', 'url', 'linkUrl')
+                $category = [string](Get-ObjectPropertyValue -Object $resource -Name @('category'))
+            }
+
+            if ($link) {
+                $candidates.Add([PSCustomObject]@{ Url = [string]$link; IsCodeSample = ($category -match '(?i)code') }) | Out-Null
+            }
+        }
+    }
+
+    $description = Get-ObjectPropertyValue -Object $Session -Name @('description', 'aiDescription')
+    if ($description) {
+        foreach ($match in [regex]::Matches([string]$description, '(?i)https://github\.com/[^\s<>"'')\]]+')) {
+            $candidates.Add([PSCustomObject]@{ Url = $match.Value; IsCodeSample = $false }) | Out-Null
+        }
+    }
+
+    # Prefer links explicitly published as code samples, keeping catalog order otherwise
+    $orderedCandidates = @($candidates | Where-Object { $_.IsCodeSample }) + @($candidates | Where-Object { -not $_.IsCodeSample })
+
+    foreach ($candidate in $orderedCandidates) {
+        $url = (($candidate.Url -split '[?#]')[0]).TrimEnd('.', ',', ')', '/')
+        if ($url -notmatch '(?i)^https://github\.com/(?<owner>[A-Za-z0-9][A-Za-z0-9-]*)/(?<repo>[A-Za-z0-9_.-]+)$') {
+            continue
+        }
+
+        if ($nonRepositoryOwners -contains $Matches.owner.ToLowerInvariant()) {
+            continue
+        }
+
+        return 'https://github.com/{0}/{1}' -f $Matches.owner, $Matches.repo
+    }
+
+    return $null
+}
+
+function New-EventSessionVideoMetadata {
+    param(
+        [parameter(Mandatory = $true)][object]$Session,
+        [AllowNull()][string]$EventName,
+        [AllowNull()][string]$OriginalVideoUrl,
+        [AllowNull()][string]$PresentationUrl,
+        [AllowNull()][string]$RepositoryUrl
+    )
+
+    $description = Get-ObjectPropertyValue -Object $Session -Name @('description', 'aiDescription')
+    $sessionCode = Get-ObjectPropertyValue -Object $Session -Name @('sessionCode', 'scheduleCode', 'code')
+    $speakerNames = Format-MetadataValueList -Value (Get-ObjectPropertyValue -Object $Session -Name @('speakerNames', 'speakers'))
+    $tags = @()
+    foreach ($tagProperty in @('tags', 'products', 'contentCategory', 'solutionArea', 'topic', 'programmingLanguages', 'sessionType')) {
+        if ($Session.PSObject.Properties.Match($tagProperty).Count -gt 0) {
+            $tags += ConvertTo-MetadataValueList -Value $Session.$tagProperty
+        }
+    }
+
+    $year = $null
+    $startDateTime = Get-ObjectPropertyValue -Object $Session -Name @('startDateTime')
+    if ($startDateTime) {
+        $sessionDate = ConvertTo-SessionDateTime -Value $startDateTime
+        if ($sessionDate) {
+            $year = $sessionDate.Year
+        }
+        else {
+            Write-Verbose ('Unable to determine metadata year for {0} from value {1}' -f $sessionCode, $startDateTime)
+        }
+    }
+
+    $commentLines = [System.Collections.ArrayList]@()
+    if ($description) {
+        $commentLines.Add(([string]$description).Trim()) | Out-Null
+        $commentLines.Add('') | Out-Null
+    }
+    if ($PresentationUrl) {
+        $commentLines.Add(('Presentation: {0}' -f $PresentationUrl)) | Out-Null
+    }
+    if ($RepositoryUrl) {
+        $commentLines.Add(('GitHub repository: {0}' -f $RepositoryUrl)) | Out-Null
+    }
+    if ($OriginalVideoUrl) {
+        $commentLines.Add(('Original video: {0}' -f $OriginalVideoUrl)) | Out-Null
+    }
+
+    return [PSCustomObject]@{
+        Title           = [string](Get-ObjectPropertyValue -Object $Session -Name @('title'))
+        Subtitle        = [string]$sessionCode
+        Tags            = (($tags | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique) -join '; ')
+        Comments        = ($commentLines -join [System.Environment]::NewLine).Trim()
+        Artists         = $speakerNames
+        Year            = $year
+        Genre           = 'Documentary; Lecture'
+        Producer        = 'Microsoft'
+        PromotionUrl    = $OriginalVideoUrl
+    }
+}
+
+function Set-VideoMetadata {
+    param(
+        [parameter(Mandatory = $true)][string]$File,
+        [parameter(Mandatory = $true)][object]$Metadata
+    )
+
+    if (-not (Test-Path -LiteralPath $script:FFMPEG)) {
+        Write-Warning ('Unable to write video metadata for {0}: ffmpeg.exe was not found at {1}' -f $File, $script:FFMPEG)
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $File)) {
+        Write-Warning ('Unable to write video metadata because file was not found: {0}' -f $File)
+        return
+    }
+
+    if (-not $script:MetadataTimeoutSeconds) {
+        $script:MetadataTimeoutSeconds = 900
+    }
+
+    $originalItem = Get-Item -LiteralPath $File
+    $creationTime = $originalItem.CreationTime
+    $lastWriteTime = $originalItem.LastWriteTime
+    $outputFile = '{0}.{1}.metadata{2}' -f [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($File), [System.IO.Path]::GetFileNameWithoutExtension($File)), (New-Guid).Guid, [System.IO.Path]::GetExtension($File)
+    # -nostdin stops ffmpeg from consuming the console input handle, and the quiet logging
+    # options keep the redirected stderr pipe from filling up while remuxing large files.
+    $arguments = @('-nostdin', '-hide_banner', '-loglevel', 'error', '-nostats', '-y', '-i', $File, '-map', '0', '-c', 'copy')
+
+    # Only tags the MP4 muxer maps to standard atoms are stored; custom keys are silently
+    # dropped by ffmpeg, and 'use_metadata_tags' would make every tag unreadable to Windows.
+    $metadataMap = [ordered]@{
+        title        = $Metadata.Title
+        show         = $Metadata.Subtitle
+        episode_id   = $Metadata.Subtitle
+        artist       = $Metadata.Artists
+        album_artist = $Metadata.Artists
+        date         = $Metadata.Year
+        genre        = $Metadata.Genre
+        comment      = $Metadata.Comments
+        description  = $Metadata.Comments
+        synopsis     = $Metadata.Comments
+        keywords     = $Metadata.Tags
+        copyright    = $Metadata.Producer
+        network      = $Metadata.Producer
+    }
+
+    foreach ($metadataItem in $metadataMap.GetEnumerator()) {
+        if ($null -ne $metadataItem.Value -and -not [string]::IsNullOrWhiteSpace([string]$metadataItem.Value)) {
+            $arguments += '-metadata'
+            $arguments += ('{0}={1}' -f $metadataItem.Key, $metadataItem.Value)
+        }
+    }
+
+    $arguments += $outputFile
+
+    $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+    $pinfo.FileName = $script:FFMPEG
+    $pinfo.RedirectStandardError = $true
+    $pinfo.RedirectStandardOutput = $true
+    $pinfo.UseShellExecute = $false
+    $pinfo.CreateNoWindow = $true
+    $pinfo.Arguments = ($arguments | ForEach-Object { ConvertTo-ArgumentString $_ }) -join ' '
+
+    Write-Verbose ('Writing video metadata to {0}' -f $File)
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $pinfo
+    $process.Start() | Out-Null
+
+    # Drain both pipes concurrently; reading one to the end before the other deadlocks as soon
+    # as ffmpeg fills the buffer of the pipe that is not being read.
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+
+    if (-not $process.WaitForExit( $script:MetadataTimeoutSeconds * 1000)) {
+        Write-Warning ('Timed out writing video metadata for {0} after {1} seconds' -f $File, $script:MetadataTimeoutSeconds)
+        try { $process.Kill() } catch {}
+        try { $process.WaitForExit( 5000) | Out-Null } catch {}
+        Remove-Item -LiteralPath $outputFile -Force -ErrorAction SilentlyContinue
+        return
+    }
+
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+
+    if ($process.ExitCode -eq 0 -and (Test-Path -LiteralPath $outputFile) -and (Get-Item -LiteralPath $outputFile).Length -gt 0) {
+        Move-Item -LiteralPath $outputFile -Destination $File -Force
+        [System.IO.File]::SetCreationTime($File, $creationTime)
+        [System.IO.File]::SetLastWriteTime($File, $lastWriteTime)
+        Write-Verbose ('Video metadata written to {0}' -f $File)
+    }
+    else {
+        Remove-Item -LiteralPath $outputFile -Force -ErrorAction SilentlyContinue
+        Write-Warning ('Unable to write video metadata for {0}: {1}' -f $File, (($stderr, $stdout | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [System.Environment]::NewLine))
+    }
 }
 
 function Get-IEProxy {
@@ -4225,6 +4602,109 @@ function Resolve-CaptionSourceByPreferredLanguage {
     return $null
 }
 
+function ConvertTo-CaptionLanguageTag {
+    # Normalizes a caption language such as 'bg-BG' or 'bg_bg' to the ISO 639 subtag 'bg'.
+    # Media players (Plex, Jellyfin, Kodi) match subtitle languages on that subtag, so the
+    # region part is dropped to keep the resulting file name recognizable to them.
+    param(
+        [AllowNull()][string]$Language
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Language)) {
+        return $null
+    }
+
+    $tag = $Language.Trim().Replace('_', '-').ToLowerInvariant().Split('-')[0]
+
+    if ($tag -notmatch '^[a-z]{2,3}$') {
+        return $null
+    }
+
+    return $tag
+}
+
+function Add-CaptionLanguageToFileName {
+    # Inserts the language subtag before the extension, eg 'Session.vtt' becomes 'Session.bg.vtt'.
+    param(
+        [parameter(Mandatory = $true)][string]$Path,
+        [AllowNull()][string]$LanguageTag
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LanguageTag)) {
+        return $Path
+    }
+
+    $extension = [System.IO.Path]::GetExtension($Path)
+    $withoutExtension = $Path.Substring(0, $Path.Length - $extension.Length)
+
+    if ($withoutExtension -match ('(?i)\.{0}$' -f [regex]::Escape($LanguageTag))) {
+        return $Path
+    }
+
+    return '{0}.{1}{2}' -f $withoutExtension, $LanguageTag, $extension
+}
+
+function Get-ExistingCaptionFile {
+    # Returns a previously downloaded caption for this session, taking into account that it
+    # may carry a language subtag which is unknown until the caption source is resolved.
+    param(
+        [parameter(Mandatory = $true)][string]$Path
+    )
+
+    if (Test-Path -LiteralPath $Path) {
+        return $Path
+    }
+
+    $directory = [System.IO.Path]::GetDirectoryName($Path)
+    if ([string]::IsNullOrWhiteSpace($directory) -or -not (Test-Path -LiteralPath $directory)) {
+        return $null
+    }
+
+    $extension = [System.IO.Path]::GetExtension($Path)
+    $fileName = [System.IO.Path]::GetFileName($Path)
+    $baseName = $fileName.Substring(0, $fileName.Length - $extension.Length)
+
+    # -Filter is used rather than -Path so that characters like [ ] in session titles are
+    # not interpreted as PowerShell wildcards.
+    $existing = @(Get-ChildItem -LiteralPath $directory -Filter ('{0}.*{1}' -f $baseName, $extension) -File -ErrorAction SilentlyContinue)
+    if ($existing.Count -gt 0) {
+        return $existing[0].FullName
+    }
+
+    return $null
+}
+
+function Remove-EmptySessionFolder {
+    # Removes a per-session folder that ended up without any content. Downloads are queued as
+    # background jobs, so a folder can still look empty while a job is about to write into it;
+    # those folders are kept so the download does not lose its target directory.
+    param(
+        [parameter(Mandatory = $true)][string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    if (@(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+        return
+    }
+
+    foreach ($pendingJob in $script:BackgroundDownloadJobs) {
+        $pendingFile = [string]$pendingJob.file
+        if ([string]::IsNullOrWhiteSpace($pendingFile)) {
+            continue
+        }
+        if ([System.IO.Path]::GetDirectoryName($pendingFile) -eq $Path) {
+            Write-Verbose ('Keeping session folder {0}: a download job still targets it' -f $Path)
+            return
+        }
+    }
+
+    Write-Verbose ('Removing empty session folder {0}' -f $Path)
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+}
+
 function Clean-VideoLeftovers ( $videofile) {
     $masks = '.*.mp4.part', '.*.mp4.ytdl'
     foreach ( $mask in $masks) {
@@ -4372,6 +4852,10 @@ function Get-BackgroundDownloadJobs {
                 }
 
                 if ( $job.Type -eq 2) {
+                    if ($job.metadata) {
+                        Set-VideoMetadata -File $job.file -Metadata $job.metadata
+                    }
+
                     # Clean video leftovers
                     Clean-VideoLeftovers $job.file
                 }
@@ -4547,6 +5031,7 @@ function Add-BackgroundDownloadJob {
         $Timestamp = $null,
         $Title = '',
         $ScheduleCode = '',
+        $Metadata = $null,
         [hashtable]$Headers = $null,
         [uri]$Proxy = $null
     )
@@ -4663,6 +5148,7 @@ function Add-BackgroundDownloadJob {
         url            = $DownloadUrl
         scheduleCode   = $ScheduleCode
         timestamp      = $timestamp
+        metadata       = $Metadata
         stdOutTempFile = $stdOutTempFile
         stdErrTempFile = $stdErrTempFile
         totalBytes     = $totalBytes
@@ -5508,6 +5994,8 @@ else {
 foreach ($SessionToGet in $SessionsToGet) {
 
     $i++
+    # Reset per-session state so a skipped session cannot act on the previous session's folder
+    $ContentTargetFolder = $null
     $ProgressPercent = if ( $SessionsSelected -gt 0 ) { ($i / $SessionsSelected * 100) } else { 0 }
     Write-Progress -Id 1 -Activity 'Inspecting session information' -Status "Processing session $i of $SessionsSelected" -PercentComplete $ProgressPercent
     if ( $SessionToGet.sessionCode) {
@@ -5538,7 +6026,7 @@ foreach ($SessionToGet in $SessionsToGet) {
         # When storing session content in subfolders per session, override the content target folder to be the session subfolder
         if ( $UseSessionFolders) {
             $SessionFolder = Join-Path -Path $DownloadFolder -ChildPath $FileName
-            if ( (Test-Path $SessionFolder) -eq $false ) {
+            if ( (Test-Path -LiteralPath $SessionFolder) -eq $false ) {
                 New-Item -Path $SessionFolder -ItemType Directory | Out-Null
             }
             $ContentTargetFolder = $SessionFolder
@@ -5839,7 +6327,11 @@ foreach ($SessionToGet in $SessionsToGet) {
                         }
 
                         Write-Verbose ('Running: {0} {1}' -f $YouTubeEXE, ($Arg -join ' '))
-                        Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title)
+                        $videoMetadataOriginalUrl = Get-SessionOriginalVideoUrl -Session $SessionToGet -EventName $EventName -FallbackVideoUrl $downloadLink
+                        $videoMetadataPresentationUrl = Get-SessionPresentationUrl -Session $SessionToGet -FallbackSlidedeckUrl $SlidedeckUrl
+                        $videoMetadataRepositoryUrl = Get-SessionRepositoryUrl -Session $SessionToGet
+                        $videoMetadata = New-EventSessionVideoMetadata -Session $SessionToGet -EventName $EventName -OriginalVideoUrl $videoMetadataOriginalUrl -PresentationUrl $videoMetadataPresentationUrl -RepositoryUrl $videoMetadataRepositoryUrl
+                        Add-BackgroundDownloadJob -Type 2 -FilePath $YouTubeDL -ArgumentList $Arg -File $vidFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Metadata $videoMetadata
                     }
                     else {
                         # Video not available or no link found
@@ -5852,9 +6344,10 @@ foreach ($SessionToGet in $SessionsToGet) {
                         Write-Verbose 'Caption extension was not set; defaulting to vtt'
                     }
                     $captionExtFile = $vidFullFile -replace '.mp4', ('.{0}' -f $CaptionExt)
+                    $existingCaptionFile = Get-ExistingCaptionFile -Path $captionExtFile
 
-                    if ((Test-Path -LiteralPath $captionExtFile) -and -not $Overwrite) {
-                        Write-Host ('Caption file exists {0}' -f $captionExtFile) -ForegroundColor Gray
+                    if ($existingCaptionFile -and -not $Overwrite) {
+                        Write-Host ('Caption file exists {0}' -f $existingCaptionFile) -ForegroundColor Gray
                     }
                     else {
                         $captionInfoSourceUrl = $SessionToGet.onDemand
@@ -5928,6 +6421,13 @@ foreach ($SessionToGet in $SessionsToGet) {
                             }
                         }
                         if ( $captionFileLink) {
+                            if (-not $captionLanguageSelected) {
+                                $captionLanguageSelected = [string](Get-ObjectPropertyValue -Object $SessionToGet -Name @('captionLanguage'))
+                            }
+                            if (-not $captionLanguageSelected -and $captionFileLink -match '(?i)Caption_(?<lang>[a-z]{2,3}([-_][a-z0-9]{2,4})?)\.') {
+                                $captionLanguageSelected = $Matches.lang
+                            }
+
                             if ($captionLanguageSelected) {
                                 Write-Verbose ('Selected caption language {0} for session {1}' -f $captionLanguageSelected, $SessionToGet.sessioncode)
                             }
@@ -5936,16 +6436,27 @@ foreach ($SessionToGet in $SessionsToGet) {
                             }
                             Write-Verbose ('Retrieving caption file from URL {0}' -f $captionFileLink)
 
-                            $captionFullFile = $captionExtFile
-                            Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink, $captionFullFile)
-                            $captionNeedsAuthDownload = (Test-IsProtectedContentUrl -Url $captionFileLink)
-                            $captionAuthHeaders = $null
-                            if ($captionNeedsAuthDownload) {
-                                Write-Verbose ('Caption file requires authenticated download for session {0}' -f $SessionToGet.sessioncode)
-                                $captionAuthHeaders = Get-MSADownloadAuthHeaders -Url $captionFileLink -Proxy $ProxyURL
+                            # Suffix the file with the language subtag, eg Session.bg.vtt, so media
+                            # players can determine the subtitle language from the file name.
+                            $captionLanguageTag = ConvertTo-CaptionLanguageTag -Language $captionLanguageSelected
+                            if (-not $captionLanguageTag) {
+                                Write-Verbose ('No usable caption language subtag for session {0}; saving captions without language suffix' -f $SessionToGet.sessioncode)
                             }
-                            Add-BackgroundDownloadJob -Type 3 -FilePath $captionExtFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Headers $captionAuthHeaders -Proxy $ProxyURL
+                            $captionFullFile = Add-CaptionLanguageToFileName -Path $captionExtFile -LanguageTag $captionLanguageTag
 
+                            if ((Test-Path -LiteralPath $captionFullFile) -and -not $Overwrite) {
+                                Write-Host ('Caption file exists {0}' -f $captionFullFile) -ForegroundColor Gray
+                            }
+                            else {
+                                Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink, $captionFullFile)
+                                $captionNeedsAuthDownload = (Test-IsProtectedContentUrl -Url $captionFileLink)
+                                $captionAuthHeaders = $null
+                                if ($captionNeedsAuthDownload) {
+                                    Write-Verbose ('Caption file requires authenticated download for session {0}' -f $SessionToGet.sessioncode)
+                                    $captionAuthHeaders = Get-MSADownloadAuthHeaders -Url $captionFileLink -Proxy $ProxyURL
+                                }
+                                Add-BackgroundDownloadJob -Type 3 -FilePath $captionFullFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Headers $captionAuthHeaders -Proxy $ProxyURL
+                            }
                         }
                         else {
                             Write-Warning "Subtitles requested, but no Caption URL found"
@@ -6040,8 +6551,8 @@ foreach ($SessionToGet in $SessionsToGet) {
     }
 
     # Clear empty per-session folder
-    if ($UseSessionFolders -and -not (Get-ChildItem -Path $ContentTargetFolder)) {
-        Remove-Item -Path $ContentTargetFolder -Force
+    if ($UseSessionFolders -and -not [string]::IsNullOrWhiteSpace([string]$ContentTargetFolder)) {
+        Remove-EmptySessionFolder -Path $ContentTargetFolder
     }
 
 }
