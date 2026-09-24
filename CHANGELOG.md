@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.49
+- Added Ignite 2026 support
+
+## 4.48
+- Added metadata embedding to downloaded MP4 videos
+- Named downloaded caption files with their language tag (for example, <session>.<lang>.vtt) to improve compatibility with media players
+- Fixed per-session download folder cleanup so active background jobs are not interrupted and folder cleanup no longer uses stale state from skipped sessions
+- Fixed presentation URL resolution to honor all session code fields and avoid format errors when custom event URLs contain braces
+
 ## 4.47
 - Added support for Ignite archive portal
 - Ignite Archive portal requires pagination, except for Ignite 2025 which has a full JSON fallback endpoint
