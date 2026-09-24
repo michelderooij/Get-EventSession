@@ -19,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.47, August 21, 2026
+    Version 4.49, September 24, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -375,7 +375,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Inspire', 'Build', 'Build2026', 'Build2025', 'Custom', 'Ignite2024', 'Ignite2023','Ignite2022','Ignite2021H1','Ignite2021H2','Ignite2020')]
+    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Ignite2026', 'Inspire', 'Build', 'Build2026', 'Build2025', 'Custom', 'Ignite2024', 'Ignite2023','Ignite2022','Ignite2021H1','Ignite2021H2','Ignite2020')]
     [string]$Event = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -5163,7 +5163,7 @@ function Add-BackgroundDownloadJob {
 ##########
 
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.47')
+Write-Host( 'Get-EventSession v4.48')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)
@@ -5202,7 +5202,18 @@ switch ( $Event) {
         $EventLocale = 'en-us'
         $CaptionExt = 'vtt'
     }
-    { 'Ignite', 'Ignite2025' -contains $_ } {
+    { 'Ignite', 'Ignite2026' -contains $_ } {
+        $EventName = 'Ignite2026'
+        $EventType = 'API2'
+        $EventAPIUrl = 'https://eventtools.event.microsoft.com/ignite2026-prod/fallback/session-all-en-us.json'
+        $SessionUrl = 'https://medius.microsoft.com/video/asset/HIGHMP4/{0}'
+        $CaptionURL = 'https://medius.microsoft.com/video/asset/CAPTION/{0}'
+        $SlidedeckUrl = 'https://medius.microsoft.com/video/asset/PPT/{0}'
+        $Method = 'Get'
+        $CaptionExt = 'vtt'
+        $PreferDirect = $True
+    }
+    { 'Ignite2025' -contains $_ } {
         $EventName = 'Ignite2025'
         $EventType = 'API2'
         $EventAPIUrl = 'https://eventtools.event.microsoft.com/ignite2025-prod/fallback/session-all-en-us.json'
