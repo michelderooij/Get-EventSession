@@ -93,14 +93,6 @@ retain normal processing. Detail records with `virtual.videoEnabled = false` als
 .\Get-EventSession.ps1 -Event Custom -EventUrl https://myevent.contoso.com/api/schedule-builder/sessions/search -DownloadFolder D:\MyEvent -ScheduleCode KEY01
 ```
 
-### Tests
-
-Run the focused regression suite with Pester 5:
-
-```powershell
-Invoke-Pester -Path .\Get-EventSession.Tests.ps1
-```
-
 ### Archive-backed event metadata
 Archive-backed events such as Ignite2024 are derived from HTML session cards instead of a structured catalog API.
 For those events, the script stamps properties when the card exposes enough information.
