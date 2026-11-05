@@ -30,7 +30,7 @@ Download only 200- and 300-level Python sessions from Build 2026:
 
 Get archived Ignite 2024 sessions from the Ignite archive portal and show their info:
 ```
-.\Get-EventSession.ps1 -Event Ignite2024 -InfoOnly 
+.\Get-EventSession.ps1 -Event Ignite2024 -InfoOnly
 ```
 
 Get information of all sessions, and output only location and time information for sessions (co-)presented by Tony Redmond:
@@ -45,14 +45,60 @@ Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite:
 
 ## FAQ
 
-### MSA authentication for protected content
-Some events (Custom events or sessions with protected slidedecks) require you to sign in with a Microsoft account.
-When the script detects this, it will open an embedded sign-in dialog automatically. After signing in once, the
-session is cached for the remainder of the run so you are not prompted again.
+### Microsoft authentication for protected content
+
+Custom event URLs are not restricted to a particular hostname. When no valid catalog cache is available, the
+script inspects the catalog anonymously first. Public catalogs are retrieved without signing in. Authentication
+responses trigger the existing shared Microsoft authentication support. OAuth redirects and challenges identify
+personal (MSA) or work/school (Microsoft 365) authorities where possible; ambiguous portals retain their own
+browser account selection. Cookie names alone cannot reliably identify the account type.
 
 For Custom events, specify the base URL with `-EventUrl` and use `-Event Custom`:
+
+```powershell
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://example.com/sessions/search -DownloadFolder D:\Event
 ```
-.\Get-EventSession.ps1 -Event Custom -EventUrl https://example.com/sessions -DownloadFolder D:\Event
+
+GET catalogs with `items` and paged catalogs with `sessions` are supported. Retrieval first tries anonymous GET.
+If that fails, it tries POST using matching-origin credentials from `MSAAuth.cache`. Without a matching cache,
+POST is tried anonymously before sign-in. If these requests fail with a recoverable HTTP response, the existing
+provider-aware authentication flow is used. No catalog-method parameter is needed. Transport failures and
+server errors do not trigger sign-in. Portals needing browser-generated request context
+can open a dedicated Edge window; sign in only if the portal requires it, open the event sessions page, and
+click Continue. Keep Edge open until capture completes. Edge is required for browser request discovery;
+yt-dlp is not required in InfoOnly mode.
+
+```powershell
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://event.contoso.com/api/schedule-builder/sessions/search -Verbose -InfoOnly -Refresh
+```
+
+Relevant authentication cookies are stored in `MSAAuth.cache`, with an origin marker to prevent reuse for a
+different host or port. The file holds the current portal's authentication; switching portals replaces that
+entry after successful validation. Custom catalog caches remain endpoint-specific. `-Refresh` refreshes the
+catalog, not necessarily your sign-in. Captured request context is encrypted for the current Windows user and
+validated on reuse; rejected or expired context can require browser sign-in again. Cookies remain in Netscape
+format. Treat authentication caches and their backups as credentials; do not share or commit them.
+
+Session-search catalogs can contain summaries without media links. For compatible schedule-builder portals,
+download mode fetches the selected session's `eventInfo` details and uses its published video and slide links.
+If fresh detail context is needed, the existing Edge flow follows the selected session's published detail link
+from the sessions page. Detail request context is encrypted in the auth cache for reuse. InfoOnly does not
+perform these additional media lookups. A slide deck is downloaded only when the details publish one.
+Compatible same-origin detail-page context is reused for other selected session IDs, avoiding a sign-in
+prompt per session. Successful cached and in-memory authentication validation persists updated cookies and context.
+An explicit false on-demand availability flag skips session content processing; true or missing flags
+retain normal processing. Detail records with `virtual.videoEnabled = false` also skip content processing.
+
+```powershell
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://myevent.contoso.com/api/schedule-builder/sessions/search -DownloadFolder D:\MyEvent -ScheduleCode KEY01
+```
+
+### Tests
+
+Run the focused regression suite with Pester 5:
+
+```powershell
+Invoke-Pester -Path .\Get-EventSession.Tests.ps1
 ```
 
 ### Archive-backed event metadata
@@ -81,8 +127,8 @@ Depending on the source, the video and audio streams are seperate. First the vid
 After fetching, the two are merged.
 
 ### How to specify format?
-Depending on availability and source, the default format is worstvideo+bestaudio/best. This means the worst quality video and best audio 
-stream are fetched and merged. 'Best' is attempted if no selection could be made. You can also specify bestvideo+bestaudio to get the best 
+Depending on availability and source, the default format is worstvideo+bestaudio/best. This means the worst quality video and best audio
+stream are fetched and merged. 'Best' is attempted if no selection could be made. You can also specify bestvideo+bestaudio to get the best
 quality video, but these files can be substantially larger. You can also perform more complex filter, e.g.
 bestvideo[height=540][filesize<384MB]+bestaudio,bestvideo[height=720][filesize<512MB]+bestaudio,bestvideo[height=360]+bestaudio,bestvideo+bestaudio
 1) This would first attempt to download the video of 540p if it is less than 384MB, and best audio.
@@ -98,4 +144,4 @@ Special thanks to [Mattias Fors](http://deploywindows.info), [Scott Ladewig](htt
 
 This project is licensed under the MIT License - see the LICENSE.md for details.
 
- 
+
