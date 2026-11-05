@@ -19,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.49, September 24, 2026
+    Version 4.50, November 5, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -191,13 +191,14 @@
     .PARAMETER Event
     Specify what event to download sessions for.
     Options are:
-    - Custom                                       : Custom event endpoint requiring MSA login and page-based paging
+    - Custom                                       : Custom event endpoint supporting personal or Microsoft 365 work/school sign-in
     - Ignite                                       : Ignite contents (current)
+    - Ignite2026                                   : Ignite contents from that year
     - Ignite2025                                   : Ignite contents from that year
     - Inspire                                      : Inspire contents (current)
     - Build                                        : Build contents (current)
-    - Build2025                                    : Build contents from that year
     - Build2026                                    : Build contents from that year
+    - Build2025                                    : Build contents from that year
     - MEC                                          : MEC contents (current)
     - MEC2022                                      : MEC contents from that year
 
@@ -205,7 +206,9 @@
     Specify that you want to pick sessions to download using Out-GridView.
 
     .PARAMETER EventUrl
-    URL to use for Custom events. The URL is automatically expanded with a page parameter.
+    HTTPS URL to use for Custom events, without a hostname restriction. The catalog is inspected
+    anonymously first. Authentication is acquired only when required. GET catalogs use a page
+    parameter; supported POST catalogs use JSON paging and browser request-context discovery when needed.
 
     .PARAMETER InfoOnly
     Tells the script to return session information only.
@@ -375,7 +378,7 @@ param(
     [parameter( Mandatory = $true, ParameterSetName = 'Default')]
     [parameter( Mandatory = $true, ParameterSetName = 'Info')]
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
-    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Ignite2026', 'Inspire', 'Build', 'Build2026', 'Build2025', 'Custom', 'Ignite2024', 'Ignite2023','Ignite2022','Ignite2021H1','Ignite2021H2','Ignite2020')]
+    [ValidateSet('MEC', 'MEC2022', 'Ignite', 'Ignite2025', 'Ignite2026', 'Inspire', 'Build', 'Build2026', 'Build2025', 'Custom', 'Ignite2024', 'Ignite2023', 'Ignite2022', 'Ignite2021H1', 'Ignite2021H2', 'Ignite2020')]
     [string]$Event = '',
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -487,6 +490,7 @@ $script:BackgroundDownloadJobs = @()
 $script:JobProgressCache = @{}
 $script:JobFileLastWrite = @{}
 $script:MSAAuthWebSession = $null
+$script:MSAAuthOrigin = $null
 $script:MSABearerToken = $null
 $script:MSAContentAuthRequired = $false
 $script:CustomSignedOnDemandUrlCache = @{}
@@ -778,15 +782,15 @@ function New-EventSessionVideoMetadata {
     }
 
     return [PSCustomObject]@{
-        Title           = [string](Get-ObjectPropertyValue -Object $Session -Name @('title'))
-        Subtitle        = [string]$sessionCode
-        Tags            = (($tags | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique) -join '; ')
-        Comments        = ($commentLines -join [System.Environment]::NewLine).Trim()
-        Artists         = $speakerNames
-        Year            = $year
-        Genre           = 'Documentary; Lecture'
-        Producer        = 'Microsoft'
-        PromotionUrl    = $OriginalVideoUrl
+        Title        = [string](Get-ObjectPropertyValue -Object $Session -Name @('title'))
+        Subtitle     = [string]$sessionCode
+        Tags         = (($tags | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique) -join '; ')
+        Comments     = ($commentLines -join [System.Environment]::NewLine).Trim()
+        Artists      = $speakerNames
+        Year         = $year
+        Genre        = 'Documentary; Lecture'
+        Producer     = 'Microsoft'
+        PromotionUrl = $OriginalVideoUrl
     }
 }
 
@@ -911,7 +915,8 @@ function Invoke-WebWithRetry {
         [scriptblock]$ScriptBlock,
         [hashtable]$Variables = @{},
         [int]$MaxAttempts = 3,
-        [int]$InitialDelaySeconds = 2
+        [int]$InitialDelaySeconds = 2,
+        [switch]$SuppressErrorDetails
     )
     $attempt = 0
     $delay = $InitialDelaySeconds
@@ -925,12 +930,13 @@ function Invoke-WebWithRetry {
             if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
             if ($attempt -ge $MaxAttempts) { throw }
             $statusCode = $null
-            if ($_.Exception -is [System.Net.WebException] -and $_.Exception.Response) {
+            if ($_.Exception.Response) {
                 $statusCode = [int]$_.Exception.Response.StatusCode
             }
-            # Don't retry client errors (4xx) except 429 Too Many Requests
-            if ($statusCode -and $statusCode -ge 400 -and $statusCode -lt 500 -and $statusCode -ne 429) { throw }
-            Write-Warning ('Request failed (attempt {0}/{1}): {2}. Retrying in {3}s...' -f $attempt, $MaxAttempts, $_.Exception.Message, $delay)
+            # Redirects and client errors need caller handling, not a transient-error retry.
+            if ($statusCode -and $statusCode -ge 300 -and $statusCode -lt 500 -and $statusCode -ne 429) { throw }
+            $errorMessage = if ($SuppressErrorDetails) { 'HTTP request failed; credential-bearing details withheld' } else { $_.Exception.Message }
+            Write-Warning ('Request failed (attempt {0}/{1}): {2}. Retrying in {3}s...' -f $attempt, $MaxAttempts, $errorMessage, $delay)
             Start-Sleep -Seconds $delay
             $delay *= 2
         }
@@ -1123,7 +1129,7 @@ function Convert-CacheContentToCookieHeader {
 
     foreach ($rawLine in ($CacheContent -split "`r?`n")) {
         $line = $rawLine.Trim()
-        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) {
+        if ([string]::IsNullOrWhiteSpace($line) -or ($line.StartsWith('#') -and -not $line.StartsWith('#HttpOnly_'))) {
             continue
         }
 
@@ -1144,8 +1150,7 @@ function Convert-CacheContentToCookieHeader {
 
         if (
             $normalizedDomain -ine $targetHost -and
-            -not $targetHost.EndsWith(('.{0}' -f $normalizedDomain), [System.StringComparison]::OrdinalIgnoreCase) -and
-            -not $normalizedDomain.EndsWith(('.{0}' -f $targetHost), [System.StringComparison]::OrdinalIgnoreCase)
+            -not $targetHost.EndsWith(('.{0}' -f $normalizedDomain), [System.StringComparison]::OrdinalIgnoreCase)
         ) {
             continue
         }
@@ -1267,11 +1272,13 @@ function Get-WebSessionCookieHeader {
     param(
         [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
         [parameter(Mandatory = $true)][uri]$CookieUri,
-        [switch]$IncludeAllDomains
+        [switch]$IncludeAllDomains,
+        [switch]$AsCookies
     )
 
     $entries = New-Object System.Collections.Generic.List[string]
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $cookies = [System.Collections.ArrayList]@()
 
     try {
         $cookieContainer = $WebSession.Cookies
@@ -1303,6 +1310,7 @@ function Get-WebSessionCookieHeader {
                         continue
                     }
 
+                    $null = $cookies.Add($cookie)
                     if ($seen.Add([string]$cookie.Name)) {
                         $entries.Add(('{0}={1}' -f [string]$cookie.Name, [string]$cookie.Value)) | Out-Null
                     }
@@ -1318,6 +1326,7 @@ function Get-WebSessionCookieHeader {
         try {
             foreach ($cookie in @($WebSession.Cookies.GetCookies($CookieUri))) {
                 if ($cookie -and -not [string]::IsNullOrWhiteSpace([string]$cookie.Name) -and $seen.Add([string]$cookie.Name)) {
+                    $null = $cookies.Add($cookie)
                     $entries.Add(('{0}={1}' -f [string]$cookie.Name, [string]$cookie.Value)) | Out-Null
                 }
             }
@@ -1327,6 +1336,7 @@ function Get-WebSessionCookieHeader {
         }
     }
 
+    if ($AsCookies) { return $cookies.ToArray() }
     if ($entries.Count -eq 0) {
         return $null
     }
@@ -1360,9 +1370,15 @@ function Get-CachedMSAWebSession {
 
     Write-Verbose ('Loaded auth cache data from {0} (length {1})' -f $CachePath, $cacheContent.Length)
 
+    $originMatch = [regex]::Match($cacheContent, '(?m)^#\s*auth_origin:\s*(\S+)')
+    if ($originMatch.Success -and $originMatch.Groups[1].Value -ne $CookieUri.GetLeftPart([System.UriPartial]::Authority)) {
+        Write-Verbose 'Cached authentication belongs to a different portal origin.'
+        return $null
+    }
+
     # Restore cached bearer token if present and still valid.
     $bearerMatch = [regex]::Match($cacheContent, '(?m)^#\s*msa_bearer:\s*(\S+)')
-    if ($bearerMatch.Success) {
+    if ($bearerMatch.Success -and $originMatch.Success) {
         $cachedToken = $bearerMatch.Groups[1].Value.Trim()
         if (Test-JwtTokenValid -Token $cachedToken -MinValidityMinutes $script:MinTokenValidityMinutes) {
             $script:MSABearerToken = $cachedToken
@@ -1375,11 +1391,66 @@ function Get-CachedMSAWebSession {
 
     $cookieHeader = Convert-CacheContentToCookieHeader -CacheContent $cacheContent -CookieUri $CookieUri
     if ([string]::IsNullOrWhiteSpace($cookieHeader)) {
+        if ($script:MSABearerToken) {
+            return New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        }
         Write-Warning ('Auth cache file {0} did not contain usable cookies for {1}.' -f $CachePath, $CookieUri.Host)
         return $null
     }
 
-    $session = New-WebSessionFromCookieHeader -CookieHeader $cookieHeader -CookieUri $CookieUri
+    if (Test-IsNetscapeCookieCacheContent -CacheContent $cacheContent) {
+        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        foreach ($line in ($cacheContent -split "`r?`n")) {
+            if ([string]::IsNullOrWhiteSpace($line) -or ($line.StartsWith('#') -and -not $line.StartsWith('#HttpOnly_'))) { continue }
+            $parts = $line -split "`t", 7
+            if ($parts.Count -ne 7) { continue }
+            $domain = $parts[0] -replace '^#HttpOnly_', ''
+            $normalizedDomain = $domain.TrimStart('.')
+            if ($normalizedDomain -ine $CookieUri.Host -and -not $CookieUri.Host.EndsWith('.' + $normalizedDomain, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+            try {
+                $cookie = New-Object System.Net.Cookie($parts[5], $parts[6], $parts[2], $domain)
+                $cookie.Secure = $parts[3] -eq 'TRUE'
+                $cookie.HttpOnly = $parts[0].StartsWith('#HttpOnly_')
+                if ([long]$parts[4] -gt 0) { $cookie.Expires = [DateTimeOffset]::FromUnixTimeSeconds([long]$parts[4]).UtcDateTime }
+                if (-not $cookie.Expired) { $session.Cookies.Add($cookie) }
+            }
+            catch { Write-Verbose 'Skipping an invalid cached cookie.' }
+        }
+    }
+    else {
+        $session = New-WebSessionFromCookieHeader -CookieHeader $cookieHeader -CookieUri $CookieUri
+    }
+    $portalMatch = [regex]::Match($cacheContent, '(?m)^#\s*portal_page:\s*(\S+)')
+    if ($portalMatch.Success) {
+        $portalUri = $null
+        if ([uri]::TryCreate($portalMatch.Groups[1].Value, [System.UriKind]::Absolute, [ref]$portalUri) -and $portalUri.GetLeftPart([System.UriPartial]::Authority) -eq $CookieUri.GetLeftPart([System.UriPartial]::Authority)) {
+            Set-ObjectPropertyValue -Object $session -Name 'EventPortalUri' -Value $portalUri.GetLeftPart([System.UriPartial]::Path)
+        }
+    }
+    $requestMatch = [regex]::Match($cacheContent, '(?m)^#\s*protected_request:\s*(\S+)')
+    if ($requestMatch.Success) {
+        try {
+            $protectedRequest = ConvertTo-SecureString -String $requestMatch.Groups[1].Value -ErrorAction Stop
+            $requestText = [System.Management.Automation.PSCredential]::new('event', $protectedRequest).GetNetworkCredential().Password
+            $detailRequests = @{}
+            if ($requestText.TrimStart().StartsWith('{')) {
+                $requestState = $requestText | ConvertFrom-Json
+                $requestText = [string]$requestState.RequestUri
+                foreach ($property in $requestState.DetailRequests.PSObject.Properties) {
+                    $detailUri = $null
+                    if ([uri]::TryCreate([string]$property.Value, [System.UriKind]::Absolute, [ref]$detailUri) -and $detailUri.GetLeftPart([System.UriPartial]::Authority) -eq $CookieUri.GetLeftPart([System.UriPartial]::Authority)) {
+                        $detailRequests[$property.Name] = $detailUri.AbsoluteUri
+                    }
+                }
+                Set-ObjectPropertyValue -Object $session -Name 'EventDetailRequests' -Value $detailRequests
+            }
+            $requestUri = $null
+            if ([uri]::TryCreate($requestText, [System.UriKind]::Absolute, [ref]$requestUri) -and $requestUri.GetLeftPart([System.UriPartial]::Authority) -eq $CookieUri.GetLeftPart([System.UriPartial]::Authority)) {
+                Set-ObjectPropertyValue -Object $session -Name 'EventRequestUri' -Value $requestUri.AbsoluteUri
+            }
+        }
+        catch { Write-Verbose 'Cached event request context could not be decrypted; browser discovery may be required.' }
+    }
     $cookieCount = ($session.Cookies.GetCookies($CookieUri) | Measure-Object).Count
     Write-Verbose ('Constructed cached web session with {0} cookies for {1}' -f $cookieCount, $CookieUri.Host)
     return $session
@@ -1394,6 +1465,8 @@ function Save-MSAAuthCookieHeader {
     )
 
     $cookieHeaderCandidates = New-Object System.Collections.Generic.List[string]
+    $hasExplicitCookieHeader = -not [string]::IsNullOrWhiteSpace($CookieHeader)
+    $fingerprintText = $null
 
     if (-not [string]::IsNullOrWhiteSpace($CookieHeader)) {
         $cookieHeaderCandidates.Add($CookieHeader) | Out-Null
@@ -1441,27 +1514,63 @@ function Save-MSAAuthCookieHeader {
             $cookieHeaderToPersist = $cookieHeader
         }
 
-        if (Test-Path -LiteralPath $CachePath) {
-            try {
-                Copy-Item -LiteralPath $CachePath -Destination ('{0}.bak' -f $CachePath) -Force -ErrorAction SilentlyContinue
-            }
-            catch {
+        $cacheContentToPersist = Convert-CookieHeaderToNetscapeCookieFileContent -CookieHeader $cookieHeaderToPersist -CookieUri $CookieUri
+        if ($WebSession -and -not $hasExplicitCookieHeader) {
+            $sessionCookies = @(Get-WebSessionCookieHeader -WebSession $WebSession -CookieUri $CookieUri -AsCookies)
+            if ($sessionCookies.Count -gt 0) {
+                $cookieLines = @('# Netscape HTTP Cookie File')
+                foreach ($cookie in $sessionCookies) {
+                    $expiry = if ($cookie.Expires -eq [datetime]::MinValue) { 0 } else { ([DateTimeOffset]$cookie.Expires.ToUniversalTime()).ToUnixTimeSeconds() }
+                    $domain = if ($cookie.HttpOnly) { '#HttpOnly_{0}' -f $cookie.Domain } else { $cookie.Domain }
+                    $cookieLines += "{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}" -f $domain, $(if ($cookie.Domain.StartsWith('.')) { 'TRUE' } else { 'FALSE' }), $cookie.Path, $(if ($cookie.Secure) { 'TRUE' } else { 'FALSE' }), $expiry, $cookie.Name, $cookie.Value
+                }
+                $cacheContentToPersist = $cookieLines -join [Environment]::NewLine
             }
         }
-
-        $cacheContentToPersist = Convert-CookieHeaderToNetscapeCookieFileContent -CookieHeader $cookieHeaderToPersist -CookieUri $CookieUri
         if ([string]::IsNullOrWhiteSpace($cacheContentToPersist)) {
             $cacheContentToPersist = $cookieHeaderToPersist
         }
         else {
+            $cacheContentToPersist += '{0}# auth_origin: {1}' -f [Environment]::NewLine, $CookieUri.GetLeftPart([System.UriPartial]::Authority)
+            if ($WebSession -and $WebSession.EventPortalUri) {
+                $portalUri = [uri]$WebSession.EventPortalUri
+                if ($portalUri.GetLeftPart([System.UriPartial]::Authority) -eq $CookieUri.GetLeftPart([System.UriPartial]::Authority)) {
+                    $cacheContentToPersist += '{0}# portal_page: {1}' -f [Environment]::NewLine, $portalUri.GetLeftPart([System.UriPartial]::Path)
+                }
+            }
+            $fingerprintText = $cacheContentToPersist
+            if ($WebSession -and ($WebSession.EventRequestUri -or $WebSession.EventDetailRequests)) {
+                $requestText = [string]$WebSession.EventRequestUri
+                $fingerprintText += "`n" + $requestText
+                if ($WebSession.EventDetailRequests) {
+                    $requestText = @{ RequestUri = $requestText; DetailRequests = $WebSession.EventDetailRequests } | ConvertTo-Json -Depth 4 -Compress
+                    # Detail templates differ only by session ID; the query holds the reusable context.
+                    $fingerprintText += "`n" + ((@($WebSession.EventDetailRequests.Values | ForEach-Object { ([uri][string]$_).Query }) | Sort-Object -Unique) -join "`n")
+                }
+                $protectedRequest = ConvertFrom-SecureString -SecureString (ConvertTo-SecureString -String $requestText -AsPlainText -Force)
+                $cacheContentToPersist += '{0}# protected_request: {1}' -f [Environment]::NewLine, $protectedRequest
+            }
             # Persist a valid bearer token so the next session can reuse it without re-authenticating.
             if (-not [string]::IsNullOrWhiteSpace($script:MSABearerToken) -and
                 (Test-JwtTokenValid -Token $script:MSABearerToken -MinValidityMinutes $script:MinTokenValidityMinutes)) {
                 $cacheContentToPersist = ('{0}{1}# msa_bearer: {2}' -f $cacheContentToPersist, [Environment]::NewLine, $script:MSABearerToken)
+                $fingerprintText += "`n" + $script:MSABearerToken
             }
         }
+        if (-not $fingerprintText) { $fingerprintText = $cacheContentToPersist }
+        $hash = [System.Security.Cryptography.SHA256]::Create()
+        try { $fingerprint = [BitConverter]::ToString($hash.ComputeHash([System.Text.Encoding]::UTF8.GetBytes(('{0}|{1}' -f $CachePath, $fingerprintText)))) }
+        finally { $hash.Dispose() }
+        if ($fingerprint -eq $script:MSAAuthCacheFingerprint -and (Test-Path -LiteralPath $CachePath)) {
+            Write-Debug 'MSA auth cache unchanged; skipping save.'
+            return
+        }
 
+        if (Test-Path -LiteralPath $CachePath) {
+            try { Copy-Item -LiteralPath $CachePath -Destination ('{0}.bak' -f $CachePath) -Force -ErrorAction SilentlyContinue } catch {}
+        }
         Set-Content -LiteralPath $CachePath -Value $cacheContentToPersist -Encoding UTF8
+        $script:MSAAuthCacheFingerprint = $fingerprint
         Write-Verbose ('Saved MSA auth cache to {0} in Netscape cookie format (length {1})' -f $CachePath, $cacheContentToPersist.Length)
     }
     else {
@@ -1471,7 +1580,7 @@ function Save-MSAAuthCookieHeader {
             if (Test-Path -LiteralPath $CachePath) {
                 try { Copy-Item -LiteralPath $CachePath -Destination ('{0}.bak' -f $CachePath) -Force -ErrorAction SilentlyContinue } catch {}
             }
-            $tokenOnlyCache = ('# Netscape HTTP Cookie File{0}# msa_bearer: {1}' -f [Environment]::NewLine, $script:MSABearerToken)
+            $tokenOnlyCache = ('# Netscape HTTP Cookie File{0}# auth_origin: {1}{0}# msa_bearer: {2}' -f [Environment]::NewLine, $CookieUri.GetLeftPart([System.UriPartial]::Authority), $script:MSABearerToken)
             Set-Content -LiteralPath $CachePath -Value $tokenOnlyCache -Encoding UTF8
             Write-Verbose ('Saved WAM Bearer token to MSA auth cache {0}' -f $CachePath)
         }
@@ -1651,8 +1760,8 @@ function Test-MSAAuthenticationRequired {
     # falls through to interactive sign-in instead of treating the HTML shell as a valid API response.
     if ($statusCode -eq 200 -and $responseContentType -imatch 'text/html') {
         $effectiveUri = if (-not [string]::IsNullOrWhiteSpace($responseUri)) { $responseUri }
-                        elseif (-not [string]::IsNullOrWhiteSpace($RequestUri)) { $RequestUri }
-                        else { $null }
+        elseif (-not [string]::IsNullOrWhiteSpace($RequestUri)) { $RequestUri }
+        else { $null }
         if ($effectiveUri -match '/api/') {
             return $true
         }
@@ -1703,28 +1812,48 @@ function Get-MSAAuthApiHeaders {
     return $headers
 }
 
+function Test-MSAWebSession {
+    param(
+        [Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [uri]$TargetUri,
+        [uri]$Proxy,
+        [scriptblock]$SessionValidator
+    )
+
+    if (-not $WebSession) { return $false }
+    if ($SessionValidator) { return [bool](& $SessionValidator $WebSession) }
+    $response = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $WebSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
+    return -not (Test-MSAAuthenticationRequired -Response $response -RequestUri $TargetUri.AbsoluteUri)
+}
+
 function Get-MSAAuthenticatedWebSession {
     param(
         [parameter(Mandatory = $true)][uri]$TargetUri,
         [uri]$Proxy,
         [switch]$ValidateCachedSession,
         [switch]$ForceInteractive,
-        [switch]$PersistCache
+        [switch]$PersistCache,
+        [scriptblock]$SessionValidator,
+        [scriptblock]$OnAuthenticatedBrowser
     )
 
     # Suppress IWR progress for all validation requests in this function.
     # The assignment is function-scoped and does not affect the caller's $ProgressPreference.
     $ProgressPreference = 'SilentlyContinue'
 
+    $cookieUri = [uri]($TargetUri.GetLeftPart([System.UriPartial]::Authority) + '/')
+    $origin = $TargetUri.GetLeftPart([System.UriPartial]::Authority)
     $authCachePath = Join-Path $PSScriptRoot 'MSAAuth.cache'
-    $cookieUri = [uri]('{0}://{1}/' -f $TargetUri.Scheme, $TargetUri.Host)
     $hostKey = $cookieUri.Host.ToLowerInvariant()
     $authMutex = $null
     $lockAcquired = $false
+    $portalPageUri = $null
 
-    if ($ForceInteractive) {
+    if ($ForceInteractive -or $script:MSAAuthOrigin -ne $origin) {
         $script:MSAAuthWebSession = $null
+        $script:MSABearerToken = $null
     }
+    $script:MSAAuthOrigin = $origin
 
     if ($script:MSAAuthWebSession) {
         if (-not $ValidateCachedSession) {
@@ -1732,11 +1861,11 @@ function Get-MSAAuthenticatedWebSession {
         }
 
         try {
-            $inMemoryValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $script:MSAAuthWebSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
-            if (Test-MSAAuthenticationRequired -Response $inMemoryValidationResponse -RequestUri $TargetUri.AbsoluteUri) {
+            if (-not (Test-MSAWebSession -WebSession $script:MSAAuthWebSession -TargetUri $TargetUri -Proxy $Proxy -SessionValidator $SessionValidator)) {
                 throw 'In-memory session redirected to a sign-in page.'
             }
             Write-Verbose ('Using in-memory MSA authentication for {0}' -f $cookieUri.Host)
+            if ($PersistCache) { Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $script:MSAAuthWebSession }
             return $script:MSAAuthWebSession
         }
         catch {
@@ -1775,18 +1904,18 @@ function Get-MSAAuthenticatedWebSession {
             return $script:MSAAuthWebSession
         }
 
-        $session = Get-CachedMSAWebSession -CachePath $authCachePath -CookieUri $cookieUri
+        $session = if ($ForceInteractive) { $null } else { Get-CachedMSAWebSession -CachePath $authCachePath -CookieUri $cookieUri }
+        if ($session -and $session.EventPortalUri) { $portalPageUri = [uri]$session.EventPortalUri }
 
         if ($session -and $ValidateCachedSession) {
             try {
-                $validationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
-                if (Test-MSAAuthenticationRequired -Response $validationResponse -RequestUri $TargetUri.AbsoluteUri) {
+                if (-not (Test-MSAWebSession -WebSession $session -TargetUri $TargetUri -Proxy $Proxy -SessionValidator $SessionValidator)) {
                     throw 'Cached session redirected to a sign-in page.'
                 }
-                Write-Host 'Using cached MSA authentication from MSAAuth.cache'
+                Write-Host ('Using cached Microsoft authentication for {0}' -f $cookieUri.Host)
             }
             catch {
-                Write-Warning 'Cached MSA authentication appears invalid; interactive sign-in is required.'
+                Write-Warning 'Cached Microsoft authentication or event request context could not be validated; browser sign-in may be required.'
                 $session = $null
             }
         }
@@ -1797,8 +1926,7 @@ function Get-MSAAuthenticatedWebSession {
             $browserImportSession = Get-MSAAuthFromBrowserCookies -Browser $CookiesFromBrowser -CookieUri $cookieUri -YtDlpPath $script:YouTubeDL -CachePath $authCachePath -Proxy $Proxy
             if ($browserImportSession) {
                 try {
-                    $browserImportValidation = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $browserImportSession -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
-                    if (-not (Test-MSAAuthenticationRequired -Response $browserImportValidation -RequestUri $TargetUri.AbsoluteUri)) {
+                    if (Test-MSAWebSession -WebSession $browserImportSession -TargetUri $TargetUri -Proxy $Proxy -SessionValidator $SessionValidator) {
                         Write-Host ('Using cookies imported from {0} for {1}.' -f $CookiesFromBrowser, $CookieUri.Host)
                         $session = $browserImportSession
                     }
@@ -1814,13 +1942,12 @@ function Get-MSAAuthenticatedWebSession {
 
         if (-not $session) {
             Write-Verbose ('Attempting silent MSA sign-in bootstrap for {0}' -f $cookieUri.Host)
-            $session = Get-MSAAuthWebSessionSilent -StartUri $TargetUri -CookieUri $cookieUri -Proxy $Proxy
+            $session = if ($OnAuthenticatedBrowser -or $ForceInteractive) { $null } else { Get-MSAAuthWebSessionSilent -StartUri $TargetUri -CookieUri $cookieUri -Proxy $Proxy }
             if ($session) {
                 $silentSessionValid = $true
                 $silentCookieCount = 0
                 try {
-                    $silentValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
-                    if (Test-MSAAuthenticationRequired -Response $silentValidationResponse -RequestUri $TargetUri.AbsoluteUri) {
+                    if (-not (Test-MSAWebSession -WebSession $session -TargetUri $TargetUri -Proxy $Proxy -SessionValidator $SessionValidator)) {
                         throw 'Silent session validation indicates authentication is required.'
                     }
                 }
@@ -1835,7 +1962,6 @@ function Get-MSAAuthenticatedWebSession {
 
                 if ($silentSessionValid) {
                     Write-Verbose ('Acquired MSA authentication silently for {0}' -f $cookieUri.Host)
-                    if ($PersistCache) { Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session }
                 }
                 elseif ($silentCookieCount -gt 0) {
                     Write-Verbose ('Captured {0} silent-session cookie(s) for {1}; trying OAuth implicit flow with collected live.com cookies before interactive sign-in.' -f $silentCookieCount, $cookieUri.Host)
@@ -1846,9 +1972,7 @@ function Get-MSAAuthenticatedWebSession {
                     $implicitSession = Invoke-MSAImplicitFlowSignIn -CookieUri $cookieUri -LiveComSession $session -Proxy $Proxy
                     if ($implicitSession) {
                         try {
-                            $implicitResp = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $implicitSession `
-                                -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
-                            if (-not (Test-MSAAuthenticationRequired -Response $implicitResp -RequestUri $TargetUri.AbsoluteUri)) {
+                            if (Test-MSAWebSession -WebSession $implicitSession -TargetUri $TargetUri -Proxy $Proxy -SessionValidator $SessionValidator) {
                                 Write-Verbose ('OAuth implicit flow sign-in succeeded for {0}.' -f $cookieUri.Host)
                                 $session = $implicitSession
                                 $silentSessionValid = $true
@@ -1882,14 +2006,18 @@ function Get-MSAAuthenticatedWebSession {
                 }
 
                 $script:MSAAuthInteractiveAttemptedByHost[$hostKey] = $true
-                Write-Host 'Opening Microsoft sign-in dialog (embedded browser) for event authentication'
-                $session = Get-MSAAuthWebSession -StartUri $TargetUri -CookieUri $cookieUri -Proxy $Proxy
+                if ($OnAuthenticatedBrowser) {
+                    Write-Host 'Opening event portal browser. Sign in only if the portal requires it, then open the sessions page.'
+                }
+                else {
+                    Write-Host 'Opening Microsoft sign-in dialog for event authentication (personal or work/school account).'
+                }
+                $session = Get-MSAAuthWebSession -StartUri $TargetUri -CookieUri $cookieUri -Proxy $Proxy -OnAuthenticatedBrowser $OnAuthenticatedBrowser -PortalUri $portalPageUri
 
                 $interactiveSessionValid = $true
                 $interactiveCookieCount = 0
                 try {
-                    $interactiveValidationResponse = Invoke-WebRequest -Uri $TargetUri.AbsoluteUri -Method Head -WebSession $session -Proxy $Proxy -Headers (Get-MSAAuthApiHeaders) -ErrorAction Stop -Verbose:$false
-                    if (Test-MSAAuthenticationRequired -Response $interactiveValidationResponse -RequestUri $TargetUri.AbsoluteUri) {
+                    if (-not (Test-MSAWebSession -WebSession $session -TargetUri $TargetUri -Proxy $Proxy -SessionValidator $SessionValidator)) {
                         throw 'Interactive session redirected to a sign-in page.'
                     }
                 }
@@ -1903,6 +2031,7 @@ function Get-MSAAuthenticatedWebSession {
                 }
 
                 if (-not $interactiveSessionValid) {
+                    if ($SessionValidator) { return $null }
                     if ($interactiveCookieCount -gt 0) {
                         Write-Verbose ('Proceeding with {0} captured cookie(s) for {1}; API access may be limited.' -f $interactiveCookieCount, $cookieUri.Host)
                     }
@@ -1911,10 +2040,10 @@ function Get-MSAAuthenticatedWebSession {
                     }
                 }
 
-                if ($PersistCache) { Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session }
             }
         }
 
+        if ($PersistCache -and $session) { Save-MSAAuthCookieHeader -CachePath $authCachePath -CookieUri $cookieUri -WebSession $session }
         $script:MSAAuthWebSession = $session
         return $session
     }
@@ -2242,9 +2371,9 @@ function Invoke-MSAImplicitFlowSignIn {
         [uri]$Proxy
     )
 
-    $portalRoot  = [uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host)
-    $liveUri     = [uri]'https://login.live.com/'
-    $aadUri      = [uri]'https://login.microsoftonline.com/'
+    $portalRoot = [uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host)
+    $liveUri = [uri]'https://login.live.com/'
+    $aadUri = [uri]'https://login.microsoftonline.com/'
 
     # Seed a fresh session with only the live.com (and AAD) cookies from the bootstrap.
     $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
@@ -2367,53 +2496,37 @@ function Invoke-EdgeCDPCommand {
 
     $ws = New-Object System.Net.WebSockets.ClientWebSocket
     $cts = New-Object System.Threading.CancellationTokenSource
-    $connectTask = $ws.ConnectAsync([uri]$WebSocketUrl, $cts.Token)
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    while (-not $connectTask.IsCompleted -and [DateTime]::UtcNow -lt $deadline) {
-        [System.Threading.Thread]::Sleep(100)
+    $cts.CancelAfter([Math]::Max(1, $TimeoutSeconds) * 1000)
+    try {
+        $ws.ConnectAsync([uri]$WebSocketUrl, $cts.Token).GetAwaiter().GetResult()
+        $payload = @{ id = 1; method = $Method; params = $Params } | ConvertTo-Json -Compress -Depth 5
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+        $ws.SendAsync([ArraySegment[byte]]::new($bytes), [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $cts.Token).GetAwaiter().GetResult()
+        $receiveBuffer = New-Object byte[] 65536
+        while (-not $cts.IsCancellationRequested) {
+            $message = New-Object System.IO.MemoryStream
+            try {
+                do {
+                    $result = $ws.ReceiveAsync([ArraySegment[byte]]::new($receiveBuffer), $cts.Token).GetAwaiter().GetResult()
+                    if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) { throw 'CDP connection closed.' }
+                    $message.Write($receiveBuffer, 0, $result.Count)
+                } while (-not $result.EndOfMessage)
+                $response = [System.Text.Encoding]::UTF8.GetString($message.ToArray()) | ConvertFrom-Json
+            }
+            finally { $message.Dispose() }
+            if ($response.id -eq 1) {
+                if ($response.error) { throw 'CDP command was rejected.' }
+                return $response
+            }
+        }
+        throw 'CDP command timed out.'
     }
-    if (-not $connectTask.IsCompleted -or $ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) {
+    catch { throw ('CDP command {0} failed or timed out; response details withheld.' -f $Method) }
+    finally {
         $cts.Cancel()
         $ws.Dispose()
-        throw ('CDP WebSocket connect timed out or failed for {0}' -f $WebSocketUrl)
+        $cts.Dispose()
     }
-
-    $payload = @{ id = 1; method = $Method; params = $Params } | ConvertTo-Json -Compress -Depth 5
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
-    $sendTask = $ws.SendAsync(
-        [ArraySegment[byte]]::new($bytes),
-        [System.Net.WebSockets.WebSocketMessageType]::Text,
-        $true,
-        $cts.Token)
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    while (-not $sendTask.IsCompleted -and [DateTime]::UtcNow -lt $deadline) {
-        [System.Threading.Thread]::Sleep(100)
-    }
-
-    $receiveBuffer = New-Object byte[] 65536
-    $resultText = New-Object System.Text.StringBuilder
-    $receiveDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-
-    while ([DateTime]::UtcNow -lt $receiveDeadline) {
-        $receiveTask = $ws.ReceiveAsync([ArraySegment[byte]]::new($receiveBuffer), $cts.Token)
-        $receiveDeadline2 = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-        while (-not $receiveTask.IsCompleted -and [DateTime]::UtcNow -lt $receiveDeadline2) {
-            [System.Threading.Thread]::Sleep(50)
-        }
-        if (-not $receiveTask.IsCompleted) { break }
-        $result = $receiveTask.GetAwaiter().GetResult()
-        $chunk = [System.Text.Encoding]::UTF8.GetString($receiveBuffer, 0, $result.Count)
-        $null = $resultText.Append($chunk)
-        if ($result.EndOfMessage) { break }
-    }
-
-    try { $ws.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, '', $cts.Token) | Out-Null } catch {}
-    $ws.Dispose()
-
-    if ($resultText.Length -eq 0) {
-        throw 'CDP command returned empty response.'
-    }
-    return $resultText.ToString() | ConvertFrom-Json
 }
 
 function New-MSAWebSessionFromCDPCookies {
@@ -2437,9 +2550,10 @@ function New-MSAWebSessionFromCDPCookies {
         $netCookie.Name = [string]$c.name
         $netCookie.Value = [string]$c.value
         $netCookie.Path = if ([string]::IsNullOrWhiteSpace([string]$c.path)) { '/' } else { [string]$c.path }
-        $netCookie.Domain = $targetHost
+        $netCookie.Domain = [string]$c.domain
         $netCookie.Secure = [bool]$c.secure
         $netCookie.HttpOnly = [bool]$c.httpOnly
+        if ($c.expires -gt 0) { $netCookie.Expires = [DateTimeOffset]::FromUnixTimeSeconds([long]$c.expires).UtcDateTime }
 
         try {
             $session.Cookies.Add($CookieUri, $netCookie)
@@ -2740,7 +2854,7 @@ function Resolve-OAuthChallenge {
         [uri]$Proxy
     )
 
-    $result = @{ ClientId = $null; TenantId = 'common'; Scope = $null }
+    $result = @{ ClientId = $null; TenantId = 'common'; Scope = $null; AccountType = 'Unknown' }
 
     $reqParams = @{ Uri = $TargetUri.AbsoluteUri; MaximumRedirection = 0; ErrorAction = 'Stop'; Verbose = $false }
     if ($Proxy) { $reqParams.Proxy = $Proxy }
@@ -2822,6 +2936,15 @@ function Resolve-OAuthChallenge {
         }
     }
 
+    if ($location -match '(?i)^https://login\.live\.com/') {
+        $result.TenantId = 'consumers'
+    }
+    if ($result.TenantId -in @('consumers', '9188040d-6c67-4c5b-b112-36a304b66dad')) {
+        $result.AccountType = 'MSA'
+    }
+    elseif ($result.TenantId -and $result.TenantId -notin @('common', '')) {
+        $result.AccountType = 'M365'
+    }
     return $result
 }
 
@@ -2864,7 +2987,7 @@ try {
 
     # Resolve provider before the message loop starts (blocking .GetAwaiter().GetResult() is fine here).
     $provider = $null
-    foreach ($provUri in @($Authority, 'https://login.microsoft.com/consumers')) {
+    foreach ($provUri in @($Authority)) {
         $pt   = [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager]::FindAccountProviderAsync($provUri)
         $prov = [System.WindowsRuntimeSystemExtensions]::AsTask($pt).GetAwaiter().GetResult()
         if ($prov) { $provider = $prov; break }
@@ -2933,23 +3056,23 @@ catch {
 '@
 
     $tempScript = $null
-    $proc       = $null
+    $proc = $null
     try {
         $tempScript = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.ps1'
         [System.IO.File]::WriteAllText($tempScript, $ps5Script, [System.Text.Encoding]::UTF8)
 
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $startInfo.FileName               = $ps5Path
-        $startInfo.Arguments              = '-NoProfile -STA -ExecutionPolicy Bypass -File "{0}"' -f $tempScript
-        $startInfo.UseShellExecute        = $false
+        $startInfo.FileName = $ps5Path
+        $startInfo.Arguments = '-NoProfile -STA -ExecutionPolicy Bypass -File "{0}"' -f $tempScript
+        $startInfo.UseShellExecute = $false
         $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError  = $true
-        $startInfo.CreateNoWindow         = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
         # Pass WAM parameters via environment variables — avoids quoting/parsing issues for
         # values like scopes that contain spaces when passed as command-line arguments.
         $startInfo.EnvironmentVariables['WAM_PS5_AUTHORITY'] = $Authority
-        $startInfo.EnvironmentVariables['WAM_PS5_CLIENTID']  = $ClientId
-        $startInfo.EnvironmentVariables['WAM_PS5_SCOPE']     = $Scope
+        $startInfo.EnvironmentVariables['WAM_PS5_CLIENTID'] = $ClientId
+        $startInfo.EnvironmentVariables['WAM_PS5_SCOPE'] = $Scope
 
         $proc = [System.Diagnostics.Process]::Start($startInfo)
         $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
@@ -2962,7 +3085,7 @@ catch {
         }
 
         $stdout = $stdoutTask.GetAwaiter().GetResult().Trim()
-        $stderr  = $stderrTask.GetAwaiter().GetResult().Trim()
+        $stderr = $stderrTask.GetAwaiter().GetResult().Trim()
 
         if ($proc.ExitCode -ne 0) {
             if ($stderr -match '(?i)UserCancel') { throw 'MSA authentication cancelled.' }
@@ -3007,28 +3130,28 @@ function Find-MSALAssemblies {
 
     foreach ($root in $searchRoots) {
         Get-ChildItem -Path $root -Filter 'Microsoft.Identity.Client.dll' -Recurse -Depth 6 -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch '(?i)\\(runtimes|ref|native|resources)\\' } |
-            ForEach-Object {
-                try {
-                    $ver = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($_.FullName).FileVersion -as [version]
-                    if (-not $ver) { return }
-                    $brokerPath = Join-Path $_.DirectoryName 'Microsoft.Identity.Client.Broker.dll'
-                    $hasBroker  = Test-Path -LiteralPath $brokerPath
-                    $candidates.Add([pscustomobject]@{
+        Where-Object { $_.FullName -notmatch '(?i)\\(runtimes|ref|native|resources)\\' } |
+        ForEach-Object {
+            try {
+                $ver = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($_.FullName).FileVersion -as [version]
+                if (-not $ver) { return }
+                $brokerPath = Join-Path $_.DirectoryName 'Microsoft.Identity.Client.Broker.dll'
+                $hasBroker = Test-Path -LiteralPath $brokerPath
+                $candidates.Add([pscustomobject]@{
                         MsalPath   = $_.FullName
                         BrokerPath = if ($hasBroker) { $brokerPath } else { $null }
                         HasBroker  = $hasBroker
                         Version    = $ver
                     })
-                }
-                catch {}
             }
+            catch {}
+        }
     }
 
     if ($candidates.Count -eq 0) { return $null }
     return $candidates |
-        Sort-Object @{ e = 'HasBroker'; Descending = $true }, @{ e = 'Version'; Descending = $true } |
-        Select-Object -First 1
+    Sort-Object @{ e = 'HasBroker'; Descending = $true }, @{ e = 'Version'; Descending = $true } |
+    Select-Object -First 1
 }
 
 function Get-WAMAccessTokenViaMSAL {
@@ -3145,9 +3268,9 @@ namespace GetEventSession.Internal {
 function Get-OAuthTokenViaPKCE {
     param(
         [parameter(Mandatory = $true)][string]$ClientId,
-        [string]$TenantId      = 'consumers',
-        [string]$Scope         = 'openid profile email offline_access',
-        [int]$TimeoutSeconds   = 120
+        [string]$TenantId = 'consumers',
+        [string]$Scope = 'openid profile email offline_access',
+        [int]$TimeoutSeconds = 120
     )
 
     if (-not [System.Net.HttpListener]::IsSupported) {
@@ -3157,20 +3280,20 @@ function Get-OAuthTokenViaPKCE {
     # Build PKCE pair.
     $verifierBytes = New-Object byte[] 32
     ([System.Security.Cryptography.RandomNumberGenerator]::Create()).GetBytes($verifierBytes)
-    $codeVerifier  = [Convert]::ToBase64String($verifierBytes) -replace '\+', '-' -replace '/', '_' -replace '=', ''
-    $sha256        = [System.Security.Cryptography.SHA256]::Create()
+    $codeVerifier = [Convert]::ToBase64String($verifierBytes) -replace '\+', '-' -replace '/', '_' -replace '=', ''
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
     $challengeBytes = $sha256.ComputeHash([System.Text.Encoding]::ASCII.GetBytes($codeVerifier))
-    $codeChallenge  = [Convert]::ToBase64String($challengeBytes) -replace '\+', '-' -replace '/', '_' -replace '=', ''
+    $codeChallenge = [Convert]::ToBase64String($challengeBytes) -replace '\+', '-' -replace '/', '_' -replace '=', ''
 
     # Find a free port.
-    $port     = $null
+    $port = $null
     $listener = $null
     foreach ($candidate in (Get-Random -Minimum 49152 -Maximum 65000 -Count 10)) {
         try {
             $l = New-Object System.Net.HttpListener
             $l.Prefixes.Add("http://localhost:$candidate/")
             $l.Start()
-            $port     = $candidate
+            $port = $candidate
             $listener = $l
             break
         }
@@ -3179,24 +3302,24 @@ function Get-OAuthTokenViaPKCE {
     if (-not $listener) { throw 'Could not bind a local HTTP listener port for OAuth redirect.' }
 
     $redirectUri = "http://localhost:$port/"
-    $state       = [Guid]::NewGuid().ToString('N')
+    $state = [Guid]::NewGuid().ToString('N')
     $effectiveScope = if ([string]::IsNullOrWhiteSpace($Scope)) { 'openid profile email offline_access' } else { $Scope }
 
     $authUrl = ('https://login.microsoftonline.com/{0}/oauth2/v2.0/authorize?client_id={1}' +
-                '&response_type=code&redirect_uri={2}&scope={3}' +
-                '&code_challenge={4}&code_challenge_method=S256&state={5}' +
-                '&prompt=select_account') -f
-                $TenantId, $ClientId,
-                [Uri]::EscapeDataString($redirectUri),
-                [Uri]::EscapeDataString($effectiveScope),
-                $codeChallenge, $state
+        '&response_type=code&redirect_uri={2}&scope={3}' +
+        '&code_challenge={4}&code_challenge_method=S256&state={5}' +
+        '&prompt=select_account') -f
+    $TenantId, $ClientId,
+    [Uri]::EscapeDataString($redirectUri),
+    [Uri]::EscapeDataString($effectiveScope),
+    $codeChallenge, $state
 
     try {
         Write-Host ('Opening browser for OAuth sign-in ({0})...' -f $TenantId)
         Start-Process $authUrl
 
         $contextTask = $listener.GetContextAsync()
-        $deadline    = (Get-Date).AddSeconds($TimeoutSeconds)
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
         while (-not $contextTask.IsCompleted -and (Get-Date) -lt $deadline) {
             [System.Threading.Thread]::Sleep(200)
         }
@@ -3204,12 +3327,12 @@ function Get-OAuthTokenViaPKCE {
             throw ('OAuth browser sign-in timed out after {0}s.' -f $TimeoutSeconds)
         }
 
-        $ctx   = $contextTask.GetAwaiter().GetResult()
+        $ctx = $contextTask.GetAwaiter().GetResult()
         $query = $ctx.Request.Url.Query.TrimStart('?')
 
         # Send a close-the-tab page back so the browser window looks finished.
         $doneHtml = '<html><head><title>Sign-in complete</title></head><body>' +
-                    '<h3>Sign-in complete — you can close this tab.</h3></body></html>'
+        '<h3>Sign-in complete — you can close this tab.</h3></body></html>'
         $doneBytes = [System.Text.Encoding]::UTF8.GetBytes($doneHtml)
         $ctx.Response.ContentType = 'text/html; charset=utf-8'
         $ctx.Response.OutputStream.Write($doneBytes, 0, $doneBytes.Length)
@@ -3253,13 +3376,13 @@ function Get-OAuthTokenViaPKCE {
 function Get-OAuthTokenViaDeviceCode {
     param(
         [parameter(Mandatory = $true)][string]$ClientId,
-        [string]$TenantId      = 'consumers',
-        [string]$Scope         = 'openid profile email offline_access',
-        [int]$TimeoutSeconds   = 300,
+        [string]$TenantId = 'consumers',
+        [string]$Scope = 'openid profile email offline_access',
+        [int]$TimeoutSeconds = 300,
         [uri]$Proxy
     )
 
-    $baseUrl        = ('https://login.microsoftonline.com/{0}/oauth2/v2.0' -f $TenantId)
+    $baseUrl = ('https://login.microsoftonline.com/{0}/oauth2/v2.0' -f $TenantId)
     $effectiveScope = if ([string]::IsNullOrWhiteSpace($Scope)) { 'openid profile email offline_access' } else { $Scope }
 
     $dcParams = @{
@@ -3279,9 +3402,9 @@ function Get-OAuthTokenViaDeviceCode {
     Write-Host ''
     try { Start-Process $dcResp.verification_uri } catch {}
 
-    $interval  = [Math]::Max(5, [int]$dcResp.interval)
+    $interval = [Math]::Max(5, [int]$dcResp.interval)
     $expiresIn = [Math]::Max(60, [int]$dcResp.expires_in)
-    $deadline  = (Get-Date).AddSeconds([Math]::Min($TimeoutSeconds, $expiresIn))
+    $deadline = (Get-Date).AddSeconds([Math]::Min($TimeoutSeconds, $expiresIn))
 
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds $interval
@@ -3308,10 +3431,10 @@ function Get-OAuthTokenViaDeviceCode {
             if ($errJson) {
                 switch ($errJson.error) {
                     'authorization_pending' { }
-                    'slow_down'             { $interval += 5 }
+                    'slow_down' { $interval += 5 }
                     'authorization_declined' { throw 'MSA device code authentication was declined.' }
-                    'expired_token'          { throw 'MSA device code has expired.' }
-                    default                  { throw ('Device code token error: {0} — {1}' -f $errJson.error, $errJson.error_description) }
+                    'expired_token' { throw 'MSA device code has expired.' }
+                    default { throw ('Device code token error: {0} — {1}' -f $errJson.error, $errJson.error_description) }
                 }
             }
             else { throw }
@@ -3377,12 +3500,6 @@ function Get-WAMAccessToken {
                 $findTask = [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager]::FindAccountProviderAsync($authority)
                 $provider = $findTask.AsTask().GetAwaiter().GetResult()
 
-                if (-not $provider -and $authority -notmatch '(?i)/consumers/?$') {
-                    $consumersAuthority = 'https://login.microsoft.com/consumers'
-                    $findTask2 = [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager]::FindAccountProviderAsync($consumersAuthority)
-                    $provider = $findTask2.AsTask().GetAwaiter().GetResult()
-                }
-
                 if (-not $provider) {
                     $shared.Error = ('WAM: no account provider found for {0}.' -f $authority)
                     return
@@ -3431,7 +3548,8 @@ function Invoke-EdgeCDPAuthSession {
     param(
         [parameter(Mandatory = $true)][uri]$CookieUri,
         [parameter(Mandatory = $true)][uri]$PortalRootUri,
-        [uri]$Proxy
+        [uri]$Proxy,
+        [scriptblock]$OnAuthenticatedBrowser
     )
 
     $edgePath = Get-EdgeExecutablePath
@@ -3445,6 +3563,7 @@ function Invoke-EdgeCDPAuthSession {
 
     $edgeArgs = @(
         ('--remote-debugging-port={0}' -f $debugPort),
+        '--remote-debugging-address=127.0.0.1',
         ('--user-data-dir={0}' -f $tempProfile),
         '--no-first-run',
         '--no-default-browser-check',
@@ -3480,6 +3599,10 @@ function Invoke-EdgeCDPAuthSession {
         $lbl = New-Object System.Windows.Forms.Label
         $lbl.Left = 16; $lbl.Top = 16; $lbl.Width = 516; $lbl.Height = 80
         $lbl.Text = ('Sign in at {0} in the Edge window that opened, then click Continue here.{1}IMPORTANT: Keep Edge open until you have clicked Continue — closing Edge early prevents cookie collection.' -f $CookieUri.Host, [Environment]::NewLine)
+        if ($OnAuthenticatedBrowser) {
+            $form.Text = 'Event Portal'
+            $lbl.Text = ('Open the event sessions page at {0}, signing in only if required, then click Continue here. Keep Edge open until the catalog request has been captured.' -f $CookieUri.Host)
+        }
 
         $statusLbl = New-Object System.Windows.Forms.Label
         $statusLbl.Left = 16; $statusLbl.Top = 104; $statusLbl.Width = 516; $statusLbl.Height = 20
@@ -3530,6 +3653,9 @@ function Invoke-EdgeCDPAuthSession {
         for ($cdpAttempt = 1; $cdpAttempt -le $maxCDPAttempts; $cdpAttempt++) {
             if ($cdpAttempt -gt 1) {
                 $statusLbl.Text = ('No sign-in detected — sign in to Edge and click Continue ({0}/{1}).' -f $cdpAttempt, $maxCDPAttempts)
+                if ($OnAuthenticatedBrowser) {
+                    $statusLbl.Text = ('Catalog request not ready. Reload the sessions page, then Continue ({0}/{1}).' -f $cdpAttempt, $maxCDPAttempts)
+                }
                 $statusLbl.ForeColor = [System.Drawing.Color]::DarkOrange
                 $statusLbl.Tag = $null
                 $form.DialogResult = [System.Windows.Forms.DialogResult]::None
@@ -3555,6 +3681,7 @@ function Invoke-EdgeCDPAuthSession {
                     try {
                         $recoveryArgs = @(
                             ('--remote-debugging-port={0}' -f $debugPort),
+                            '--remote-debugging-address=127.0.0.1',
                             ('--user-data-dir={0}' -f $tempProfile),
                             '--no-first-run', '--no-default-browser-check',
                             '--disable-sync', '--disable-extensions',
@@ -3577,9 +3704,9 @@ function Invoke-EdgeCDPAuthSession {
                             if ($recoveryCdpCookies -and $recoveryCdpCookies.result -and $recoveryCdpCookies.result.cookies) {
                                 $recoveredAll = @($recoveryCdpCookies.result.cookies)
                                 $recoveredTarget = @($recoveredAll | Where-Object {
-                                    $d = ([string]$_.domain).TrimStart('.').ToLowerInvariant()
-                                    $d -ieq $CookieUri.Host -or $CookieUri.Host.EndsWith(('.{0}' -f $d), [System.StringComparison]::OrdinalIgnoreCase)
-                                })
+                                        $d = ([string]$_.domain).TrimStart('.').ToLowerInvariant()
+                                        $d -ieq $CookieUri.Host -or $CookieUri.Host.EndsWith(('.{0}' -f $d), [System.StringComparison]::OrdinalIgnoreCase)
+                                    })
                                 if ($recoveredTarget.Count -gt 0) {
                                     Write-Verbose ('CDP recovery: collected {0} host cookie(s) from relaunched Edge profile.' -f $recoveredTarget.Count)
                                     try { Invoke-EdgeCDPCommand -WebSocketUrl ([string]$recoveryCdp.webSocketDebuggerUrl) -Method 'Browser.close' -TimeoutSeconds 3 | Out-Null } catch {}
@@ -3644,6 +3771,23 @@ function Invoke-EdgeCDPAuthSession {
             Write-Verbose ('CDP: {0} total / {1} host-matched cookies for {2}.' -f $allCookies.Count, $targetCookies.Count, $CookieUri.Host)
 
             if ($targetCookies.Count -gt 0) {
+                if ($OnAuthenticatedBrowser) {
+                    try {
+                        $browserSession = New-MSAWebSessionFromCDPCookies -CookieUri $CookieUri -Cookies $allCookies -Proxy $Proxy
+                        $null = & $OnAuthenticatedBrowser $debugPort $browserSession
+                        return $browserSession
+                    }
+                    catch {
+                        if ($cdpAttempt -ge $maxCDPAttempts) { throw }
+                        if ($_.Exception.Data['StatusCode']) {
+                            Write-Warning ('Catalog request validation failed (HTTP {0}). Reload the sessions page, then click Continue.' -f $_.Exception.Data['StatusCode'])
+                        }
+                        else {
+                            Write-Warning 'Catalog context is not ready. Open or reload the event sessions page in the same Edge window, then click Continue.'
+                        }
+                        continue
+                    }
+                }
                 break
             }
 
@@ -3678,6 +3822,8 @@ function Invoke-EdgeCDPAuthSession {
     }
     finally {
         # Graceful close first, hard kill if Edge is still running after 2 s.
+        if ($timer) { $timer.Stop(); $timer.Dispose() }
+        if ($form) { $form.Dispose() }
         if ($edgeProcess -and -not $edgeProcess.HasExited) {
             try {
                 $browserWsUrl = (Invoke-RestMethod -Uri ('http://127.0.0.1:{0}/json/version' -f $debugPort) -ErrorAction SilentlyContinue -Verbose:$false).webSocketDebuggerUrl
@@ -3702,7 +3848,9 @@ function Get-MSAAuthWebSession {
     param(
         [parameter(Mandatory = $true)][uri]$StartUri,
         [parameter(Mandatory = $true)][uri]$CookieUri,
-        [uri]$Proxy
+        [uri]$Proxy,
+        [scriptblock]$OnAuthenticatedBrowser,
+        [uri]$PortalUri
     )
 
     if (-not [Environment]::UserInteractive) {
@@ -3711,14 +3859,19 @@ function Get-MSAAuthWebSession {
 
     # Navigate to the portal root so the SPA login flow fires instead of returning raw JSON.
     $portalRootUri = [uri]('{0}://{1}/' -f $CookieUri.Scheme, $CookieUri.Host)
+    if ($PortalUri -and $PortalUri.GetLeftPart([System.UriPartial]::Authority) -eq $CookieUri.GetLeftPart([System.UriPartial]::Authority)) {
+        $portalRootUri = $PortalUri
+    }
 
     # ── PATH 1: WAM (Windows Authentication Manager) ─────────────────────────
     # Auto-discovers the AAD client_id from the 302/401 challenge, then shows
     # the native Windows account picker — no browser window required.
     Write-Verbose ('Probing {0} for OAuth2 challenge parameters...' -f $StartUri.Host)
-    $challenge = Resolve-OAuthChallenge -TargetUri $StartUri -Proxy $Proxy
+    $challengeUri = if ($PortalUri) { $portalRootUri } else { $StartUri }
+    $challenge = Resolve-OAuthChallenge -TargetUri $challengeUri -Proxy $Proxy
+    Write-Verbose ('Microsoft account requirement: {0}; authority tenant: {1}' -f $challenge.AccountType, $challenge.TenantId)
 
-    if (-not [string]::IsNullOrWhiteSpace($challenge.ClientId)) {
+    if (-not $OnAuthenticatedBrowser -and -not [string]::IsNullOrWhiteSpace($challenge.ClientId)) {
         Write-Verbose ('OAuth2 challenge: client_id={0}  tenant={1}' -f $challenge.ClientId, $challenge.TenantId)
         try {
             Write-Host ('Requesting sign-in via Windows Authentication Manager for {0}...' -f $CookieUri.Host)
@@ -3742,8 +3895,8 @@ function Get-MSAAuthWebSession {
         # Falls through if the client does not have device-code flow enabled.
         if ([string]::IsNullOrWhiteSpace($script:MSABearerToken)) {
             try {
-                $dcTenant = if ($challenge.TenantId -in @('common', 'organizations', '')) { 'consumers' } else { $challenge.TenantId }
-                $dcScope  = if ([string]::IsNullOrWhiteSpace($challenge.Scope)) { 'openid profile email offline_access' } else { $challenge.Scope }
+                $dcTenant = if ([string]::IsNullOrWhiteSpace($challenge.TenantId)) { 'common' } else { $challenge.TenantId }
+                $dcScope = if ([string]::IsNullOrWhiteSpace($challenge.Scope)) { 'openid profile email offline_access' } else { $challenge.Scope }
                 Write-Verbose ('Trying OAuth device code flow for {0} (tenant={1})...' -f $CookieUri.Host, $dcTenant)
                 $dcToken = Get-OAuthTokenViaDeviceCode -ClientId $challenge.ClientId -TenantId $dcTenant -Scope $dcScope -Proxy $Proxy
                 if (-not [string]::IsNullOrWhiteSpace($dcToken)) {
@@ -3762,7 +3915,7 @@ function Get-MSAAuthWebSession {
         }
     }
     else {
-        Write-Verbose 'No OAuth2 challenge parameters detected; skipping WAM and going directly to Edge CDP.'
+        Write-Verbose 'Using portal-managed browser sign-in because browser request context is needed or no usable OAuth challenge was found.'
     }
 
     # ── PATH 2: Edge CDP ──────────────────────────────────────────────────────
@@ -3770,7 +3923,11 @@ function Get-MSAAuthWebSession {
     # in the browser; cookies are extracted via Chrome DevTools Protocol.
     $edgePath = Get-EdgeExecutablePath
     if ($edgePath) {
-        return Invoke-EdgeCDPAuthSession -CookieUri $CookieUri -PortalRootUri $portalRootUri -Proxy $Proxy
+        return Invoke-EdgeCDPAuthSession -CookieUri $CookieUri -PortalRootUri $portalRootUri -Proxy $Proxy -OnAuthenticatedBrowser $OnAuthenticatedBrowser
+    }
+
+    if ($OnAuthenticatedBrowser) {
+        throw 'Microsoft Edge is required to discover this event catalog request.'
     }
 
     # ── PATH 3: Embedded IE/Trident with paste-box fallback ───────────────────
@@ -3905,14 +4062,469 @@ function Get-MSAAuthWebSession {
     throw 'MSA sign-in requires WAM (no AAD challenge detected), Microsoft Edge (not found), or an STA runspace (use powershell.exe -STA). None of these are available in this session.'
 }
 
+function Get-CustomEventBrowserRequestContext {
+    param(
+        [parameter(Mandatory = $true)][int]$DebugPort,
+        [parameter(Mandatory = $true)][uri]$CatalogUri,
+        [string]$SessionId
+    )
+
+    $endpointJson = $CatalogUri.GetLeftPart([System.UriPartial]::Path) | ConvertTo-Json -Compress
+    $expression = @'
+new Promise(function(resolve){var endpoint=ENDPOINT,deadline=Date.now()+10000;function inspect(){var entries=performance.getEntriesByType('resource');for(var index=entries.length-1;index>=0;index--){var resource=new URL(entries[index].name,location.href);if(resource.origin+resource.pathname===endpoint){resolve({url:resource.href,referer:location.origin+location.pathname});return;}}if(Date.now()>=deadline){resolve(null);return;}setTimeout(inspect,250);}inspect();})
+'@
+    $expression = $expression.Replace('ENDPOINT', $endpointJson)
+    $pages = @(Invoke-RestMethod -Uri ('http://127.0.0.1:{0}/json' -f $DebugPort) -Verbose:$false -Debug:$false -ErrorAction Stop)
+    foreach ($page in $pages) {
+        if ($page.type -ne 'page' -or -not $page.webSocketDebuggerUrl) { continue }
+        $pageUri = $null
+        if (-not [uri]::TryCreate([string]$page.url, [System.UriKind]::Absolute, [ref]$pageUri) -or $pageUri.Authority -ine $CatalogUri.Authority -or $pageUri.Scheme -ine $CatalogUri.Scheme) { continue }
+        if ($SessionId) {
+            $sessionIdJson = $SessionId | ConvertTo-Json -Compress
+            $linkExpression = '(function(){var suffix="/session-details/"+SESSIONID;var link=Array.from(document.links).find(function(link){return new URL(link.href,location.href).pathname.endsWith(suffix);});return link?link.href:null;})()'.Replace('SESSIONID', $sessionIdJson)
+            $linkResult = Invoke-EdgeCDPCommand -WebSocketUrl $page.webSocketDebuggerUrl -Method 'Runtime.evaluate' -Params @{ expression = $linkExpression; returnByValue = $true }
+            $detailPageUri = $null
+            if ([uri]::TryCreate([string]$linkResult.result.result.value, [System.UriKind]::Absolute, [ref]$detailPageUri) -and $detailPageUri.GetLeftPart([System.UriPartial]::Authority) -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority)) {
+                Write-Verbose ('Opening session detail page for {0}' -f $SessionId)
+                $null = Invoke-EdgeCDPCommand -WebSocketUrl $page.webSocketDebuggerUrl -Method 'Page.navigate' -Params @{ url = $detailPageUri.AbsoluteUri }
+                [System.Threading.Tasks.Task]::Delay(1000).GetAwaiter().GetResult()
+            }
+        }
+        Write-Verbose ('Inspecting catalog request context on {0}' -f $pageUri.GetLeftPart([System.UriPartial]::Path))
+        $evaluation = Invoke-EdgeCDPCommand -WebSocketUrl $page.webSocketDebuggerUrl -Method 'Runtime.evaluate' -Params @{ expression = $expression; returnByValue = $true; awaitPromise = $true }
+        $context = $evaluation.result.result.value
+        if ($context -and $context.url -and $context.referer) {
+            $requestUri = [uri]$context.url
+            if ($requestUri.GetLeftPart([System.UriPartial]::Path) -eq $CatalogUri.GetLeftPart([System.UriPartial]::Path)) {
+                Write-Verbose ('Captured event catalog request context for {0}; query values are not logged.' -f $CatalogUri.Host)
+                return @{ Uri = $requestUri.AbsoluteUri; Referer = [string]$context.referer }
+            }
+        }
+    }
+    throw 'No event catalog request was found. Open or reload the event sessions page in the sign-in window and retry.'
+}
+
+function Test-IsCustomCatalogUri {
+    param([uri]$Uri)
+
+    return ($Uri -and $Uri.IsAbsoluteUri -and $Uri.Scheme -eq 'https' -and [string]::IsNullOrWhiteSpace($Uri.UserInfo))
+}
+
+function Get-CustomEventCacheKey {
+    param([parameter(Mandatory = $true)][uri]$Uri)
+
+    Add-Type -AssemblyName System.Web
+    $query = [System.Web.HttpUtility]::ParseQueryString($Uri.Query)
+    foreach ($name in @('pcId', 'page', 'access_token', 'id_token', 'at', 'uid', 'sig')) { $query.Remove($name) }
+    $identity = '{0}?{1}|catalog-v2' -f $Uri.GetLeftPart([System.UriPartial]::Path), $query.ToString()
+    $hash = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($hash.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($identity))).Replace('-', '').ToLowerInvariant())
+    }
+    finally { $hash.Dispose() }
+}
+
+function Initialize-CustomRequestContext {
+    param(
+        [parameter(Mandatory = $true)][hashtable]$Context,
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [uri]$Proxy
+    )
+
+    if ($Context.Uri -and $Context.Referer) { return }
+    if (-not $WebSession.EventRequestUri -or -not $WebSession.EventPortalUri) { throw 'Custom catalog context requires browser discovery.' }
+    $requestUri = [uri]$WebSession.EventRequestUri
+    if ($requestUri.GetLeftPart([System.UriPartial]::Authority) -ne $Context.CatalogUri.GetLeftPart([System.UriPartial]::Authority)) { throw 'Custom request context has a different origin.' }
+    $Context.Uri = $requestUri.AbsoluteUri
+    $Context.Referer = $WebSession.EventPortalUri
+}
+
+function Update-CustomPortalRequestContext {
+    param(
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [parameter(Mandatory = $true)][uri]$CatalogUri,
+        [string]$SessionId,
+        [uri]$Proxy
+    )
+
+    # Page-context IDs (pcId) are short-lived and rendered server-side into the signed-in sessions page.
+    $portalUri = $null
+    if (-not [uri]::TryCreate([string]$WebSession.EventPortalUri, [System.UriKind]::Absolute, [ref]$portalUri) -or
+        $portalUri.GetLeftPart([System.UriPartial]::Authority) -ne $CatalogUri.GetLeftPart([System.UriPartial]::Authority)) { return $false }
+    $parameters = @{ Uri = $portalUri.AbsoluteUri; WebSession = $WebSession; MaximumRedirection = 0; TimeoutSec = 30; UseBasicParsing = $true; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
+    if ($Proxy) { $parameters.Proxy = $Proxy }
+    try { $html = [string](Invoke-WebRequest @parameters).Content }
+    catch { Write-Verbose 'Unable to refresh event page context from the sessions page.'; return $false }
+    $tag = [regex]::Match($html, '<[\w-]+\b[^>]*\spc-id=["''][^>]*>').Value
+    if (-not $tag) { return $false }
+    Add-Type -AssemblyName System.Web
+    $attributes = @{}
+    foreach ($match in [regex]::Matches($tag, '\s([\w-]*pc-id)=["'']([^"'']*)["'']')) {
+        $attributes[$match.Groups[1].Value.ToLowerInvariant()] = [System.Web.HttpUtility]::HtmlDecode($match.Groups[2].Value)
+    }
+    if (-not $attributes['pc-id']) { return $false }
+    $catalogPath = $CatalogUri.GetLeftPart([System.UriPartial]::Path)
+    Set-ObjectPropertyValue -Object $WebSession -Name 'EventRequestUri' -Value ('{0}?pcId={1}' -f $catalogPath, [uri]::EscapeDataString($attributes['pc-id']))
+    if ($SessionId) {
+        $detailPcId = if ($attributes['event-details-pc-id']) { $attributes['event-details-pc-id'] } else { $attributes['pc-id'] }
+        $detailUri = [uri]::new($CatalogUri, ('/api/event/details/{0}?pcId={1}' -f $SessionId, [uri]::EscapeDataString($detailPcId)))
+        Set-ObjectPropertyValue -Object $WebSession -Name 'EventDetailRequests' -Value @{ $SessionId = $detailUri.AbsoluteUri }
+    }
+    Write-Verbose ('Refreshed event page context for {0} from the signed-in sessions page; values are not logged.' -f $CatalogUri.Host)
+    return $true
+}
+
+function Invoke-CustomCatalogPage {
+    param(
+        [parameter(Mandatory = $true)][hashtable]$Context,
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [ValidateRange(1, 1000)][int]$Page = 1,
+        [uri]$Proxy
+    )
+
+    $body = @{
+        keyword = $null; filters = @{}; date = $null; startTime = $null; endTime = $null
+        sort = @{ column = 'start'; direction = 0 }; page = $Page; pageSize = 20
+        aiSearch = $false; upcoming = $false; onDemand = $false; hasAssets = $false; onSchedule = $false
+    }
+    try {
+        if ($Context.Method -ne 'Get') { Initialize-CustomRequestContext -Context $Context -WebSession $WebSession -Proxy $Proxy }
+        else { $Context.Uri = Get-CustomEventPageUri -BaseUrl $Context.CatalogUri.AbsoluteUri -Page $Page }
+        $requestUri = [uri]$Context.Uri
+        if (-not (Test-IsCustomCatalogUri -Uri $requestUri) -or $requestUri.GetLeftPart([System.UriPartial]::Authority) -ne $Context.CatalogUri.GetLeftPart([System.UriPartial]::Authority)) { throw 'Invalid Custom request origin.' }
+        $method = if ($Context.Method) { $Context.Method } else { 'Post' }
+        $parameters = @{
+            Uri = $requestUri.AbsoluteUri; Method = $method; WebSession = $WebSession
+            Headers = @{ Accept = 'application/json' }
+            MaximumRedirection = 0; ErrorAction = 'Stop'; Verbose = $false; Debug = $false; TimeoutSec = 30
+        }
+        if ($method -eq 'Post') {
+            $parameters.ContentType = 'application/json'
+            $parameters.Body = $body | ConvertTo-Json -Depth 5 -Compress
+            $parameters.Headers.Origin = $requestUri.GetLeftPart([System.UriPartial]::Authority)
+        }
+        if ($Context.Referer) {
+            $refererUri = [uri]$Context.Referer
+            if ($refererUri.GetLeftPart([System.UriPartial]::Authority) -ne $requestUri.GetLeftPart([System.UriPartial]::Authority)) { throw 'Invalid Custom referer origin.' }
+            $parameters.Headers.Referer = $Context.Referer
+        }
+        if ($Context.AuthenticationRequired -and $script:MSAAuthOrigin -eq $requestUri.GetLeftPart([System.UriPartial]::Authority)) {
+            $authHeaders = Get-MSAAuthApiHeaders
+            if ($authHeaders.Authorization) { $parameters.Headers.Authorization = $authHeaders.Authorization }
+        }
+        if ($Proxy) { $parameters.Proxy = $Proxy }
+        $response = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod @parameters } -Variables @{ parameters = $parameters } -SuppressErrorDetails
+    }
+    catch {
+        $status = $null
+        if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+        if ($Context.Method -eq 'Get' -and $Context.AllowMethodSwitch -ne $false -and $status -eq 405 -and [string]$_.Exception.Response.Headers -match '(?i)POST') {
+            $Context.Method = 'Post'
+            $Context.Uri = $Context.CatalogUri.AbsoluteUri
+            $Context.Referer = $Context.CatalogUri.GetLeftPart([System.UriPartial]::Authority) + '/'
+            return Invoke-CustomCatalogPage -Context $Context -WebSession $WebSession -Page $Page -Proxy $Proxy
+        }
+        if ($Context.Method -eq 'Post' -and $Context.AllowMethodSwitch -eq $true -and $status -eq 405 -and [string]$_.Exception.Response.Headers -match '(?i)GET') {
+            $Context.Method = 'Get'
+            $Context.AllowMethodSwitch = $false
+            return Invoke-CustomCatalogPage -Context $Context -WebSession $WebSession -Page $Page -Proxy $Proxy
+        }
+        $exception = [System.InvalidOperationException]::new(('Custom catalog page {0} failed{1}. Sign-in or request context may need refreshing; request credentials are withheld.' -f $Page, $(if ($status) { ' (HTTP {0})' -f $status } else { '' })))
+        if ($status) { $exception.Data['StatusCode'] = $status }
+        if (Test-MSAAuthenticationRequired -Exception $_.Exception) {
+            $Context.AuthenticationRequired = $true
+            $exception.Data['AuthenticationRequired'] = $true
+        }
+        throw $exception
+    }
+    if ($response -is [string] -and (Test-MSAAuthenticationRequired -Response ([pscustomobject]@{ StatusCode = 200; Headers = @{ 'Content-Type' = 'text/html' }; Content = $response }) -RequestUri $requestUri.AbsoluteUri)) {
+        $exception = [System.InvalidOperationException]::new('Custom catalog requires authentication.')
+        $Context.AuthenticationRequired = $true
+        $exception.Data['AuthenticationRequired'] = $true
+        throw $exception
+    }
+    if ($response -and $response -isnot [string] -and $response.PSObject.Properties.Match('items').Count -gt 0) { return $response }
+    if (-not $response -or $response -is [string] -or $response.PSObject.Properties.Match('sessions').Count -eq 0 -or $response.PSObject.Properties.Match('totalCount').Count -eq 0 -or $response.PSObject.Properties.Match('pageSize').Count -eq 0 -or $response.PSObject.Properties.Match('page').Count -eq 0) {
+        throw 'Custom portal returned an unexpected catalog response; no session cache was written.'
+    }
+    if ([int]$response.page -ne $Page -or [int]$response.pageSize -le 0 -or [int]$response.totalCount -lt 0) { throw 'Custom portal returned invalid pagination information.' }
+    return $response
+}
+
+function Invoke-CustomSessionDetailRequest {
+    param(
+        [parameter(Mandatory = $true)][uri]$Uri,
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [uri]$Proxy
+    )
+
+    if (-not (Test-IsCustomCatalogUri -Uri $Uri)) { throw 'Custom session details require an HTTPS URL without embedded credentials.' }
+    $parameters = @{ Uri = $Uri.AbsoluteUri; Method = 'Get'; WebSession = $WebSession; Headers = @{ Accept = 'application/json' }; MaximumRedirection = 0; TimeoutSec = 30; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
+    if ($Proxy) { $parameters.Proxy = $Proxy }
+    if ($script:MSAAuthOrigin -eq $Uri.GetLeftPart([System.UriPartial]::Authority)) {
+        $headers = Get-MSAAuthApiHeaders
+        if ($headers.Authorization) { $parameters.Headers.Authorization = $headers.Authorization }
+    }
+    try {
+        $details = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod @parameters } -Variables @{ parameters = $parameters } -SuppressErrorDetails
+    }
+    catch {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }
+        $exception = [System.InvalidOperationException]::new(('Custom session detail request failed{0}; credentials and response details withheld.' -f $(if ($status) { ' (HTTP {0})' -f $status } else { '' })))
+        if ($status) { $exception.Data['StatusCode'] = $status }
+        if (Test-MSAAuthenticationRequired -Exception $_.Exception) { $exception.Data['AuthenticationRequired'] = $true }
+        throw $exception
+    }
+    if (-not $details -or $details -is [string]) { throw 'Custom session details did not return a JSON object.' }
+    return $details
+}
+
+function Test-SessionHasOnDemandContent {
+    param([parameter(Mandatory = $true)][object]$Session)
+
+    foreach ($name in @('hasOnDemandContent', 'isOnDemand', 'onDemand')) {
+        $property = $Session.PSObject.Properties[$name]
+        if ($null -eq $property -or $null -eq $property.Value) { continue }
+        if ($property.Value -is [bool]) { return $property.Value }
+        $available = $false
+        if ($property.Value -is [string] -and [bool]::TryParse($property.Value.Trim(), [ref]$available)) { return $available }
+    }
+    return $true
+}
+
+function Set-CustomSessionDetailMetadata {
+    param(
+        [parameter(Mandatory = $true)][object]$Session,
+        [parameter(Mandatory = $true)][object]$Details
+    )
+
+    $eventInfo = $Details.eventInfo
+    if (-not $eventInfo -or [string]$eventInfo.id -ne [string]$Session.id) { throw 'Custom session details do not match the selected session ID.' }
+    if ($null -ne $eventInfo.virtual -and $eventInfo.virtual.PSObject.Properties.Match('videoEnabled').Count -gt 0) {
+        Set-ObjectPropertyValue -Object $Session -Name 'hasOnDemandContent' -Value $eventInfo.virtual.videoEnabled
+    }
+    if (-not (Test-SessionHasOnDemandContent -Session $Session)) { return }
+    $videoUrl = [string]$eventInfo.virtual.videoUrl
+    if ($videoUrl) {
+        $videoUri = $null
+        if ([uri]::TryCreate($videoUrl, [System.UriKind]::Absolute, [ref]$videoUri) -and $videoUri.Scheme -eq 'https') {
+            Set-ObjectPropertyValue -Object $Session -Name 'onDemand' -Value $videoUri.AbsoluteUri
+        }
+    }
+    if ($eventInfo.eventData.Description) { Set-ObjectPropertyValue -Object $Session -Name 'description' -Value $eventInfo.eventData.Description }
+    $speakers = @()
+    foreach ($group in $eventInfo.facilitators.PSObject.Properties) {
+        foreach ($speaker in @($group.Value)) {
+            if ($speaker.formattedName) { $speakers += [string]$speaker.formattedName }
+        }
+    }
+    if ($speakers.Count -gt 0) { Set-ObjectPropertyValue -Object $Session -Name 'speakerNames' -Value @($speakers | Select-Object -Unique) }
+    foreach ($asset in @($eventInfo.assets) + @($eventInfo.externalResources)) {
+        if (-not $asset) { continue }
+        $url = Get-ObjectPropertyValue -Object $asset -Name @('url', 'linkUrl', 'downloadUrl')
+        $assetUri = $null
+        if ($url -and [uri]::TryCreate([string]$url, [System.UriKind]::Absolute, [ref]$assetUri) -and $assetUri.Scheme -eq 'https' -and $assetUri.AbsolutePath -match '(?i)\.(pptx|pdf)$') {
+            Set-ObjectPropertyValue -Object $Session -Name 'slideDeck' -Value $assetUri.AbsoluteUri
+            break
+        }
+    }
+}
+
+function Update-CustomSessionDetails {
+    param(
+        [parameter(Mandatory = $true)][object]$Session,
+        [parameter(Mandatory = $true)][uri]$CatalogUri,
+        [uri]$Proxy
+    )
+
+    if (-not $Session.id -or $CatalogUri.AbsolutePath -notmatch '(?i)^/api/schedule-builder/sessions(?:/search)?/?$') { return }
+    $sessionId = [guid]::Empty
+    if (-not [guid]::TryParse([string]$Session.id, [ref]$sessionId)) { return }
+    $detailUri = [uri]::new($CatalogUri, ('/api/event/details/{0}' -f $sessionId))
+    $cachedSession = if ($script:MSAAuthOrigin -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -and $script:MSAAuthWebSession) {
+        $script:MSAAuthWebSession
+    }
+    else {
+        Get-CachedMSAWebSession -CachePath (Join-Path $PSScriptRoot 'MSAAuth.cache') -CookieUri ([uri]($CatalogUri.GetLeftPart([System.UriPartial]::Authority) + '/'))
+    }
+    $state = @{ Uri = $detailUri; DetailRequests = @{}; RequestUri = $null; PortalUri = $null }
+    if ($cachedSession) {
+        $state.RequestUri = $cachedSession.EventRequestUri
+        $state.PortalUri = $cachedSession.EventPortalUri
+        if ($cachedSession.EventDetailRequests) {
+            foreach ($key in $cachedSession.EventDetailRequests.Keys) { $state.DetailRequests[$key] = $cachedSession.EventDetailRequests[$key] }
+        }
+        $requestCandidates = @($state.DetailRequests[[string]$sessionId]) + @($state.DetailRequests.Values)
+        foreach ($requestCandidate in $requestCandidates) {
+            $candidateUri = $null
+            if (-not [uri]::TryCreate([string]$requestCandidate, [System.UriKind]::Absolute, [ref]$candidateUri)) { continue }
+            if ($candidateUri.GetLeftPart([System.UriPartial]::Authority) -ne $detailUri.GetLeftPart([System.UriPartial]::Authority) -or
+                $candidateUri.UserInfo -or $candidateUri.AbsolutePath -notmatch '(?i)^/api/event/details/[0-9a-f-]{36}/?$') { continue }
+            $requestBuilder = [System.UriBuilder]::new($candidateUri)
+            $requestBuilder.Path = $detailUri.AbsolutePath
+            $requestBuilder.Fragment = ''
+            $state.Uri = $requestBuilder.Uri
+            break
+        }
+    }
+    $validator = {
+        param($webSession)
+        try {
+            $state.Details = Invoke-CustomSessionDetailRequest -Uri $state.Uri -WebSession $webSession -Proxy $Proxy
+            if (-not $state.Details.eventInfo -or [string]$state.Details.eventInfo.id -ne [string]$sessionId) { throw 'Custom session detail response has an unexpected ID.' }
+        }
+        catch {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+            if (-not $webSession.EventPortalUri -and $state.PortalUri) { Set-ObjectPropertyValue -Object $webSession -Name 'EventPortalUri' -Value $state.PortalUri }
+            if (-not (Update-CustomPortalRequestContext -WebSession $webSession -CatalogUri $CatalogUri -SessionId ([string]$sessionId) -Proxy $Proxy)) { throw }
+            $state.Uri = [uri]$webSession.EventDetailRequests[[string]$sessionId]
+            $state.RequestUri = $webSession.EventRequestUri
+            $state.Details = Invoke-CustomSessionDetailRequest -Uri $state.Uri -WebSession $webSession -Proxy $Proxy
+            if (-not $state.Details.eventInfo -or [string]$state.Details.eventInfo.id -ne [string]$sessionId) { throw 'Custom session detail response has an unexpected ID.' }
+        }
+        # One template is enough: the query context applies to every session ID.
+        $state.DetailRequests = @{ ([string]$sessionId) = $state.Uri.AbsoluteUri }
+        Set-ObjectPropertyValue -Object $webSession -Name 'EventDetailRequests' -Value $state.DetailRequests
+        if ($state.RequestUri) { Set-ObjectPropertyValue -Object $webSession -Name 'EventRequestUri' -Value $state.RequestUri }
+        $portalUri = $null
+        if ([uri]::TryCreate([string]$state.Details.eventListUrl, [System.UriKind]::Absolute, [ref]$portalUri) -and $portalUri.GetLeftPart([System.UriPartial]::Authority) -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority)) {
+            Set-ObjectPropertyValue -Object $webSession -Name 'EventPortalUri' -Value $portalUri.GetLeftPart([System.UriPartial]::Path)
+        }
+        return $true
+    }
+    $capture = {
+        param($port, $webSession)
+        try {
+            $null = & $validator $webSession
+            return
+        }
+        catch {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        }
+        $context = Get-CustomEventBrowserRequestContext -DebugPort $port -CatalogUri $detailUri -SessionId ([string]$sessionId)
+        $state.Uri = [uri]$context.Uri
+        $null = & $validator $webSession
+    }
+    try {
+        Write-Verbose ('Retrieving published media information for Custom session {0}' -f $Session.sessionCode)
+        $webSession = Get-MSAAuthenticatedWebSession -TargetUri $detailUri -Proxy $Proxy -ValidateCachedSession -PersistCache -SessionValidator $validator -OnAuthenticatedBrowser $capture
+        if (-not $webSession) { throw 'Unable to obtain selected session details.' }
+        Set-CustomSessionDetailMetadata -Session $Session -Details $state.Details
+    }
+    catch {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Message -match '(?i)cancelled') { throw }
+        Write-Warning ('Unable to resolve media for Custom session {0}: {1}' -f $Session.sessionCode, $_.Exception.Message)
+    }
+}
+
 function Get-CustomEventCatalog {
     param(
         [parameter(Mandatory = $true)][string]$CatalogUrl,
         [uri]$Proxy
     )
 
-    $catalogUri = [uri](Get-CustomEventPageUri -BaseUrl $CatalogUrl -Page 1)
-    $session = Get-MSAAuthenticatedWebSession -TargetUri $catalogUri -Proxy $Proxy -ValidateCachedSession -PersistCache
+    $catalogUri = [uri]$CatalogUrl
+    if (-not (Test-IsCustomCatalogUri -Uri $catalogUri)) { throw 'Custom event catalogs require an absolute HTTPS URL without embedded credentials.' }
+    $catalogContext = @{ CatalogUri = $catalogUri; Method = 'Get'; AllowMethodSwitch = $false }
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $publicResponse = $null
+    $needsAuthFlow = $false
+    try {
+        Write-Verbose 'Trying anonymous GET for the Custom session catalog.'
+        $publicResponse = Invoke-CustomCatalogPage -Context $catalogContext -WebSession $session -Proxy $Proxy
+    }
+    catch {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        $statusCode = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $_.Exception.Data['StatusCode'] }
+        if (-not $_.Exception.Data['AuthenticationRequired'] -and (-not $statusCode -or $statusCode -ge 500)) { throw 'Unable to inspect the Custom catalog; no authentication was attempted because the request failed without a recoverable HTTP response.' }
+        $catalogContext.AuthenticationRequired = [bool]$_.Exception.Data['AuthenticationRequired']
+        Write-Verbose ('Anonymous catalog GET failed (HTTP {0}); trying cached POST context.' -f $statusCode)
+    }
+    if (-not $publicResponse) {
+        $catalogContext.Method = 'Post'
+        $catalogContext.AllowMethodSwitch = $true
+        $catalogContext.Uri = $catalogUri.AbsoluteUri
+        $catalogContext.Referer = $catalogUri.GetLeftPart([System.UriPartial]::Authority) + '/'
+        $origin = $catalogUri.GetLeftPart([System.UriPartial]::Authority)
+        if ($script:MSAAuthOrigin -ne $origin) {
+            $script:MSAAuthWebSession = $null
+            $script:MSABearerToken = $null
+        }
+        $script:MSAAuthOrigin = $origin
+        $cachedSession = Get-CachedMSAWebSession -CachePath (Join-Path $PSScriptRoot 'MSAAuth.cache') -CookieUri ([uri]($origin + '/'))
+        if ($cachedSession) {
+            $session = $cachedSession
+            $catalogContext.AuthenticationRequired = $true
+            $cachedRequestUri = $null
+            if ($cachedSession.EventRequestUri -and [uri]::TryCreate([string]$cachedSession.EventRequestUri, [System.UriKind]::Absolute, [ref]$cachedRequestUri) -and $cachedRequestUri.GetLeftPart([System.UriPartial]::Path) -eq $catalogUri.GetLeftPart([System.UriPartial]::Path)) {
+                $catalogContext.Uri = $cachedRequestUri.AbsoluteUri
+                if ($cachedSession.EventPortalUri) { $catalogContext.Referer = $cachedSession.EventPortalUri }
+            }
+            Write-Verbose 'Trying Custom catalog POST with cached Microsoft authentication.'
+        }
+        else { Write-Verbose 'No matching authentication cache; trying anonymous POST before browser sign-in.' }
+        try {
+            try {
+                $publicResponse = Invoke-CustomCatalogPage -Context $catalogContext -WebSession $session -Proxy $Proxy
+            }
+            catch {
+                if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or -not $cachedSession -or
+                    -not (Update-CustomPortalRequestContext -WebSession $cachedSession -CatalogUri $catalogUri -Proxy $Proxy)) { throw }
+                $catalogContext.Uri = $cachedSession.EventRequestUri
+                $catalogContext.Referer = $cachedSession.EventPortalUri
+                $publicResponse = Invoke-CustomCatalogPage -Context $catalogContext -WebSession $session -Proxy $Proxy
+                Save-MSAAuthCookieHeader -CachePath (Join-Path $PSScriptRoot 'MSAAuth.cache') -CookieUri ([uri]($origin + '/')) -WebSession $cachedSession
+            }
+            if ($cachedSession) { $script:MSAAuthWebSession = $cachedSession }
+        }
+        catch {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+            $statusCode = $_.Exception.Data['StatusCode']
+            if (-not $_.Exception.Data['AuthenticationRequired'] -and (-not $statusCode -or $statusCode -ge 500)) { throw }
+            $needsAuthFlow = $true
+            $catalogContext.AuthenticationRequired = $catalogContext.AuthenticationRequired -or [bool]$_.Exception.Data['AuthenticationRequired']
+            $catalogContext.Uri = $null
+            $catalogContext.Referer = $null
+            Write-Verbose 'Cached or anonymous POST failed; using the shared provider-aware authentication flow.'
+        }
+    }
+    $authParameters = @{ Proxy = $Proxy; ValidateCachedSession = $true; PersistCache = $true }
+    $authParameters.SessionValidator = {
+        param($webSession)
+        $catalogContext.FirstPage = Invoke-CustomCatalogPage -Context $catalogContext -WebSession $webSession -Proxy $Proxy
+        if ($catalogContext.Referer) { Set-ObjectPropertyValue -Object $webSession -Name 'EventPortalUri' -Value $catalogContext.Referer }
+        Set-ObjectPropertyValue -Object $webSession -Name 'EventRequestUri' -Value $catalogContext.Uri
+        return $true
+    }
+    $authParameters.OnAuthenticatedBrowser = {
+        param($debugPort, $browserSession)
+        try {
+            $null = & $authParameters.SessionValidator $browserSession
+            return
+        }
+        catch {
+            if ($_.Exception.Data['AuthenticationRequired']) {
+                $token = Get-MSALAccessTokenFromCdpPage -DebugPort $debugPort -CookieUri $catalogUri
+                if ($token) {
+                    $script:MSABearerToken = $token
+                    $null = & $authParameters.SessionValidator $browserSession
+                    return
+                }
+            }
+            if ($catalogContext.Method -ne 'Post') { throw }
+            $captured = Get-CustomEventBrowserRequestContext -DebugPort $debugPort -CatalogUri $catalogUri
+            $catalogContext.Uri = $captured.Uri
+            $catalogContext.Referer = $captured.Referer
+            $null = & $authParameters.SessionValidator $browserSession
+        }
+    }
+    if ($needsAuthFlow) {
+        $session = Get-MSAAuthenticatedWebSession -TargetUri $catalogUri @authParameters
+    }
+    else { $catalogContext.FirstPage = $publicResponse }
+    $isCustom = $catalogContext.FirstPage -and $catalogContext.FirstPage.PSObject.Properties.Match('sessions').Count -gt 0
+    if (-not $session) { throw 'Unable to authenticate with the custom event catalog.' }
 
     # Use a browser-like User-Agent so the API returns full session data rather than null placeholders.
     if ($session) {
@@ -3927,108 +4539,139 @@ function Get-CustomEventCatalog {
 
     $page = 1
     $totalPages = $null
+    $authRefreshed = $false
 
-    while ($true) {
-        $pageUri = Get-CustomEventPageUri -BaseUrl $CatalogUrl -Page $page
+    try {
+        while ($true) {
 
-        $status = 'Processing page {0}' -f $page
-        $percent = 0
-        if ($totalPages) {
-            $status = 'Processing page {0} of {1}' -f $page, $totalPages
-            $percent = [Math]::Min(100, [int](($page / $totalPages) * 100))
-        }
-        Write-Progress -Id 1 -Activity 'Retrieving Session Catalog' -Status $status -PercentComplete $percent
+            $status = 'Processing page {0}' -f $page
+            $percent = 0
+            if ($totalPages) {
+                $status = 'Processing page {0} of {1}' -f $page, $totalPages
+                $percent = [Math]::Min(100, [int](($page / $totalPages) * 100))
+            }
+            Write-Progress -Id 1 -Activity 'Retrieving Session Catalog' -Status $status -PercentComplete $percent
 
-        try {
-            $requestHeaders = Get-MSAAuthApiHeaders
-            $response = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $pageUri -Method Get -WebSession $session -Proxy $Proxy -Headers $requestHeaders } -Variables @{ pageUri = $pageUri; session = $session; Proxy = $Proxy; requestHeaders = $requestHeaders }
-        }
-        catch {
-            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
-            throw ('Problem retrieving custom session catalog page {0}: {1}' -f $page, $error[0])
-        }
-
-        if (-not $totalPages -and $response.PSObject.Properties.Match('totalPages').Count -gt 0) {
-            $totalPages = [int]$response.totalPages
-        }
-
-        $items = @($response.items | Where-Object { $null -ne $_ })
-        if ($items.Count -eq 0) {
-            break
-        }
-
-        foreach ($item in $items) {
-            $item.PSObject.Properties | ForEach-Object {
-                if (@('speakerNames') -icontains $_.Name) {
-                    $item.($_.Name) = @($_.Value)
+            try {
+                $response = if ($page -eq 1 -and $catalogContext.FirstPage) { $catalogContext.FirstPage } else { Invoke-CustomCatalogPage -Context $catalogContext -WebSession $session -Page $page -Proxy $Proxy }
+            }
+            catch {
+                if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+                if ($_.Exception.Data['AuthenticationRequired'] -or ($catalogContext.Method -eq 'Post' -and $_.Exception.Data['StatusCode'] -eq 400)) {
+                    if (-not $authRefreshed) {
+                        $authRefreshed = $true
+                        $catalogContext.Uri = $null
+                        $catalogContext.FirstPage = $null
+                        $script:MSAAuthInteractiveAttemptedByHost.Remove($catalogUri.Host.ToLowerInvariant())
+                        $session = Get-MSAAuthenticatedWebSession -TargetUri $catalogUri @authParameters -ForceInteractive
+                        if (-not $session) { throw 'Custom authentication refresh failed.' }
+                        continue
+                    }
+                    throw
                 }
-                if (@('products', 'contentCategory') -icontains $_.Name) {
-                    $item.($_.Name) = @($_.Value -replace [char]9, '/')
+                throw ('Problem retrieving custom session catalog page {0}: {1}' -f $page, $error[0])
+            }
+
+            if ($isCustom) {
+                $totalPages = [int][Math]::Ceiling([int]$response.totalCount / [double][int]$response.pageSize)
+                if ($totalPages -gt 1000) { throw 'Custom catalog exceeds the pagination safety limit.' }
+            }
+            if (-not $totalPages -and $response.PSObject.Properties.Match('totalPages').Count -gt 0) {
+                $totalPages = [int]$response.totalPages
+            }
+
+            $items = @(if ($isCustom) { $response.sessions } else { $response.items }) | Where-Object { $null -ne $_ }
+            $items = @($items)
+            if ($items.Count -eq 0) {
+                if ($isCustom -and $data.Count -ne [int]$response.totalCount) { throw 'Custom portal returned an incomplete catalog; no session cache was written.' }
+                break
+            }
+
+            $addedThisPage = 0
+            foreach ($item in $items) {
+                if ($isCustom) {
+                    Set-ObjectPropertyValue -Object $item -Name 'startDateTime' -Value (ConvertTo-SessionDateTime -Value $item.start)
+                    Set-ObjectPropertyValue -Object $item -Name 'endDateTime' -Value (ConvertTo-SessionDateTime -Value $item.end)
+                    Set-ObjectPropertyValue -Object $item -Name 'speakerNames' -Value @(ConvertTo-MetadataValueList -Value $item.speakers)
                 }
-                if (@('topic', 'sessionType', 'sessionLevel', 'audienceTypes', 'deliveryTypes', 'viewingOptions', 'event', 'programmingLanguages') -icontains $_.Name) {
-                    $item.($_.Name) = $_.Value.displayValue -join ','
+                $item.PSObject.Properties | ForEach-Object {
+                    if (@('speakerNames') -icontains $_.Name) {
+                        $item.($_.Name) = @($_.Value)
+                    }
+                    if (@('products', 'contentCategory') -icontains $_.Name) {
+                        $item.($_.Name) = @($_.Value -replace [char]9, '/')
+                    }
+                    if (@('topic', 'sessionType', 'sessionLevel', 'audienceTypes', 'deliveryTypes', 'viewingOptions', 'event', 'programmingLanguages') -icontains $_.Name) {
+                        $item.($_.Name) = $_.Value.displayValue -join ','
+                    }
+                }
+
+                $canonicalCode = $null
+                if ($item.PSObject.Properties.Match('scheduleCode').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.scheduleCode)) {
+                    $canonicalCode = [string]$item.scheduleCode
+                }
+                elseif ($item.PSObject.Properties.Match('code').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.code)) {
+                    $canonicalCode = [string]$item.code
+                }
+
+                if ($canonicalCode) {
+                    Set-ObjectPropertyValue -Object $item -Name 'sessionCode' -Value $canonicalCode
+                    Set-ObjectPropertyValue -Object $item -Name 'scheduleCode' -Value $canonicalCode
+                    Set-ObjectPropertyValue -Object $item -Name 'code' -Value $canonicalCode
+                }
+
+                $canonicalCategory = $null
+                if ($item.PSObject.Properties.Match('contentCategory').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.contentCategory)) {
+                    $canonicalCategory = [string]$item.contentCategory
+                }
+                elseif ($item.PSObject.Properties.Match('subcategoriesString').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.subcategoriesString)) {
+                    $canonicalCategory = [string]$item.subcategoriesString
+                }
+
+                if ($canonicalCategory) {
+                    Set-ObjectPropertyValue -Object $item -Name 'contentCategory' -Value $canonicalCategory
+                }
+
+                if ($item.PSObject.Properties.Match('langLocale').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$item.langLocale)) {
+                    Set-ObjectPropertyValue -Object $item -Name 'langLocale' -Value 'en-US'
+                }
+
+                $displayCode = if ($item.PSObject.Properties.Match('sessionCode').Count -gt 0) { [string]$item.sessionCode } else { [string]$item.id }
+                Write-Verbose ('Adding info for session {0}' -f $displayCode)
+
+                $item.PSObject.TypeNames.Insert(0, 'Session.Information')
+                $item | Add-Member MemberSet PSStandardMembers $PSStandardMembers -Force
+
+                $dedupeKey = if ($isCustom -and $item.id) {
+                    [string]$item.id
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace($canonicalCode)) {
+                    $canonicalCode
+                }
+                elseif ($item.PSObject.Properties.Match('id').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.id)) {
+                    [string]$item.id
+                }
+                else {
+                    '{0}-{1}' -f $page, [string]$item.title
+                }
+
+                if ($seenSessionKeys.Add($dedupeKey)) {
+                    $data.Add($item) | Out-Null
+                    $addedThisPage++
                 }
             }
 
-            $canonicalCode = $null
-            if ($item.PSObject.Properties.Match('scheduleCode').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.scheduleCode)) {
-                $canonicalCode = [string]$item.scheduleCode
-            }
-            elseif ($item.PSObject.Properties.Match('code').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.code)) {
-                $canonicalCode = [string]$item.code
+            if ($isCustom -and $addedThisPage -eq 0) { throw 'Custom pagination did not advance; no session cache was written.' }
+            if ($totalPages -and $page -ge $totalPages) {
+                if ($isCustom -and $data.Count -ne [int]$response.totalCount) { throw 'Custom portal returned an incomplete catalog; no session cache was written.' }
+                break
             }
 
-            if ($canonicalCode) {
-                Set-ObjectPropertyValue -Object $item -Name 'sessionCode' -Value $canonicalCode
-                Set-ObjectPropertyValue -Object $item -Name 'scheduleCode' -Value $canonicalCode
-                Set-ObjectPropertyValue -Object $item -Name 'code' -Value $canonicalCode
-            }
-
-            $canonicalCategory = $null
-            if ($item.PSObject.Properties.Match('contentCategory').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.contentCategory)) {
-                $canonicalCategory = [string]$item.contentCategory
-            }
-            elseif ($item.PSObject.Properties.Match('subcategoriesString').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.subcategoriesString)) {
-                $canonicalCategory = [string]$item.subcategoriesString
-            }
-
-            if ($canonicalCategory) {
-                Set-ObjectPropertyValue -Object $item -Name 'contentCategory' -Value $canonicalCategory
-            }
-
-            if ($item.PSObject.Properties.Match('langLocale').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$item.langLocale)) {
-                Set-ObjectPropertyValue -Object $item -Name 'langLocale' -Value 'en-US'
-            }
-
-            $displayCode = if ($item.PSObject.Properties.Match('sessionCode').Count -gt 0) { [string]$item.sessionCode } else { [string]$item.id }
-            Write-Verbose ('Adding info for session {0}' -f $displayCode)
-
-            $item.PSObject.TypeNames.Insert(0, 'Session.Information')
-            $item | Add-Member MemberSet PSStandardMembers $PSStandardMembers -Force
-
-            $dedupeKey = if (-not [string]::IsNullOrWhiteSpace($canonicalCode)) {
-                $canonicalCode
-            }
-            elseif ($item.PSObject.Properties.Match('id').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$item.id)) {
-                [string]$item.id
-            }
-            else {
-                '{0}-{1}' -f $page, [string]$item.title
-            }
-
-            if ($seenSessionKeys.Add($dedupeKey)) {
-                $data.Add($item) | Out-Null
-            }
+            $page++
         }
 
-        if ($totalPages -and $page -ge $totalPages) {
-            break
-        }
-
-        $page++
     }
-
-    Write-Progress -Id 1 -Completed -Activity 'Finished retrieval of catalog'
+    finally { Write-Progress -Id 1 -Completed -Activity 'Finished retrieval of catalog' }
 
     if ($data.Count -eq 0) {
         Write-Warning ('No sessions were retrieved from the catalog at {0}.' -f $CatalogUrl)
@@ -5163,7 +5806,7 @@ function Add-BackgroundDownloadJob {
 ##########
 
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.48')
+Write-Host( 'Get-EventSession v4.50')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)
@@ -5228,27 +5871,27 @@ switch ( $Event) {
         $EventName = $Event
         $EventType = 'Archive'
         $EventAPIUrl = 'https://medius.microsoft.com'
-        Switch( $Event) {
+        switch ( $Event) {
             'Ignite2024' {
-                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2024%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+                $EventSearchURI = '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2024%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
             }
             'Ignite2023' {
-                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2023%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+                $EventSearchURI = '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2023%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
             }
             'Ignite2022' {
-                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2022%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+                $EventSearchURI = '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2022%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
             }
             'Ignite2021H1' {
-                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+March+2021%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+                $EventSearchURI = '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+March+2021%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
             }
             'Ignite2021H2' {
-                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+Falls+-+November+2021%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+                $EventSearchURI = '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+Falls+-+November+2021%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
             }
             'Ignite2020' {
-                $EventSearchURI= '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2020%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
+                $EventSearchURI = '/Home/VideoSearchSessionArchive?searchString=&page={{0}}&embededSearchFilterExpression=((Channels+eq+%27Microsoft+Ignite+2020%27))&orderBy=VideoTitle&pageSize=100&pageSizes=100%2C24%2C48%2C96&searchgridId=ee8a4eea-d554-4186-859f-8c733020023d&loc=en'
             }
             default {
-                Throw( 'Error (Unsupported Ignite event: {0})' -f $Event)
+                throw( 'Error (Unsupported Ignite event: {0})' -f $Event)
                 exit -1
             }
         }
@@ -5408,6 +6051,9 @@ if (-not ($InfoOnly)) {
 }
 
 $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $EventName)
+if ($EventType -eq 'CUSTOM') {
+    $SessionCache = Join-Path $PSScriptRoot ('Custom-{0}-Sessions.cache' -f (Get-CustomEventCacheKey -Uri ([uri]$EventAPIUrl)))
+}
 $SessionCacheValid = $false
 
 if ( $Refresh) {
@@ -5444,8 +6090,8 @@ if ( -not( $SessionCacheValid)) {
         'Archive' {
             Write-Host ('Reading {0} archived session catalog' -f $EventName)
             $web = @{
-                userAgent    = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
-                requestUri   = $null
+                userAgent  = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36'
+                requestUri = $null
             }
             $data = [System.Collections.ArrayList]@()
             $seenSessionKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -5638,25 +6284,25 @@ if ( -not( $SessionCacheValid)) {
                     }
 
                     $item = [PSCustomObject]@{
-                        sessionCode       = $sessionCode
-                        scheduleCode      = $sessionCode
-                        code              = $sessionCode
-                        title             = $sessionTitle
-                        description       = $null
-                        speakerNames      = $speakerNames
-                        products          = @($channel)
-                        contentCategory   = @($channel)
-                        langLocale        = 'en-US'
-                        startDateTime     = $startDateTime
-                        endDateTime       = $endDateTime
-                        durationInMinutes = $durationInMinutes
-                        onDemand          = $null
-                        downloadVideoLink = $videoLink
-                        onDemandThumbnail = $thumbnail
-                        slideDeck         = $slideDeckLink
-                        captionFileLink   = $captionLink
+                        sessionCode        = $sessionCode
+                        scheduleCode       = $sessionCode
+                        code               = $sessionCode
+                        title              = $sessionTitle
+                        description        = $null
+                        speakerNames       = $speakerNames
+                        products           = @($channel)
+                        contentCategory    = @($channel)
+                        langLocale         = 'en-US'
+                        startDateTime      = $startDateTime
+                        endDateTime        = $endDateTime
+                        durationInMinutes  = $durationInMinutes
+                        onDemand           = $null
+                        downloadVideoLink  = $videoLink
+                        onDemandThumbnail  = $thumbnail
+                        slideDeck          = $slideDeckLink
+                        captionFileLink    = $captionLink
                         transcriptFileLink = $captionLink
-                        captionLanguage   = $captionLanguage
+                        captionLanguage    = $captionLanguage
                     }
 
                     Write-Verbose ('Adding info for session {0}' -f $item.sessionCode)
@@ -6032,9 +6678,19 @@ foreach ($SessionToGet in $SessionsToGet) {
     if (!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
         Write-Verbose ('Skipping session {0}: Future session' -f $SessionToGet.sessioncode)
     }
+    elseif (-not (Test-SessionHasOnDemandContent -Session $SessionToGet)) {
+        Write-Verbose ('Skipping session {0}: on-demand content is explicitly unavailable' -f $SessionToGet.sessionCode)
+    }
     else {
 
         # When storing session content in subfolders per session, override the content target folder to be the session subfolder
+        if (-not $InfoOnly -and $EventType -eq 'CUSTOM' -and ((-not $NoVideos -and -not $SessionToGet.onDemand -and -not $SessionToGet.downloadVideoLink) -or (-not $NoSlidedecks -and -not $SessionToGet.slideDeck))) {
+            Update-CustomSessionDetails -Session $SessionToGet -CatalogUri ([uri]$EventAPIUrl) -Proxy $ProxyURL
+            if (-not (Test-SessionHasOnDemandContent -Session $SessionToGet)) {
+                Write-Verbose ('Skipping session {0}: details indicate no on-demand content' -f $SessionToGet.sessionCode)
+                continue
+            }
+        }
         if ( $UseSessionFolders) {
             $SessionFolder = Join-Path -Path $DownloadFolder -ChildPath $FileName
             if ( (Test-Path -LiteralPath $SessionFolder) -eq $false ) {

@@ -1,6 +1,11 @@
 # Changelog
 
+## 4.50
+
+- Added support for work or school accounts (Microsoft Entra ID) for Custom events, alongside personal Microsoft accounts
+
 ## 4.49
+
 - Added Ignite 2026 support
 
 ## 4.48

@@ -1,8 +1,7 @@
 # General
 *.DS_Store
 *.cache
-youtube-dl.exe
-youtube-dl.old
+*.bak
 ffmpeg.exe
 pngquant.exe
 yt-dlp.exe
