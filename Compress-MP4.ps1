@@ -7,7 +7,7 @@
 
     Michel de Rooij
     https://github.com/michelderooij/Get-EventSession
-    Version 1.03, December 15th, 2025
+    Version 1.04, November 6th, 2026
 
     .DESCRIPTION
     This script processes video files (MP4, WMV, AVI) in a specified directory, converting them to MP4 format
@@ -322,7 +322,7 @@ if (-not $FFMPEG) {
     $FFMPEG = Join-Path $PSScriptRoot 'ffmpeg.exe'
 }
 
-if (-not (Test-Path $FFMPEG)) {
+if (-not (Test-Path -LiteralPath $FFMPEG)) {
     Write-Host ('ffmpeg.exe not found at {0}, attempting to download...' -f $FFMPEG) -ForegroundColor Yellow
 
     $FFMPEGlink = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
@@ -359,7 +359,7 @@ if (-not (Test-Path $FFMPEG)) {
     }
 }
 
-if (-not (Test-Path $FFMPEG)) {
+if (-not (Test-Path -LiteralPath $FFMPEG)) {
     throw ('ffmpeg.exe not found at {0}' -f $FFMPEG)
 }
 
@@ -374,7 +374,7 @@ Write-Host ('NVIDIA encoding available: {0}' -f $nvidiaMode) -ForegroundColor Cy
 $shell = New-Object -ComObject Shell.Application
 
 # Get all video files from source path
-$videoFiles = Get-ChildItem -Path $SourcePath -Recurse -Include *.mp4, *.wmv, *.avi -ErrorAction SilentlyContinue
+$videoFiles = Get-ChildItem -LiteralPath $SourcePath -Recurse -Include *.mp4, *.wmv, *.avi -ErrorAction SilentlyContinue
 
 foreach ( $inputVid in $videoFiles) {
     Write-Host ('Processing {0}' -f $inputVid.FullName) -ForegroundColor White

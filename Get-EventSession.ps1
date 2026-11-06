@@ -19,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.50, November 5, 2026
+    Version 4.51, November 6, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -457,12 +457,12 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
-    [ValidateScript({ Test-Path -Path $_ -PathType Container })]
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Container })]
     [string]$TempPath,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
-    [ValidateScript({ Test-Path -Path $_ -PathType Leaf })]
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$CookiesFile,
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
@@ -3360,8 +3360,13 @@ function Get-OAuthTokenViaPKCE {
             redirect_uri  = $redirectUri
             code_verifier = $codeVerifier
         }
-        $tokenResponse = Invoke-RestMethod -Uri ('https://login.microsoftonline.com/{0}/oauth2/v2.0/token' -f $TenantId) `
-            -Method Post -Body $tokenBody -ErrorAction Stop
+        $tokenParams = @{
+            Uri         = 'https://login.microsoftonline.com/{0}/oauth2/v2.0/token' -f $TenantId
+            Method      = 'Post'
+            Body        = $tokenBody
+            ErrorAction = 'Stop'
+        }
+        $tokenResponse = Invoke-RestMethod @tokenParams
         if ([string]::IsNullOrWhiteSpace($tokenResponse.access_token)) {
             throw 'OAuth token endpoint returned no access_token.'
         }
@@ -3468,9 +3473,11 @@ function Get-WAMAccessToken {
         # ContentType=WindowsRuntime is unavailable in PS7/.NET 6+.
         # Path 2: MSAL.NET + WAM broker DLL — ships with Az, Graph, ExchangeOnline PS modules.
         Write-Verbose 'WinRT unavailable in this PS version; trying MSAL.NET WAM broker.'
-        $msalToken = Get-WAMAccessTokenViaMSAL -Authority $authority -ClientId $ClientId -Scope $effectiveScope
-        if (-not [string]::IsNullOrWhiteSpace($msalToken)) {
-            return $msalToken
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            $msalToken = Get-WAMAccessTokenViaMSAL -Authority $authority -ClientId $ClientId -Scope $effectiveScope
+            if (-not [string]::IsNullOrWhiteSpace($msalToken)) {
+                return $msalToken
+            }
         }
 
         # Path 3: spawn powershell.exe (v5.1) where WinRT loads natively.
@@ -3484,8 +3491,13 @@ function Get-WAMAccessToken {
 
     # ── Native PS WinRT path (PS5.1) ─────────────────────────────────────────
     if (-not ('WinAPI.ConsoleWindow' -as [type])) {
-        Add-Type -Namespace 'WinAPI' -Name 'ConsoleWindow' -MemberDefinition `
-            '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();' -ErrorAction SilentlyContinue
+        $addTypeParams = @{
+            Namespace        = 'WinAPI'
+            Name             = 'ConsoleWindow'
+            MemberDefinition = '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();'
+            ErrorAction      = 'SilentlyContinue'
+        }
+        Add-Type @addTypeParams
     }
 
     $shared = [hashtable]::Synchronized(@{ Token = $null; Error = $null })
@@ -5377,7 +5389,7 @@ function Stop-ProcessTree {
         return
     }
 
-    if ($IsWindows) {
+    if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
         try {
             & taskkill.exe /PID $ProcessId /T /F | Out-Null
             return

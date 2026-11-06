@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.51
+
+- Preserved process-tree termination and authentication fallback compatibility with Windows PowerShell 5.1
+- Validated user-supplied paths literally across retrieval and compression scripts
+- Fixed PPTX WDP dispatch and restoration of backed-up presentations when replacement fails
+
 ## 4.50
 
 - Added support for work or school accounts (Microsoft Entra ID) for Custom events, alongside personal Microsoft accounts
