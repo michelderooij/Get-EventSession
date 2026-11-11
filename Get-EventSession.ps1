@@ -19,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.51, November 6, 2026
+    Version 4.52, November 11, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -164,6 +164,7 @@
 
     .PARAMETER NoVideos
     Switch to indicate you don't want to download videos.
+    Published slidedecks can still be downloaded, including for sessions without on-demand video.
 
     .PARAMETER NoSlidedecks
     Switch to indicate you don't want to download slidedecks.
@@ -209,6 +210,9 @@
     HTTPS URL to use for Custom events, without a hostname restriction. The catalog is inspected
     anonymously first. Authentication is acquired only when required. GET catalogs use a page
     parameter; supported POST catalogs use JSON paging and browser request-context discovery when needed.
+    Schedule-builder /api/schedule-builder/sessions endpoints can discover the /sessions/search POST endpoint.
+    Selected session details can publish multiple slidedecks. The first deck uses the usual session-based
+    filename; subsequent decks receive -1, -2, etc. before their actual file extension.
 
     .PARAMETER InfoOnly
     Tells the script to return session information only.
@@ -3138,10 +3142,11 @@ function Find-MSALAssemblies {
                 $brokerPath = Join-Path $_.DirectoryName 'Microsoft.Identity.Client.Broker.dll'
                 $hasBroker = Test-Path -LiteralPath $brokerPath
                 $candidates.Add([pscustomobject]@{
-                        MsalPath   = $_.FullName
-                        BrokerPath = if ($hasBroker) { $brokerPath } else { $null }
-                        HasBroker  = $hasBroker
-                        Version    = $ver
+                        MsalPath      = $_.FullName
+                        BrokerPath    = if ($hasBroker) { $brokerPath } else { $null }
+                        HasBroker     = $hasBroker
+                        IsNetStandard = $_.FullName -match '(?i)\\netstandard2\.0\\'
+                        Version       = $ver
                     })
             }
             catch {}
@@ -3150,7 +3155,7 @@ function Find-MSALAssemblies {
 
     if ($candidates.Count -eq 0) { return $null }
     return $candidates |
-    Sort-Object @{ e = 'HasBroker'; Descending = $true }, @{ e = 'Version'; Descending = $true } |
+    Sort-Object @{ e = 'HasBroker'; Descending = $true }, @{ e = 'IsNetStandard'; Descending = $true }, @{ e = 'Version'; Descending = $true } |
     Select-Object -First 1
 }
 
@@ -3200,6 +3205,10 @@ namespace GetEventSession.Internal {
     public static class MSALWAMHelper {
         [DllImport("kernel32.dll")]
         private static extern IntPtr GetConsoleWindow();
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hwnd);
 
         public static string RequestToken(string authority, string clientId, string[] scopes, int timeoutMs) {
             var brokerOpts = new BrokerOptions(BrokerOptions.OperatingSystems.Windows);
@@ -3219,6 +3228,8 @@ namespace GetEventSession.Internal {
 
             // WAM broker requires a non-zero HWND; use the console window as parent.
             var hwnd = GetConsoleWindow();
+            if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd)) hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) throw new InvalidOperationException("No window is available to parent the WAM dialog.");
             var ir = app.AcquireTokenInteractive(scopes)
                 .WithParentActivityOrWindow(hwnd)
                 .ExecuteAsync().GetAwaiter().GetResult();
@@ -3227,13 +3238,11 @@ namespace GetEventSession.Internal {
     }
 }
 '@
-        # netstandard2.0 assemblies reference netstandard.dll and System.Runtime.dll for base types
-        # (e.g. Enum, Object).  Roslyn on .NET 6+ doesn't add these implicitly — supply them.
         $runtimeDir = Split-Path ([System.Object].Assembly.Location)
         $msalRefs = [System.Collections.Generic.List[string]]::new()
         $msalRefs.Add($assemblies.MsalPath)
         $msalRefs.Add($assemblies.BrokerPath)
-        foreach ($stdDll in @('netstandard.dll', 'System.Runtime.dll')) {
+        foreach ($stdDll in @('netstandard.dll')) {
             $p = Join-Path $runtimeDir $stdDll
             if (Test-Path -LiteralPath $p) { $msalRefs.Add($p) }
         }
@@ -3261,7 +3270,7 @@ namespace GetEventSession.Internal {
     catch {
         if ($_.Exception.Message -match '(?i)(cancel|AADSTS65004)') { throw 'MSA authentication cancelled.' }
         Write-Verbose ('MSAL WAM token request failed: {0}' -f $_.Exception.Message)
-        return $null
+        throw ('MSAL WAM token request failed: {0}' -f $_.Exception.Message)
     }
 }
 
@@ -3473,20 +3482,11 @@ function Get-WAMAccessToken {
         # ContentType=WindowsRuntime is unavailable in PS7/.NET 6+.
         # Path 2: MSAL.NET + WAM broker DLL — ships with Az, Graph, ExchangeOnline PS modules.
         Write-Verbose 'WinRT unavailable in this PS version; trying MSAL.NET WAM broker.'
-        if ($PSVersionTable.PSVersion.Major -ge 6) {
-            $msalToken = Get-WAMAccessTokenViaMSAL -Authority $authority -ClientId $ClientId -Scope $effectiveScope
-            if (-not [string]::IsNullOrWhiteSpace($msalToken)) {
-                return $msalToken
-            }
+        $msalToken = Get-WAMAccessTokenViaMSAL -Authority $authority -ClientId $ClientId -Scope $effectiveScope
+        if (-not [string]::IsNullOrWhiteSpace($msalToken)) {
+            return $msalToken
         }
-
-        # Path 3: spawn powershell.exe (v5.1) where WinRT loads natively.
-        Write-Verbose 'Falling back to powershell.exe (v5.1) subprocess for WAM.'
-        $subToken = Invoke-WAMViaPS5Subprocess -Authority $authority -ClientId $ClientId -Scope $effectiveScope
-        if (-not [string]::IsNullOrWhiteSpace($subToken)) {
-            return $subToken
-        }
-        throw ('WinRT not available for WAM: {0}' -f $winRTLoadError.Exception.Message)
+        throw 'WAM broker did not return an access token. Check verbose output for MSAL discovery or compilation failures.'
     }
 
     # ── Native PS WinRT path (PS5.1) ─────────────────────────────────────────
@@ -4081,9 +4081,9 @@ function Get-CustomEventBrowserRequestContext {
         [string]$SessionId
     )
 
-    $endpointJson = $CatalogUri.GetLeftPart([System.UriPartial]::Path) | ConvertTo-Json -Compress
+    $endpointJson = ConvertTo-Json -InputObject @(Get-CustomCatalogEndpointPaths -Uri $CatalogUri) -Compress
     $expression = @'
-new Promise(function(resolve){var endpoint=ENDPOINT,deadline=Date.now()+10000;function inspect(){var entries=performance.getEntriesByType('resource');for(var index=entries.length-1;index>=0;index--){var resource=new URL(entries[index].name,location.href);if(resource.origin+resource.pathname===endpoint){resolve({url:resource.href,referer:location.origin+location.pathname});return;}}if(Date.now()>=deadline){resolve(null);return;}setTimeout(inspect,250);}inspect();})
+new Promise(function(resolve){var endpoints=ENDPOINT,deadline=Date.now()+10000;function inspect(){var entries=performance.getEntriesByType('resource');for(var endpoint of endpoints){for(var index=entries.length-1;index>=0;index--){var resource=new URL(entries[index].name,location.href);if(resource.origin+resource.pathname===endpoint){resolve({url:resource.href,referer:location.origin+location.pathname});return;}}}if(Date.now()>=deadline){resolve(null);return;}setTimeout(inspect,250);}inspect();})
 '@
     $expression = $expression.Replace('ENDPOINT', $endpointJson)
     $pages = @(Invoke-RestMethod -Uri ('http://127.0.0.1:{0}/json' -f $DebugPort) -Verbose:$false -Debug:$false -ErrorAction Stop)
@@ -4106,8 +4106,13 @@ new Promise(function(resolve){var endpoint=ENDPOINT,deadline=Date.now()+10000;fu
         $evaluation = Invoke-EdgeCDPCommand -WebSocketUrl $page.webSocketDebuggerUrl -Method 'Runtime.evaluate' -Params @{ expression = $expression; returnByValue = $true; awaitPromise = $true }
         $context = $evaluation.result.result.value
         if ($context -and $context.url -and $context.referer) {
-            $requestUri = [uri]$context.url
-            if ($requestUri.GetLeftPart([System.UriPartial]::Path) -eq $CatalogUri.GetLeftPart([System.UriPartial]::Path)) {
+            $requestUri = $null
+            $refererUri = $null
+            if ([uri]::TryCreate([string]$context.url, [System.UriKind]::Absolute, [ref]$requestUri) -and
+                [uri]::TryCreate([string]$context.referer, [System.UriKind]::Absolute, [ref]$refererUri) -and
+                (Test-CustomCatalogEndpoint -Uri $requestUri -CatalogUri $CatalogUri) -and
+                (Test-IsCustomCatalogUri -Uri $refererUri) -and
+                $refererUri.GetLeftPart([System.UriPartial]::Authority) -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority)) {
                 Write-Verbose ('Captured event catalog request context for {0}; query values are not logged.' -f $CatalogUri.Host)
                 return @{ Uri = $requestUri.AbsoluteUri; Referer = [string]$context.referer }
             }
@@ -4120,6 +4125,25 @@ function Test-IsCustomCatalogUri {
     param([uri]$Uri)
 
     return ($Uri -and $Uri.IsAbsoluteUri -and $Uri.Scheme -eq 'https' -and [string]::IsNullOrWhiteSpace($Uri.UserInfo))
+}
+
+function Get-CustomCatalogEndpointPaths {
+    param([parameter(Mandatory = $true)][uri]$Uri)
+
+    $origin = $Uri.GetLeftPart([System.UriPartial]::Authority)
+    $path = $Uri.AbsolutePath
+    $paths = @($path)
+    if ($path -cmatch '^/api/schedule-builder/sessions(?:/search)?/?$') {
+        $paths += '/api/schedule-builder/sessions', '/api/schedule-builder/sessions/', '/api/schedule-builder/sessions/search', '/api/schedule-builder/sessions/search/'
+    }
+    foreach ($candidate in @($paths | Select-Object -Unique)) { '{0}{1}' -f $origin, $candidate }
+}
+
+function Test-CustomCatalogEndpoint {
+    param([uri]$Uri, [uri]$CatalogUri)
+
+    if (-not (Test-IsCustomCatalogUri -Uri $Uri) -or -not (Test-IsCustomCatalogUri -Uri $CatalogUri)) { return $false }
+    return @(Get-CustomCatalogEndpointPaths -Uri $CatalogUri) -ccontains $Uri.GetLeftPart([System.UriPartial]::Path)
 }
 
 function Get-CustomEventCacheKey {
@@ -4146,7 +4170,7 @@ function Initialize-CustomRequestContext {
     if ($Context.Uri -and $Context.Referer) { return }
     if (-not $WebSession.EventRequestUri -or -not $WebSession.EventPortalUri) { throw 'Custom catalog context requires browser discovery.' }
     $requestUri = [uri]$WebSession.EventRequestUri
-    if ($requestUri.GetLeftPart([System.UriPartial]::Authority) -ne $Context.CatalogUri.GetLeftPart([System.UriPartial]::Authority)) { throw 'Custom request context has a different origin.' }
+    if (-not (Test-CustomCatalogEndpoint -Uri $requestUri -CatalogUri $Context.CatalogUri)) { throw 'Custom request context has an unexpected endpoint.' }
     $Context.Uri = $requestUri.AbsoluteUri
     $Context.Referer = $WebSession.EventPortalUri
 }
@@ -4176,6 +4200,11 @@ function Update-CustomPortalRequestContext {
     }
     if (-not $attributes['pc-id']) { return $false }
     $catalogPath = $CatalogUri.GetLeftPart([System.UriPartial]::Path)
+    $priorUri = $null
+    if ([uri]::TryCreate([string]$WebSession.EventRequestUri, [System.UriKind]::Absolute, [ref]$priorUri) -and
+        (Test-CustomCatalogEndpoint -Uri $priorUri -CatalogUri $CatalogUri)) {
+        $catalogPath = $priorUri.GetLeftPart([System.UriPartial]::Path)
+    }
     Set-ObjectPropertyValue -Object $WebSession -Name 'EventRequestUri' -Value ('{0}?pcId={1}' -f $catalogPath, [uri]::EscapeDataString($attributes['pc-id']))
     if ($SessionId) {
         $detailPcId = if ($attributes['event-details-pc-id']) { $attributes['event-details-pc-id'] } else { $attributes['pc-id'] }
@@ -4184,6 +4213,67 @@ function Update-CustomPortalRequestContext {
     }
     Write-Verbose ('Refreshed event page context for {0} from the signed-in sessions page; values are not logged.' -f $CatalogUri.Host)
     return $true
+}
+
+function Get-CustomCatalogFailureSummary {
+    param(
+        [parameter(Mandatory = $true)][System.Exception]$Exception,
+        [int]$StatusCode = 0
+    )
+
+    $cause = 'unclassified request failure'
+    $hint = 'Check EventUrl, proxy settings, network connectivity, and the PowerShell runtime.'
+    $underlying = $Exception
+    for ($inner = $Exception; $inner; $inner = $inner.InnerException) {
+        $underlying = $inner
+        if ($inner -is [System.TimeoutException] -or $inner -is [System.OperationCanceledException]) {
+            $cause = 'request timeout'
+            $hint = 'Check whether the catalog host or proxy is reachable and responding within the request timeout.'
+            break
+        }
+        if ($inner -is [System.Security.Authentication.AuthenticationException]) {
+            $cause = 'TLS authentication failure'
+            $hint = 'Check certificate trust, system time, and HTTPS inspection by a proxy or firewall.'
+            break
+        }
+        if ($inner -is [System.Net.Sockets.SocketException]) {
+            $cause = 'DNS or socket connection failure'
+            $hint = 'Check DNS resolution, host connectivity, firewall rules, and proxy settings.'
+            break
+        }
+        if ($inner -is [System.Management.Automation.ParameterBindingException]) {
+            $cause = 'request parameter binding failure'
+            $hint = 'Check EventUrl and Proxy values, and run the script under PowerShell 7 or later.'
+            break
+        }
+        if ($inner -is [System.Net.WebException]) {
+            switch ($inner.Status) {
+                'Timeout' { $cause = 'request timeout'; $hint = 'Check catalog host and proxy responsiveness.' }
+                'NameResolutionFailure' { $cause = 'DNS resolution failure'; $hint = 'Check DNS resolution for the catalog host.' }
+                'ProxyNameResolutionFailure' { $cause = 'proxy DNS resolution failure'; $hint = 'Check the configured proxy address and its DNS resolution.' }
+                'TrustFailure' { $cause = 'certificate trust failure'; $hint = 'Check certificate trust, system time, and HTTPS inspection.' }
+                'SecureChannelFailure' { $cause = 'TLS secure-channel failure'; $hint = 'Check TLS support and HTTPS inspection by a proxy or firewall.' }
+                default { $cause = 'connection failure'; $hint = 'Check catalog host connectivity and proxy settings.' }
+            }
+            break
+        }
+        if ($inner -is [System.Net.Http.HttpRequestException]) {
+            $cause = 'HTTP connection failure'
+            if ($inner.PSObject.Properties.Match('HttpRequestError').Count -gt 0) {
+                switch ([string]$inner.HttpRequestError) {
+                    'NameResolutionError' { $cause = 'DNS resolution failure'; $hint = 'Check DNS resolution for the catalog host and proxy.' }
+                    'SecureConnectionError' { $cause = 'TLS connection failure'; $hint = 'Check certificate trust, system time, and HTTPS inspection.' }
+                    'ConnectionError' { $hint = 'Check catalog host connectivity, firewall rules, and proxy settings.' }
+                    'ProxyTunnelError' { $cause = 'proxy tunnel failure'; $hint = 'Check proxy authentication and HTTPS tunneling permissions.' }
+                }
+            }
+        }
+    }
+    if ($StatusCode -gt 0) {
+        $cause = 'HTTP {0}' -f $StatusCode
+        $hint = if ($StatusCode -ge 500) { 'The server or proxy returned an error; check service availability and retry later.' } else { 'Check the catalog endpoint and its supported request method.' }
+    }
+    return 'Cause: {0}. Exception: {1} (HRESULT 0x{2:X8}). {3}' -f $cause, $underlying.GetType().FullName, $underlying.HResult, $hint
 }
 
 function Invoke-CustomCatalogPage {
@@ -4199,11 +4289,12 @@ function Invoke-CustomCatalogPage {
         sort = @{ column = 'start'; direction = 0 }; page = $Page; pageSize = 20
         aiSearch = $false; upcoming = $false; onDemand = $false; hasAssets = $false; onSchedule = $false
     }
+    $requestStarted = $false
     try {
         if ($Context.Method -ne 'Get') { Initialize-CustomRequestContext -Context $Context -WebSession $WebSession -Proxy $Proxy }
         else { $Context.Uri = Get-CustomEventPageUri -BaseUrl $Context.CatalogUri.AbsoluteUri -Page $Page }
         $requestUri = [uri]$Context.Uri
-        if (-not (Test-IsCustomCatalogUri -Uri $requestUri) -or $requestUri.GetLeftPart([System.UriPartial]::Authority) -ne $Context.CatalogUri.GetLeftPart([System.UriPartial]::Authority)) { throw 'Invalid Custom request origin.' }
+        if (-not (Test-CustomCatalogEndpoint -Uri $requestUri -CatalogUri $Context.CatalogUri)) { throw 'Invalid Custom request endpoint.' }
         $method = if ($Context.Method) { $Context.Method } else { 'Post' }
         $parameters = @{
             Uri = $requestUri.AbsoluteUri; Method = $method; WebSession = $WebSession
@@ -4225,11 +4316,25 @@ function Invoke-CustomCatalogPage {
             if ($authHeaders.Authorization) { $parameters.Headers.Authorization = $authHeaders.Authorization }
         }
         if ($Proxy) { $parameters.Proxy = $Proxy }
+        $requestStarted = $true
         $response = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod @parameters } -Variables @{ parameters = $parameters } -SuppressErrorDetails
     }
     catch {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
         $status = $null
         if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+        if ($Context.AllowSearchFallback -and $Context.Method -eq 'Post' -and
+            $requestUri.AbsolutePath -cmatch '^/api/schedule-builder/sessions/?$' -and
+            $status -in @(301, 302, 303, 307, 308, 400, 401, 403, 404, 405)) {
+            $Context.AllowSearchFallback = $false
+            $builder = [System.UriBuilder]::new($requestUri)
+            $builder.Path = '/api/schedule-builder/sessions/search'
+            $builder.Fragment = ''
+            $Context.Uri = $builder.Uri.AbsoluteUri
+            Set-ObjectPropertyValue -Object $WebSession -Name 'EventRequestUri' -Value $Context.Uri
+            Write-Verbose 'Trying the supported schedule-builder /sessions/search POST endpoint.'
+            return Invoke-CustomCatalogPage -Context $Context -WebSession $WebSession -Page $Page -Proxy $Proxy
+        }
         if ($Context.Method -eq 'Get' -and $Context.AllowMethodSwitch -ne $false -and $status -eq 405 -and [string]$_.Exception.Response.Headers -match '(?i)POST') {
             $Context.Method = 'Post'
             $Context.Uri = $Context.CatalogUri.AbsoluteUri
@@ -4241,7 +4346,10 @@ function Invoke-CustomCatalogPage {
             $Context.AllowMethodSwitch = $false
             return Invoke-CustomCatalogPage -Context $Context -WebSession $WebSession -Page $Page -Proxy $Proxy
         }
-        $exception = [System.InvalidOperationException]::new(('Custom catalog page {0} failed{1}. Sign-in or request context may need refreshing; request credentials are withheld.' -f $Page, $(if ($status) { ' (HTTP {0})' -f $status } else { '' })))
+        $cause = if ($status) { 'HTTP {0}' -f $status } elseif ($requestStarted) { 'connection failure' } else { 'request context unavailable or invalid' }
+        $summary = Get-CustomCatalogFailureSummary -Exception $_.Exception -StatusCode ([int]$status)
+        $exception = [System.InvalidOperationException]::new(('Custom catalog page {0} failed ({1}). {2} Request credentials and response details are withheld.' -f $Page, $cause, $summary))
+        $exception.Data['FailureKind'] = if ($status) { 'Http' } elseif ($requestStarted) { 'Transport' } else { 'Context' }
         if ($status) { $exception.Data['StatusCode'] = $status }
         if (Test-MSAAuthenticationRequired -Exception $_.Exception) {
             $Context.AuthenticationRequired = $true
@@ -4255,11 +4363,27 @@ function Invoke-CustomCatalogPage {
         $exception.Data['AuthenticationRequired'] = $true
         throw $exception
     }
-    if ($response -and $response -isnot [string] -and $response.PSObject.Properties.Match('items').Count -gt 0) { return $response }
-    if (-not $response -or $response -is [string] -or $response.PSObject.Properties.Match('sessions').Count -eq 0 -or $response.PSObject.Properties.Match('totalCount').Count -eq 0 -or $response.PSObject.Properties.Match('pageSize').Count -eq 0 -or $response.PSObject.Properties.Match('page').Count -eq 0) {
-        throw 'Custom portal returned an unexpected catalog response; no session cache was written.'
+    if ($response -and $response -isnot [string] -and $response.PSObject.Properties.Match('items').Count -gt 0) {
+        $Context.AllowSearchFallback = $false
+        return $response
     }
-    if ([int]$response.page -ne $Page -or [int]$response.pageSize -le 0 -or [int]$response.totalCount -lt 0) { throw 'Custom portal returned invalid pagination information.' }
+    if (-not $response -or $response -is [string] -or $response.PSObject.Properties.Match('sessions').Count -eq 0 -or $response.PSObject.Properties.Match('totalCount').Count -eq 0 -or $response.PSObject.Properties.Match('pageSize').Count -eq 0 -or $response.PSObject.Properties.Match('page').Count -eq 0) {
+        $exception = [System.InvalidOperationException]::new('Custom portal returned an unexpected catalog response; no session cache was written.')
+        $exception.Data['FailureKind'] = 'Response'
+        throw $exception
+    }
+    $responsePage = 0
+    $pageSize = 0
+    $totalCount = 0
+    if (-not [int]::TryParse([string]$response.page, [ref]$responsePage) -or
+        -not [int]::TryParse([string]$response.pageSize, [ref]$pageSize) -or
+        -not [int]::TryParse([string]$response.totalCount, [ref]$totalCount) -or
+        $responsePage -ne $Page -or $pageSize -le 0 -or $totalCount -lt 0) {
+        $exception = [System.InvalidOperationException]::new('Custom portal returned invalid pagination information; no session cache was written.')
+        $exception.Data['FailureKind'] = 'Response'
+        throw $exception
+    }
+    $Context.AllowSearchFallback = $false
     return $response
 }
 
@@ -4308,7 +4432,8 @@ function Test-SessionHasOnDemandContent {
 function Set-CustomSessionDetailMetadata {
     param(
         [parameter(Mandatory = $true)][object]$Session,
-        [parameter(Mandatory = $true)][object]$Details
+        [parameter(Mandatory = $true)][object]$Details,
+        [uri]$CatalogUri
     )
 
     $eventInfo = $Details.eventInfo
@@ -4316,9 +4441,8 @@ function Set-CustomSessionDetailMetadata {
     if ($null -ne $eventInfo.virtual -and $eventInfo.virtual.PSObject.Properties.Match('videoEnabled').Count -gt 0) {
         Set-ObjectPropertyValue -Object $Session -Name 'hasOnDemandContent' -Value $eventInfo.virtual.videoEnabled
     }
-    if (-not (Test-SessionHasOnDemandContent -Session $Session)) { return }
     $videoUrl = [string]$eventInfo.virtual.videoUrl
-    if ($videoUrl) {
+    if ($videoUrl -and (Test-SessionHasOnDemandContent -Session $Session)) {
         $videoUri = $null
         if ([uri]::TryCreate($videoUrl, [System.UriKind]::Absolute, [ref]$videoUri) -and $videoUri.Scheme -eq 'https') {
             Set-ObjectPropertyValue -Object $Session -Name 'onDemand' -Value $videoUri.AbsoluteUri
@@ -4332,15 +4456,260 @@ function Set-CustomSessionDetailMetadata {
         }
     }
     if ($speakers.Count -gt 0) { Set-ObjectPropertyValue -Object $Session -Name 'speakerNames' -Value @($speakers | Select-Object -Unique) }
+    $presentations = [System.Collections.Generic.List[string]]::new()
     foreach ($asset in @($eventInfo.assets) + @($eventInfo.externalResources)) {
         if (-not $asset) { continue }
         $url = Get-ObjectPropertyValue -Object $asset -Name @('url', 'linkUrl', 'downloadUrl')
         $assetUri = $null
-        if ($url -and [uri]::TryCreate([string]$url, [System.UriKind]::Absolute, [ref]$assetUri) -and $assetUri.Scheme -eq 'https' -and $assetUri.AbsolutePath -match '(?i)\.(pptx|pdf)$') {
-            Set-ObjectPropertyValue -Object $Session -Name 'slideDeck' -Value $assetUri.AbsoluteUri
-            break
+        if ($url -and [uri]::TryCreate([string]$url, [System.UriKind]::Absolute, [ref]$assetUri) -and
+            (Test-IsCustomCatalogUri -Uri $assetUri) -and $assetUri.AbsolutePath -match '(?i)\.(pptx|pdf)$') {
+            $presentations.Add($assetUri.AbsoluteUri)
+        }
+        else {
+            $assetId = [guid]::Empty
+            $assetName = [string](Get-ObjectPropertyValue -Object $asset -Name @('name', 'fileName'))
+            if ((Test-IsCustomCatalogUri -Uri $CatalogUri) -and $assetName -match '(?i)\.(pptx|pdf)$' -and
+                [guid]::TryParse([string]$asset.id, [ref]$assetId)) {
+                $presentations.Add(([uri]::new($CatalogUri, ('/api/asset/download-url?id={0}' -f $assetId))).AbsoluteUri)
+            }
+            elseif ($assetUri -and $assetName -match '(?i)\.(pptx|pdf)$' -and
+                (Test-CustomAssetDownloadUri -Uri $assetUri -CatalogUri $CatalogUri)) {
+                $presentations.Add($assetUri.AbsoluteUri)
+            }
         }
     }
+    $deckUrls = @(Get-SessionPresentationUrls -Session ([pscustomobject]@{ slideDecks = $presentations.ToArray() }))
+    Set-ObjectPropertyValue -Object $Session -Name 'slideDecks' -Value $deckUrls
+    if ($deckUrls.Count -gt 0) { Set-ObjectPropertyValue -Object $Session -Name 'slideDeck' -Value $deckUrls[0] }
+}
+
+function Test-CustomAssetDownloadUri {
+    param([uri]$Uri, [uri]$CatalogUri)
+
+    if (-not (Test-IsCustomCatalogUri -Uri $Uri) -or -not (Test-IsCustomCatalogUri -Uri $CatalogUri) -or
+        $Uri.GetLeftPart([System.UriPartial]::Authority) -ne $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -or
+        $Uri.AbsolutePath -cne '/api/asset/download-url') { return $false }
+    $query = [System.Web.HttpUtility]::ParseQueryString($Uri.Query)
+    $assetId = [guid]::Empty
+    return [guid]::TryParse([string]$query['id'], [ref]$assetId)
+}
+
+function Get-SessionPresentationUrls {
+    param([parameter(Mandatory = $true)][object]$Session)
+
+    $urls = [System.Collections.Generic.SortedDictionary[string, string]]::new([System.StringComparer]::Ordinal)
+    $sources = @($Session.slideDecks)
+    if (@($sources | Where-Object { $_ }).Count -eq 0) { $sources = @($Session.slideDeck) }
+    foreach ($source in $sources) {
+        $uri = $null
+        if (-not [uri]::TryCreate([string]$source, [System.UriKind]::Absolute, [ref]$uri) -or
+            -not (Test-IsCustomCatalogUri -Uri $uri)) { continue }
+        $key = $uri.AbsoluteUri
+        if ($uri.AbsolutePath -ceq '/api/asset/download-url') {
+            $query = [System.Web.HttpUtility]::ParseQueryString($uri.Query)
+            $assetId = [guid]::Empty
+            if ([guid]::TryParse([string]$query['id'], [ref]$assetId)) {
+                $key = '{0}?id={1}' -f $uri.GetLeftPart([System.UriPartial]::Path), $assetId
+            }
+        }
+        if (-not $urls.ContainsKey($key)) { $urls.Add($key, $uri.AbsoluteUri) }
+    }
+    return @($urls.Values)
+}
+
+function Invoke-CustomAssetDownloadRequest {
+    param(
+        [parameter(Mandatory = $true)][uri]$Uri,
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [uri]$Proxy
+    )
+
+    $parameters = @{ Uri = $Uri.AbsoluteUri; Method = 'Get'; WebSession = $WebSession; MaximumRedirection = 0; TimeoutSec = 30; ErrorAction = 'Stop'; Verbose = $false; Debug = $false; Headers = @{ Accept = 'application/json' } }
+    if ($Proxy) { $parameters.Proxy = $Proxy }
+    if ($script:MSAAuthOrigin -eq $Uri.GetLeftPart([System.UriPartial]::Authority)) { $parameters.Headers = Get-MSAAuthApiHeaders }
+    try { $response = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod @parameters } -Variables @{ parameters = $parameters } -SuppressErrorDetails }
+    catch {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        $exception = [System.InvalidOperationException]::new('Presentation asset request failed; credentials and response details withheld.')
+        if (Test-MSAAuthenticationRequired -Exception $_.Exception) { $exception.Data['AuthenticationRequired'] = $true }
+        throw $exception
+    }
+    if ($response -is [string] -and (Test-MSAAuthenticationRequired -Response ([pscustomobject]@{ StatusCode = 200; Headers = @{ 'Content-Type' = 'text/html' }; Content = $response }) -RequestUri $Uri.AbsoluteUri)) {
+        $exception = [System.InvalidOperationException]::new('Presentation asset requires authentication.')
+        $exception.Data['AuthenticationRequired'] = $true
+        throw $exception
+    }
+    $downloadUri = $null
+    if ($response.success -isnot [bool] -or -not $response.success -or -not [uri]::TryCreate([string]$response.url, [System.UriKind]::Absolute, [ref]$downloadUri) -or
+        -not (Test-IsCustomCatalogUri -Uri $downloadUri)) { throw 'Presentation asset returned an invalid download response; response details withheld.' }
+    return $downloadUri.AbsoluteUri
+}
+
+function Resolve-CustomPresentationUrl {
+    param(
+        [parameter(Mandatory = $true)][uri]$Uri,
+        [parameter(Mandatory = $true)][uri]$CatalogUri,
+        [uri]$Proxy
+    )
+
+    if (-not (Test-CustomAssetDownloadUri -Uri $Uri -CatalogUri $CatalogUri)) { throw 'Invalid presentation asset endpoint.' }
+    $origin = $CatalogUri.GetLeftPart([System.UriPartial]::Authority)
+    if ($script:MSAAuthOrigin -ne $origin) { $script:MSAAuthWebSession = $null; $script:MSABearerToken = $null }
+    $script:MSAAuthOrigin = $origin
+    $webSession = $script:MSAAuthWebSession
+    if (-not $webSession) { $webSession = Get-CachedMSAWebSession -CachePath (Join-Path $PSScriptRoot 'MSAAuth.cache') -CookieUri ([uri]($origin + '/')) }
+    if (-not $webSession) { $webSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession }
+    try {
+        $url = Invoke-CustomAssetDownloadRequest -Uri $Uri -WebSession $webSession -Proxy $Proxy
+        $script:MSAAuthWebSession = $webSession
+        return $url
+    }
+    catch {
+        if (-not $_.Exception.Data['AuthenticationRequired']) { throw }
+    }
+    $state = @{}
+    $validator = {
+        param($session)
+        $state.Url = Invoke-CustomAssetDownloadRequest -Uri $Uri -WebSession $session -Proxy $Proxy
+        return $true
+    }
+    $webSession = Get-MSAAuthenticatedWebSession -TargetUri $Uri -Proxy $Proxy -ValidateCachedSession -PersistCache -SessionValidator $validator
+    if (-not $webSession -or -not $state.Url) { throw 'Unable to authenticate for the presentation asset.' }
+    return $state.Url
+}
+
+function Add-SessionPresentationDownloadJobs {
+    param(
+        [parameter(Mandatory = $true)][object]$Session,
+        [parameter(Mandatory = $true)][uri]$CatalogUri,
+        [parameter(Mandatory = $true)][string]$Folder,
+        [parameter(Mandatory = $true)][string]$BaseName,
+        [string]$Timestamp,
+        [switch]$Overwrite,
+        [uri]$Proxy
+    )
+
+    $sources = @(Get-SessionPresentationUrls -Session $Session)
+    $result = [pscustomobject]@{ Existing = 0; Missing = 0 }
+    for ($index = 0; $index -lt $sources.Count; $index++) {
+        $name = if ($index -gt 0) { '{0}-{1}' -f $BaseName, $index } else { $BaseName }
+        try {
+            $sourceUri = [uri]$sources[$index]
+            $isResolver = Test-CustomAssetDownloadUri -Uri $sourceUri -CatalogUri $CatalogUri
+            if ($sourceUri.AbsolutePath -ceq '/api/asset/download-url' -and -not $isResolver) { throw 'Invalid asset origin.' }
+            $downloadUrl = if ($isResolver) { Resolve-CustomPresentationUrl -Uri $sourceUri -CatalogUri $CatalogUri -Proxy $Proxy } else { $sourceUri.AbsoluteUri }
+            $downloadUri = [uri]$downloadUrl
+            if (-not (Test-IsCustomCatalogUri -Uri $downloadUri)) { throw 'Invalid presentation URL.' }
+            $extension = [System.IO.Path]::GetExtension($downloadUri.AbsolutePath).ToLowerInvariant()
+            if ($extension -in @('.pptx', '.pdf')) {
+                $file = [System.IO.Path]::Combine($Folder, ($name + $extension))
+                if (-not $Overwrite -and (Test-Path -LiteralPath $file) -and (Get-Item -LiteralPath $file).Length -gt 0) {
+                    Write-Host ('Slidedeck exists {0}' -f ($name + $extension)) -ForegroundColor Gray
+                    $result.Existing++
+                    continue
+                }
+            }
+            $headers = $null
+            $parameters = @{ Uri = $downloadUrl; Method = 'Head'; MaximumRedirection = 0; TimeoutSec = 30; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
+            if ($Proxy) { $parameters.Proxy = $Proxy }
+            if ($downloadUri.GetLeftPart([System.UriPartial]::Authority) -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -and
+                $script:MSAAuthOrigin -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -and $script:MSAAuthWebSession) {
+                $parameters.WebSession = $script:MSAAuthWebSession
+                $headers = Get-MSAAuthApiHeaders
+                $cookieHeader = $script:MSAAuthWebSession.Cookies.GetCookieHeader($downloadUri)
+                if ($cookieHeader) { $headers.Cookie = $cookieHeader }
+                $parameters.Headers = $headers
+            }
+            $response = Invoke-WebRequest @parameters
+            $contentType = ([string]($response.Headers['Content-Type'] | Select-Object -First 1) -split ';')[0].Trim()
+            if ($contentType -eq 'application/pdf') { $extension = '.pdf' }
+            elseif ($contentType -eq 'application/vnd.openxmlformats-officedocument.presentationml.presentation') { $extension = '.pptx' }
+            elseif ($contentType -ne 'application/octet-stream' -or $extension -notin @('.pptx', '.pdf')) { throw 'Presentation response has an unsupported file type.' }
+            $file = [System.IO.Path]::Combine($Folder, ($name + $extension))
+            if (-not $Overwrite -and (Test-Path -LiteralPath $file) -and (Get-Item -LiteralPath $file).Length -gt 0) {
+                Write-Host ('Slidedeck exists {0}' -f ($name + $extension)) -ForegroundColor Gray
+                $result.Existing++
+                continue
+            }
+            Write-Verbose ('Downloading presentation {0} for session {1}; source credentials withheld.' -f ($index + 1), $Session.sessionCode)
+            Add-BackgroundDownloadJob -Type 1 -FilePath $file -DownloadUrl $downloadUrl -File $file -Timestamp $Timestamp -ScheduleCode $Session.sessionCode -Title $Session.title -Headers $headers -Proxy $Proxy
+        }
+        catch {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Message -match '(?i)cancelled') { throw }
+            $result.Missing++
+            Write-Warning ('Unable to download presentation {0} for session {1}; credentials and response details withheld.' -f ($index + 1), $Session.sessionCode)
+        }
+    }
+    return $result
+}
+
+function Get-CustomSessionPageMetadata {
+    param(
+        [parameter(Mandatory = $true)][object]$Details,
+        [parameter(Mandatory = $true)][uri]$CatalogUri,
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [uri]$Proxy
+    )
+
+    $listUri = $null
+    if (-not [uri]::TryCreate([string]$Details.eventListUrl, [System.UriKind]::Absolute, [ref]$listUri) -or
+        -not (Test-IsCustomCatalogUri -Uri $listUri) -or
+        $listUri.GetLeftPart([System.UriPartial]::Authority) -ne $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -or
+        $listUri.AbsolutePath -notmatch '/sessions/?$') { return $Details }
+    $sessionId = [guid]::Empty
+    if (-not [guid]::TryParse([string]$Details.eventInfo.id, [ref]$sessionId)) { return $Details }
+    $builder = [System.UriBuilder]::new($listUri)
+    $builder.Path = $listUri.AbsolutePath.TrimEnd('/').Substring(0, $listUri.AbsolutePath.TrimEnd('/').LastIndexOf('/')) + '/session-details/' + $sessionId
+    $builder.Query = ''
+    $builder.Fragment = ''
+    $pageUri = $builder.Uri
+    $parameters = @{ Uri = $pageUri.AbsoluteUri; Method = 'Get'; WebSession = $WebSession; MaximumRedirection = 0; TimeoutSec = 30; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
+    if ($Proxy) { $parameters.Proxy = $Proxy }
+    Write-Verbose ('Inspecting published session page for assets: {0}' -f $pageUri.GetLeftPart([System.UriPartial]::Path))
+    try { $page = Invoke-WebRequest @parameters }
+    catch {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        $exception = [System.InvalidOperationException]::new('Unable to inspect the selected session page; credentials and response details withheld.')
+        if (Test-MSAAuthenticationRequired -Exception $_.Exception) { $exception.Data['AuthenticationRequired'] = $true }
+        throw $exception
+    }
+    if (Test-MSAAuthenticationRequired -Response $page -RequestUri $pageUri.AbsoluteUri) {
+        $exception = [System.InvalidOperationException]::new('Selected session page requires authentication.')
+        $exception.Data['AuthenticationRequired'] = $true
+        throw $exception
+    }
+    $tag = [regex]::Match([string]$page.Content, '(?is)<hio-event-details\b[^>]*>').Value
+    $attributes = @{}
+    foreach ($match in [regex]::Matches($tag, '\s([\w-]+)=["'']([^"'']*)["'']')) {
+        $attributes[$match.Groups[1].Value.ToLowerInvariant()] = [System.Net.WebUtility]::HtmlDecode($match.Groups[2].Value)
+    }
+    if ($attributes['pc-id'] -and $attributes['event-id'] -eq [string]$sessionId) {
+        $detailUri = [uri]::new($CatalogUri, ('/api/event/details/{0}?pcId={1}' -f $sessionId, [uri]::EscapeDataString($attributes['pc-id'])))
+        if ($attributes['visibility-pc-id']) {
+            $detailUri = [uri]($detailUri.AbsoluteUri + '&visibilityPcId=' + [uri]::EscapeDataString($attributes['visibility-pc-id']))
+        }
+        $pageDetails = Invoke-CustomSessionDetailRequest -Uri $detailUri -WebSession $WebSession -Proxy $Proxy
+        if (-not $pageDetails.eventInfo -or [string]$pageDetails.eventInfo.id -ne [string]$sessionId) { throw 'Selected session page details have an unexpected ID.' }
+        $Details = $pageDetails
+        Set-ObjectPropertyValue -Object $WebSession -Name 'EventDetailRequests' -Value @{ ([string]$sessionId) = $detailUri.AbsoluteUri }
+    }
+    $assets = [System.Collections.Generic.List[object]]::new()
+    foreach ($asset in @($Details.eventInfo.assets)) { if ($asset) { $assets.Add($asset) } }
+    foreach ($link in @($page.Links)) {
+        $assetUri = $null
+        if (-not $link.href -or -not [uri]::TryCreate($pageUri, [System.Net.WebUtility]::HtmlDecode([string]$link.href), [ref]$assetUri) -or
+            -not (Test-IsCustomCatalogUri -Uri $assetUri)) { continue }
+        if ($assetUri.AbsolutePath -match '(?i)\.(pptx|pdf)$') {
+            $assets.Add([pscustomobject]@{ url = $assetUri.AbsoluteUri })
+        }
+        elseif (Test-CustomAssetDownloadUri -Uri $assetUri -CatalogUri $CatalogUri) {
+            $assetId = [System.Web.HttpUtility]::ParseQueryString($assetUri.Query)['id']
+            $assets.Add([pscustomobject]@{ id = $assetId; url = $assetUri.AbsoluteUri; name = [string]$link.title })
+        }
+    }
+    Set-ObjectPropertyValue -Object $Details.eventInfo -Name 'assets' -Value $assets.ToArray()
+    Write-Verbose ('Inspected selected session page; {0} asset record(s) available for presentation extraction.' -f $assets.Count)
+    return $Details
 }
 
 function Update-CustomSessionDetails {
@@ -4395,7 +4764,10 @@ function Update-CustomSessionDetails {
             $state.Details = Invoke-CustomSessionDetailRequest -Uri $state.Uri -WebSession $webSession -Proxy $Proxy
             if (-not $state.Details.eventInfo -or [string]$state.Details.eventInfo.id -ne [string]$sessionId) { throw 'Custom session detail response has an unexpected ID.' }
         }
-        # One template is enough: the query context applies to every session ID.
+        $state.Details = Get-CustomSessionPageMetadata -Details $state.Details -CatalogUri $CatalogUri -WebSession $webSession -Proxy $Proxy
+        if ($webSession.EventDetailRequests -and $webSession.EventDetailRequests[[string]$sessionId]) {
+            $state.Uri = [uri]$webSession.EventDetailRequests[[string]$sessionId]
+        }
         $state.DetailRequests = @{ ([string]$sessionId) = $state.Uri.AbsoluteUri }
         Set-ObjectPropertyValue -Object $webSession -Name 'EventDetailRequests' -Value $state.DetailRequests
         if ($state.RequestUri) { Set-ObjectPropertyValue -Object $webSession -Name 'EventRequestUri' -Value $state.RequestUri }
@@ -4422,7 +4794,7 @@ function Update-CustomSessionDetails {
         Write-Verbose ('Retrieving published media information for Custom session {0}' -f $Session.sessionCode)
         $webSession = Get-MSAAuthenticatedWebSession -TargetUri $detailUri -Proxy $Proxy -ValidateCachedSession -PersistCache -SessionValidator $validator -OnAuthenticatedBrowser $capture
         if (-not $webSession) { throw 'Unable to obtain selected session details.' }
-        Set-CustomSessionDetailMetadata -Session $Session -Details $state.Details
+        Set-CustomSessionDetailMetadata -Session $Session -Details $state.Details -CatalogUri $CatalogUri
     }
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Message -match '(?i)cancelled') { throw }
@@ -4438,7 +4810,7 @@ function Get-CustomEventCatalog {
 
     $catalogUri = [uri]$CatalogUrl
     if (-not (Test-IsCustomCatalogUri -Uri $catalogUri)) { throw 'Custom event catalogs require an absolute HTTPS URL without embedded credentials.' }
-    $catalogContext = @{ CatalogUri = $catalogUri; Method = 'Get'; AllowMethodSwitch = $false }
+    $catalogContext = @{ CatalogUri = $catalogUri; Method = 'Get'; AllowMethodSwitch = $false; AllowSearchFallback = $true }
     $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
     $publicResponse = $null
     $needsAuthFlow = $false
@@ -4449,7 +4821,11 @@ function Get-CustomEventCatalog {
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
         $statusCode = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $_.Exception.Data['StatusCode'] }
-        if (-not $_.Exception.Data['AuthenticationRequired'] -and (-not $statusCode -or $statusCode -ge 500)) { throw 'Unable to inspect the Custom catalog; no authentication was attempted because the request failed without a recoverable HTTP response.' }
+        if (-not $_.Exception.Data['AuthenticationRequired'] -and (-not $statusCode -or $statusCode -ge 500)) {
+            if ($_.Exception.Data['FailureKind']) { throw }
+            $summary = Get-CustomCatalogFailureSummary -Exception $_.Exception -StatusCode ([int]$statusCode)
+            throw ('Unable to inspect the Custom catalog; no authentication was attempted because the request failed without a recoverable HTTP response. {0} Request credentials and response details are withheld.' -f $summary)
+        }
         $catalogContext.AuthenticationRequired = [bool]$_.Exception.Data['AuthenticationRequired']
         Write-Verbose ('Anonymous catalog GET failed (HTTP {0}); trying cached POST context.' -f $statusCode)
     }
@@ -4469,7 +4845,7 @@ function Get-CustomEventCatalog {
             $session = $cachedSession
             $catalogContext.AuthenticationRequired = $true
             $cachedRequestUri = $null
-            if ($cachedSession.EventRequestUri -and [uri]::TryCreate([string]$cachedSession.EventRequestUri, [System.UriKind]::Absolute, [ref]$cachedRequestUri) -and $cachedRequestUri.GetLeftPart([System.UriPartial]::Path) -eq $catalogUri.GetLeftPart([System.UriPartial]::Path)) {
+            if ($cachedSession.EventRequestUri -and [uri]::TryCreate([string]$cachedSession.EventRequestUri, [System.UriKind]::Absolute, [ref]$cachedRequestUri) -and (Test-CustomCatalogEndpoint -Uri $cachedRequestUri -CatalogUri $catalogUri)) {
                 $catalogContext.Uri = $cachedRequestUri.AbsoluteUri
                 if ($cachedSession.EventPortalUri) { $catalogContext.Referer = $cachedSession.EventPortalUri }
             }
@@ -5433,8 +5809,7 @@ function Get-BackgroundDownloadJobs {
             # Job finished, process result
             switch ( $job.Type) {
                 1 {
-                    $isJobSuccess = $job.job.State -eq 'Completed'
-                    $DeckInfo[ $InfoDownload]++
+                    $isJobSuccess = $job.job.State -eq 'Completed' -and (Test-Path -LiteralPath $job.file) -and (Get-Item -LiteralPath $job.file).Length -gt 0
                     Write-Progress -Id ($job.job.Id + 1000) -Activity ('Slidedeck {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                 }
                 2 {
@@ -5465,7 +5840,6 @@ function Get-BackgroundDownloadJobs {
                         switch ( $job.Type) {
                             1 {
                                 # Placeholder Deck file downloaded
-                                $DeckInfo[ $InfoDownload]--
                                 $DeckInfo[ $InfoPlaceholder]++
                             }
                             2 {
@@ -5487,6 +5861,9 @@ function Get-BackgroundDownloadJobs {
 
             if ( $isJobSuccess -and -not $isPlaceholder) {
 
+                if ($job.Type -eq 1) {
+                    $DeckInfo[$InfoDownload]++
+                }
                 if ( $job.Type -eq 2) {
                     $VideoInfo[ $InfoDownload]++
                 }
@@ -5518,6 +5895,7 @@ function Get-BackgroundDownloadJobs {
             else {
                 switch ( $job.Type) {
                     1 {
+                        if (-not $isPlaceholder) { $DeckInfo[$InfoPlaceholder]++ }
                         Write-Host ('Problem downloading or missing slidedeck of {0} {1}' -f $job.scheduleCode, $job.title) -ForegroundColor Red
                         $job.job.ChildJobs | Stop-Job | Out-Null
                         $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
@@ -5818,7 +6196,7 @@ function Add-BackgroundDownloadJob {
 ##########
 
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.50')
+Write-Host( 'Get-EventSession v4.52')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)
@@ -6063,9 +6441,6 @@ if (-not ($InfoOnly)) {
 }
 
 $SessionCache = Join-Path $PSScriptRoot ('{0}-Sessions.cache' -f $EventName)
-if ($EventType -eq 'CUSTOM') {
-    $SessionCache = Join-Path $PSScriptRoot ('Custom-{0}-Sessions.cache' -f (Get-CustomEventCacheKey -Uri ([uri]$EventAPIUrl)))
-}
 $SessionCacheValid = $false
 
 if ( $Refresh) {
@@ -6690,20 +7065,20 @@ foreach ($SessionToGet in $SessionsToGet) {
     if (!([string]::IsNullOrEmpty( $SessionToGet.startDateTime)) -and (Get-Date -Date $SessionToGet.startDateTime) -ge (Get-Date)) {
         Write-Verbose ('Skipping session {0}: Future session' -f $SessionToGet.sessioncode)
     }
-    elseif (-not (Test-SessionHasOnDemandContent -Session $SessionToGet)) {
+    elseif (-not (Test-SessionHasOnDemandContent -Session $SessionToGet) -and ($InfoOnly -or $NoSlidedecks)) {
         Write-Verbose ('Skipping session {0}: on-demand content is explicitly unavailable' -f $SessionToGet.sessionCode)
     }
     else {
 
         # When storing session content in subfolders per session, override the content target folder to be the session subfolder
-        if (-not $InfoOnly -and $EventType -eq 'CUSTOM' -and ((-not $NoVideos -and -not $SessionToGet.onDemand -and -not $SessionToGet.downloadVideoLink) -or (-not $NoSlidedecks -and -not $SessionToGet.slideDeck))) {
+        if (-not $InfoOnly -and $EventType -eq 'CUSTOM' -and ((-not $NoVideos -and (Test-SessionHasOnDemandContent -Session $SessionToGet) -and -not $SessionToGet.onDemand -and -not $SessionToGet.downloadVideoLink) -or -not $NoSlidedecks)) {
             Update-CustomSessionDetails -Session $SessionToGet -CatalogUri ([uri]$EventAPIUrl) -Proxy $ProxyURL
-            if (-not (Test-SessionHasOnDemandContent -Session $SessionToGet)) {
+            if (-not (Test-SessionHasOnDemandContent -Session $SessionToGet) -and ($NoSlidedecks -or @(Get-SessionPresentationUrls -Session $SessionToGet).Count -eq 0)) {
                 Write-Verbose ('Skipping session {0}: details indicate no on-demand content' -f $SessionToGet.sessionCode)
                 continue
             }
         }
-        if ( $UseSessionFolders) {
+        if ( $UseSessionFolders -and -not $InfoOnly) {
             $SessionFolder = Join-Path -Path $DownloadFolder -ChildPath $FileName
             if ( (Test-Path -LiteralPath $SessionFolder) -eq $false ) {
                 New-Item -Path $SessionFolder -ItemType Directory | Out-Null
@@ -6714,7 +7089,7 @@ foreach ($SessionToGet in $SessionsToGet) {
             $ContentTargetFolder = $DownloadFolder
         }
 
-        if ( ! $NoVideos) {
+        if ( ! $NoVideos -and (Test-SessionHasOnDemandContent -Session $SessionToGet)) {
 
             $onDemandPage = $null
 
@@ -7148,72 +7523,79 @@ foreach ($SessionToGet in $SessionsToGet) {
         }
 
         if (! $NoSlidedecks) {
-            if ( !( [string]::IsNullOrEmpty( $SessionToGet.slideDeck)) ) {
-                $downloadLink = $SessionToGet.slideDeck
+            if ($EventType -eq 'CUSTOM' -and @(Get-SessionPresentationUrls -Session $SessionToGet).Count -gt 0) {
+                $presentationResult = Add-SessionPresentationDownloadJobs -Session $SessionToGet -CatalogUri ([uri]$EventAPIUrl) -Folder $ContentTargetFolder -BaseName $FileName -Timestamp $SessionTime -Overwrite:$Overwrite -Proxy $ProxyURL
+                $DeckInfo[$InfoExist] += $presentationResult.Existing
+                $DeckInfo[$InfoPlaceholder] += $presentationResult.Missing
             }
             else {
-                if ( $NoGuessing) {
-                    $downloadLink = $null
+                if ( !( [string]::IsNullOrEmpty( $SessionToGet.slideDeck)) ) {
+                    $downloadLink = $SessionToGet.slideDeck
                 }
                 else {
-                    # Try alternative construction
-                    $downloadLink = $SlidedeckUrl -f $SessionToGet.SessionCode
-                }
-            }
-
-            if ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius' -or $downloadLink -match 'confirmation\.aspx') {
-
-                $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
-                try {
-                    if ( $downloadLink -notmatch 'confirmation\.aspx') {
-                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
+                    if ( $NoGuessing) {
+                        $downloadLink = $null
                     }
                     else {
-                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Get -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
-                    }
-                }
-                catch {
-                    $ValidUrl = $false
-                }
-
-                if ( $downloadLink -match 'confirmation\.aspx' -and $ValidURL.Headers.'Content-Type' -ilike 'text/html') {
-                    # Extra parsing for MS downloads
-                    if ( $ValidUrl.RawContent -match 'href="(?<Url>https:\/\/download\.microsoft\.com\/download[\/0-9\-]*\/.*(pdf|pptx))".*click here to download manually') {
-                        $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $Matches.Url)
-                        $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
+                        # Try alternative construction
+                        $downloadLink = $SlidedeckUrl -f $SessionToGet.SessionCode
                     }
                 }
 
-                if ( $ValidUrl ) {
-                    if ( $DownloadURL -like '*.pdf' -or $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
-                        # Slidedeck offered is PDF format
-                        $slidedeckFile = '{0}.pdf' -f $FileName
-                    }
-                    else {
-                        $slidedeckFile = '{0}.pptx' -f $FileName
-                    }
-                    $slidedeckFullFile = [System.IO.Path]::Combine( $ContentTargetFolder, $slidedeckFile)
-                    if ((Test-Path -LiteralPath $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
-                        Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray
-                        $DeckInfo[ $InfoExist]++
-                    }
-                    else {
-                        Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL, $slidedeckFullFile)
-                        $slidedeckAuthHeaders = $null
-                        if (Test-IsProtectedContentUrl -Url $DownloadURL) {
-                            Write-Verbose ('Slidedeck requires authenticated download for session {0}' -f $SessionToGet.sessioncode)
-                            $slidedeckAuthHeaders = Get-MSADownloadAuthHeaders -Url $DownloadURL -Proxy $ProxyURL
+                if ($downloadLink -match "view.officeapps.live.com.*PPTX" -or $downloadLink -match 'downloaddocument' -or $downloadLink -match 'medius' -or $downloadLink -match 'confirmation\.aspx') {
+
+                    $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $downloadLink )
+                    try {
+                        if ( $downloadLink -notmatch 'confirmation\.aspx') {
+                            $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
                         }
-                        Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Headers $slidedeckAuthHeaders -Proxy $ProxyURL
+                        else {
+                            $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Get -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
+                        }
+                    }
+                    catch {
+                        $ValidUrl = $false
+                    }
+
+                    if ( $downloadLink -match 'confirmation\.aspx' -and $ValidURL.Headers.'Content-Type' -ilike 'text/html') {
+                        # Extra parsing for MS downloads
+                        if ( $ValidUrl.RawContent -match 'href="(?<Url>https:\/\/download\.microsoft\.com\/download[\/0-9\-]*\/.*(pdf|pptx))".*click here to download manually') {
+                            $DownloadURL = [System.Web.HttpUtility]::UrlDecode( $Matches.Url)
+                            $ValidUrl = Invoke-WebRequestWithMSAAuthSupport -Uri $DownloadURL -Method Head -DisableKeepAlive -MaximumRedirection 10 -Proxy $ProxyURL
+                        }
+                    }
+
+                    if ( $ValidUrl ) {
+                        if ( $DownloadURL -like '*.pdf' -or $ValidURL.Headers.'Content-Type' -ieq 'application/pdf') {
+                            # Slidedeck offered is PDF format
+                            $slidedeckFile = '{0}.pdf' -f $FileName
+                        }
+                        else {
+                            $slidedeckFile = '{0}.pptx' -f $FileName
+                        }
+                        $slidedeckFullFile = [System.IO.Path]::Combine( $ContentTargetFolder, $slidedeckFile)
+                        if ((Test-Path -LiteralPath $slidedeckFullFile) -and ((Get-ChildItem -LiteralPath $slidedeckFullFile -ErrorAction SilentlyContinue).Length -gt 0) -and -not $Overwrite) {
+                            Write-Host ('Slidedeck exists {0}' -f $slidedeckFile) -ForegroundColor Gray
+                            $DeckInfo[ $InfoExist]++
+                        }
+                        else {
+                            Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL, $slidedeckFullFile)
+                            $slidedeckAuthHeaders = $null
+                            if (Test-IsProtectedContentUrl -Url $DownloadURL) {
+                                Write-Verbose ('Slidedeck requires authenticated download for session {0}' -f $SessionToGet.sessioncode)
+                                $slidedeckAuthHeaders = Get-MSADownloadAuthHeaders -Url $DownloadURL -Proxy $ProxyURL
+                            }
+                            Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Headers $slidedeckAuthHeaders -Proxy $ProxyURL
+                        }
+                    }
+                    else {
+                        Write-Warning ('Skipping: Slidedeck unavailable {0}' -f $DownloadURL)
+                        $DeckInfo[ $InfoPlaceholder]++
                     }
                 }
                 else {
-                    Write-Warning ('Skipping: Slidedeck unavailable {0}' -f $DownloadURL)
-                    $DeckInfo[ $InfoPlaceholder]++
+                    Write-Host ('No slidedeck link for {0}' -f ($SessionToGet.Title))
                 }
-            }
-            else {
-                Write-Host ('No slidedeck link for {0}' -f ($SessionToGet.Title))
             }
         }
     }

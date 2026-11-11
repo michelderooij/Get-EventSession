@@ -12,7 +12,7 @@ To prevent retrieving session information for every run, the script caches sessi
 
 ### Prerequisites
 
-* PowerShell 5.1 or later (PowerShell 7 recommended)
+* PowerShell 7 or later
 * yt-dlp.exe (automatic download from [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/latest))
 * ffmpeg.exe (automatic download from [github.com/BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases))
 
@@ -62,14 +62,23 @@ For Custom events, specify the base URL with `-EventUrl` and use `-Event Custom`
 GET catalogs with `items` and paged catalogs with `sessions` are supported. Retrieval first tries anonymous GET.
 If that fails, it tries POST using matching-origin credentials from `MSAAuth.cache`. Without a matching cache,
 POST is tried anonymously before sign-in. If these requests fail with a recoverable HTTP response, the existing
-provider-aware authentication flow is used. No catalog-method parameter is needed. Transport failures and
-server errors do not trigger sign-in. Portals needing browser-generated request context
+provider-aware authentication flow is used. No catalog-method parameter is needed. For the supported
+`/api/schedule-builder/sessions` API path, a recoverable POST failure also tries `/sessions/search` once,
+preserving query parameters and the same HTTPS origin. Valid endpoints are not changed; arbitrary URLs do
+not receive a `/search` suffix. Captured and cached requests can use either supported endpoint variant.
+Transport failures and server errors do not trigger sign-in. Unexpected catalog schemas and invalid pagination
+are reported separately from connection failures, with credentials and response details withheld.
+Request failure diagnostics include a safe cause category, underlying exception type and HRESULT, plus
+checks for timeout, certificate/TLS, DNS/socket, proxy or parameter-binding failures where identifiable.
+Raw exception messages, signed URLs and authentication data remain withheld; these pointers do not
+automatically establish the root cause or trigger sign-in for a connection/server failure.
+Portals needing browser-generated request context
 can open a dedicated Edge window; sign in only if the portal requires it, open the event sessions page, and
 click Continue. Keep Edge open until capture completes. Edge is required for browser request discovery;
 yt-dlp is not required in InfoOnly mode.
 
 ```powershell
-.\Get-EventSession.ps1 -Event Custom -EventUrl https://event.contoso.com/api/schedule-builder/sessions/search -Verbose -InfoOnly -Refresh
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://event.contoso.com/api/schedule-builder/sessions -Verbose -InfoOnly -Refresh
 ```
 
 Relevant authentication cookies are stored in `MSAAuth.cache`, with an origin marker to prevent reuse for a
@@ -81,13 +90,29 @@ format. Treat authentication caches and their backups as credentials; do not sha
 
 Session-search catalogs can contain summaries without media links. For compatible schedule-builder portals,
 download mode fetches the selected session's `eventInfo` details and uses its published video and slide links.
+It also fetches the selected `/session-details/{id}` page, reads the page component's own request context,
+and checks its published presentation links before extracting decks. This inspection is performed even
+when a cached-context API request succeeds; a successful summary or initial detail response is not treated
+as proof that the page has no additional decks. Verbose output identifies the inspected session page and
+the number of asset records available for extraction, without exposing context values.
 If fresh detail context is needed, the existing Edge flow follows the selected session's published detail link
 from the sessions page. Detail request context is encrypted in the auth cache for reuse. InfoOnly does not
-perform these additional media lookups. A slide deck is downloaded only when the details publish one.
+perform these additional media lookups. Only published slide decks are downloaded. Presentation assets with
+an ID and a `.pptx` or `.pdf` name can use the portal's authenticated `/api/asset/download-url` resolver.
+Resolved external file URLs are fetched without forwarding portal cookies or bearer tokens.
+All distinct published presentations are exposed in `slideDecks`; the legacy `slideDeck` property retains
+the first link. Selected compatible sessions are checked for all published decks even if the summary already
+contains one slide link. The first deck uses `SessionCode-Title.pptx` (or its actual file extension), even
+when multiple decks are published. Subsequent decks use `SessionCode-Title-1.pptx`, `SessionCode-Title-2.pptx`,
+etc., each with its actual file extension, ordered by stable source identity, not resolution success.
+Each deck has independent existing-file checks, overwrite handling and timestamps. Files using the previous
+`-01`, `-02` naming scheme are not renamed automatically. Numbering is repeatable for an
+unchanged asset set; publishing or removing decks can change the sequence.
 Compatible same-origin detail-page context is reused for other selected session IDs, avoiding a sign-in
 prompt per session. Successful cached and in-memory authentication validation persists updated cookies and context.
-An explicit false on-demand availability flag skips session content processing; true or missing flags
-retain normal processing. Detail records with `virtual.videoEnabled = false` also skip content processing.
+An explicit false on-demand availability flag, including `virtual.videoEnabled = false` in details, skips
+video processing but does not block published presentations. `-NoVideos` still downloads available decks;
+`-NoSlidedecks` disables deck downloads. True or missing availability flags retain normal video processing.
 
 ```powershell
 .\Get-EventSession.ps1 -Event Custom -EventUrl https://myevent.contoso.com/api/schedule-builder/sessions/search -DownloadFolder D:\MyEvent -ScheduleCode KEY01

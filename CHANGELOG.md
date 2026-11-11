@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.52
+
+- Added automatic same-origin `/sessions/search` discovery for supported Custom schedule-builder catalogs
+- Improved Custom catalog failure diagnostics with safe cause categories, exception types, HRESULTs, and troubleshooting pointers without exposing credentials
+- Added selected session-page inspection and authenticated presentation asset URL resolution for Custom events
+- Added multiple slidedeck downloads with an unsuffixed first deck and `-1`, `-2`, etc. for subsequent decks, preserving actual file extensions
+- Allowed published slidedecks to download independently of on-demand video availability and corrected per-file download counts
+
 ## 4.51
 
 - Preserved process-tree termination and authentication fallback compatibility with Windows PowerShell 5.1
