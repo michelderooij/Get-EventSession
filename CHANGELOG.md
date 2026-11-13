@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.53
+
+- Added Custom event authentication using Netscape-format cookie exports with `-CookiesFile`, covering session information, videos, presentations, and captions without sign-in prompts
+- Enabled `-CookiesFile` with `-InfoOnly` and `-PreferDirect`; for Custom events, it takes precedence over `-CookiesFromBrowser` and leaves the original export unchanged
+- Fixed Custom session retrieval using base catalog URLs with exported cookies
+- Improved error messages for cookie-backed requests and stopped failed video downloads from being reported as successful
+- Added cookie-export instructions for Edge, Chrome, and Firefox, and simplified the README authentication FAQ to focus on user guidance
+
 ## 4.52
 
 - Added automatic same-origin `/sessions/search` discovery for supported Custom schedule-builder catalogs

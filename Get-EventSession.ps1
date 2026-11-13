@@ -19,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.52, November 11, 2026
+    Version 4.53, November 14, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -213,6 +213,14 @@
     Schedule-builder /api/schedule-builder/sessions endpoints can discover the /sessions/search POST endpoint.
     Selected session details can publish multiple slidedecks. The first deck uses the usual session-based
     filename; subsequent decks receive -1, -2, etc. before their actual file extension.
+
+    .PARAMETER CookiesFile
+    Netscape-format cookie export for yt-dlp downloads. For Custom events, also supplies cookies
+    when catalog or content authentication is needed, instead of cached authentication or sign-in.
+    Required portal request context is discovered through authenticated HTML requests only.
+    Invalid or rejected cookies and unavailable context cause an error without interactive fallback.
+    The export is not modified and its credentials/context are not saved to authentication caches.
+    For Custom events, this parameter takes precedence over CookiesFromBrowser.
 
     .PARAMETER InfoOnly
     Tells the script to return session information only.
@@ -466,6 +474,8 @@ param(
 
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Info')]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$CookiesFile,
 
@@ -501,6 +511,8 @@ $script:CustomSignedOnDemandUrlCache = @{}
 $script:CustomSignedOnDemandAuthRequiredBySession = @{}
 $script:MSAAuthInteractiveAttemptedByHost = @{}
 $script:SuppressWebRequestDebugDetails = $true
+$script:CustomCookieFile = $null
+$script:CustomCookieWebSession = $null
 
 if ($script:SuppressWebRequestDebugDetails) {
     # Keep script-level debug traces while suppressing native HTTP request/response debug dumps.
@@ -1088,6 +1100,162 @@ function Merge-CookieHeaders {
     return ($entries -join '; ')
 }
 
+function New-CustomCookieFileException {
+    param([string]$Message)
+
+    $exception = [System.InvalidOperationException]::new($Message)
+    $exception.Data['CookieFileFailure'] = $true
+    return $exception
+}
+
+function ConvertFrom-NetscapeCookieContent {
+    param([parameter(Mandatory = $true)][AllowEmptyString()][string]$Content)
+
+    $session = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
+    $lines = $Content -split "`r?`n"
+    $session.Cookies.Capacity = [Math]::Max(300, $lines.Count)
+    $session.Cookies.PerDomainCapacity = $session.Cookies.Capacity
+    $lineNumber = 0
+    foreach ($line in $lines) {
+        $lineNumber++
+        if ([string]::IsNullOrWhiteSpace($line) -or ($line.StartsWith('#') -and -not $line.StartsWith('#HttpOnly_'))) { continue }
+        $parts = $line -split "`t"
+        $httpOnly = $parts[0].StartsWith('#HttpOnly_')
+        $domain = if ($httpOnly) { $parts[0].Substring(10) } else { $parts[0] }
+        $expires = 0L
+        if ($parts.Count -ne 7 -or $parts[1] -cnotin @('TRUE', 'FALSE') -or $parts[3] -cnotin @('TRUE', 'FALSE') -or
+            $domain -notmatch '^\.?[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$' -or
+            -not $parts[2].StartsWith('/') -or $parts[2] -match '[\x00-\x20;]' -or
+            $parts[5] -notmatch '^[^\x00-\x20()<>@,;:\\"/\[\]?={}]+$' -or
+            $parts[6] -match '[\x00-\x1f\x7f;]' -or
+            -not [long]::TryParse($parts[4], [ref]$expires) -or $expires -lt 0) {
+            throw [System.FormatException]::new(('Invalid Netscape cookie record at line {0}; cookie values withheld.' -f $lineNumber))
+        }
+        try {
+            $expiry = if ($expires -gt 0) { [DateTimeOffset]::FromUnixTimeSeconds($expires).UtcDateTime } else { [datetime]::MinValue }
+            if ($expires -gt 0 -and $expiry -le [datetime]::UtcNow) { continue }
+            $cookie = [System.Net.Cookie]::new($parts[5], $parts[6], $parts[2])
+            $cookie.Secure = $parts[3] -ceq 'TRUE'
+            $cookie.HttpOnly = $httpOnly
+            if ($expires -gt 0) { $cookie.Expires = $expiry }
+            $hostName = $domain.TrimStart('.')
+            if ($parts[1] -ceq 'TRUE') {
+                $cookie.Domain = '.' + $hostName
+                $session.Cookies.Add($cookie)
+            }
+            else {
+                $session.Cookies.Add([uri]('https://{0}{1}' -f $hostName, $parts[2]), $cookie)
+            }
+        }
+        catch {
+            throw [System.FormatException]::new(('Invalid Netscape cookie record at line {0}; cookie values withheld.' -f $lineNumber))
+        }
+    }
+    return $session
+}
+
+function Get-CustomCookieWebSession {
+    param([parameter(Mandatory = $true)][uri]$TargetUri)
+
+    if (-not $script:CustomCookieWebSession) {
+        try {
+            $content = Get-Content -LiteralPath $script:CustomCookieFile -Raw -ErrorAction Stop
+            $script:CustomCookieWebSession = ConvertFrom-NetscapeCookieContent -Content ([string]$content)
+        }
+        catch {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+            $reason = if ($_.Exception -is [System.FormatException]) { $_.Exception.Message } else { 'Unable to read the cookie export; check that it is an accessible file.' }
+            throw (New-CustomCookieFileException -Message $reason)
+        }
+        $portalUri = [uri]$EventAPIUrl
+        $hasPortalCookie = @($script:CustomCookieWebSession.Cookies.GetAllCookies() | Where-Object {
+            $probeUri = [uri]::new($portalUri, $_.Path)
+            $script:CustomCookieWebSession.Cookies.GetCookies($probeUri).Count -gt 0
+        }).Count -gt 0
+        if (-not $hasPortalCookie) {
+            $script:CustomCookieWebSession = $null
+            throw (New-CustomCookieFileException -Message 'The cookie export contains no unexpired cookies for the Custom portal. Sign in and export its cookies again.')
+        }
+    }
+    $script:MSABearerToken = $null
+    $script:MSAAuthOrigin = $TargetUri.GetLeftPart([System.UriPartial]::Authority)
+    $script:MSAAuthWebSession = $script:CustomCookieWebSession
+    $script:MSAContentAuthRequired = $true
+    return $script:CustomCookieWebSession
+}
+
+function ConvertTo-NetscapeCookieContent {
+    param([parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('# Netscape HTTP Cookie File')
+    $domainImplicit = [System.Net.Cookie].GetProperty('DomainImplicit', [System.Reflection.BindingFlags]'Instance,NonPublic')
+    foreach ($cookie in $WebSession.Cookies.GetAllCookies()) {
+        if ($cookie.Expired) { continue }
+        $includeSubdomains = -not $domainImplicit.GetValue($cookie)
+        $domain = if ($includeSubdomains) { '.' + $cookie.Domain.TrimStart('.') } else { $cookie.Domain.TrimStart('.') }
+        if ($cookie.HttpOnly) { $domain = '#HttpOnly_' + $domain }
+        $expiry = if ($cookie.Expires -eq [datetime]::MinValue) { 0 } else { ([DateTimeOffset]$cookie.Expires.ToUniversalTime()).ToUnixTimeSeconds() }
+        $lines.Add(("{0}`t{1}`t{2}`t{3}`t{4}`t{5}`t{6}" -f $domain, $includeSubdomains.ToString().ToUpperInvariant(),
+            $cookie.Path, $cookie.Secure.ToString().ToUpperInvariant(), $expiry, $cookie.Name, $cookie.Value))
+    }
+    return $lines -join [Environment]::NewLine
+}
+
+function New-CustomYtDlpCookieFile {
+    param([parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession)
+
+    $path = $null
+    try {
+        $path = [System.IO.Path]::GetTempFileName()
+        Set-Content -LiteralPath $path -Value (ConvertTo-NetscapeCookieContent -WebSession $WebSession) -Encoding utf8NoBOM -ErrorAction Stop
+    }
+    catch {
+        if ($path) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        throw (New-CustomCookieFileException -Message 'Unable to prepare the temporary download cookie file; credentials withheld.')
+    }
+    return $path
+}
+
+function Start-CustomCookieDownloadJob {
+    param(
+        [parameter(Mandatory = $true)][string]$Url,
+        [parameter(Mandatory = $true)][string]$File,
+        [uri]$Proxy
+    )
+
+    $session = Get-CustomCookieWebSession -TargetUri ([uri]$Url)
+    $content = ConvertTo-NetscapeCookieContent -WebSession $session
+    $definition = ${function:ConvertFrom-NetscapeCookieContent}.ToString()
+    Start-Job -ScriptBlock {
+        param($url, $file, $proxy, $content, $definition)
+        $ProgressPreference = 'SilentlyContinue'
+        . ([scriptblock]::Create("function ConvertFrom-NetscapeCookieContent { $definition }"))
+        $session = ConvertFrom-NetscapeCookieContent -Content $content
+        $temporaryFile = $file + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+        try {
+            $parameters = @{
+                Uri = $url; Method = 'Get'; OutFile = $temporaryFile; PassThru = $true
+                WebSession = $session; ErrorAction = 'Stop'; Verbose = $false; Debug = $false
+            }
+            if ($proxy) { $parameters.Proxy = $proxy }
+            try { $response = Invoke-WebRequest @parameters }
+            catch {
+                if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+                throw 'Cookie-backed download failed; credentials and response details withheld.'
+            }
+            if ([string]$response.Headers['Content-Type'] -match '(?i)^text/html\b') {
+                throw 'Cookie-backed download returned HTML instead of the requested file. Sign in and export cookies again.'
+            }
+            Move-Item -LiteralPath $temporaryFile -Destination $file -Force -ErrorAction Stop
+        }
+        finally {
+            if (Test-Path -LiteralPath $temporaryFile) { Remove-Item -LiteralPath $temporaryFile -Force -ErrorAction Stop }
+        }
+    } -ArgumentList $Url, $File, $Proxy, $content, $definition
+}
+
 function Test-IsNetscapeCookieCacheContent {
     param(
         [string]$CacheContent
@@ -1468,6 +1636,8 @@ function Save-MSAAuthCookieHeader {
         [parameter(Mandatory = $false)][string]$CookieHeader
     )
 
+    if ($script:CustomCookieFile) { return }
+
     $cookieHeaderCandidates = New-Object System.Collections.Generic.List[string]
     $hasExplicitCookieHeader = -not [string]::IsNullOrWhiteSpace($CookieHeader)
     $fingerprintText = $null
@@ -1841,6 +2011,27 @@ function Get-MSAAuthenticatedWebSession {
         [scriptblock]$OnAuthenticatedBrowser
     )
 
+    if ($script:CustomCookieFile) {
+        $session = Get-CustomCookieWebSession -TargetUri $TargetUri
+        try {
+            if (($ValidateCachedSession -or $SessionValidator) -and
+                -not (Test-MSAWebSession -WebSession $session -TargetUri $TargetUri -Proxy $Proxy -SessionValidator $SessionValidator)) {
+                throw 'Cookie validation failed.'
+            }
+        }
+        catch {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Data['CookieFileFailure']) { throw }
+            if ($_.Exception.Data['FailureKind'] -in @('Http', 'Transport', 'Context', 'Response')) {
+                $status = 0
+                $hasStatus = [int]::TryParse([string]$_.Exception.Data['StatusCode'], [ref]$status) -and $status -ge 100 -and $status -le 599
+                $cause = if ($hasStatus) { 'HTTP {0}' -f $status } else { [string]$_.Exception.Data['FailureKind'] }
+                throw (New-CustomCookieFileException -Message ('Cookie-backed Custom request failed ({0}). Check the catalog endpoint and required portal context; no interactive authentication was attempted. Credentials and response details withheld.' -f $cause))
+            }
+            throw (New-CustomCookieFileException -Message 'Exported cookies could not authenticate the request or supply required portal context. Sign in and export cookies again; no interactive authentication was attempted.')
+        }
+        return $session
+    }
+
     # Suppress IWR progress for all validation requests in this function.
     # The assignment is function-scoped and does not affect the caller's $ProgressPreference.
     $ProgressPreference = 'SilentlyContinue'
@@ -2101,6 +2292,9 @@ function Invoke-WebRequestWithMSAAuthSupport {
     if ($MaximumRedirection -ge 0) { $invokeParams.MaximumRedirection = $MaximumRedirection }
 
     if ($script:MSAContentAuthRequired) {
+        if ($script:CustomCookieFile) {
+            $invokeParams.WebSession = Get-CustomCookieWebSession -TargetUri $requestUri
+        }
         if ($script:MSAAuthWebSession) {
             $invokeParams.WebSession = $script:MSAAuthWebSession
         }
@@ -2147,10 +2341,17 @@ function Invoke-WebRequestWithMSAAuthSupport {
     }
     catch {
         $webException = $_.Exception
+        if ($webException -is [System.Management.Automation.PipelineStoppedException]) { throw }
         if (-not (Test-MSAAuthenticationRequired -Exception $webException)) {
+            if ($script:CustomCookieFile) {
+                throw (New-CustomCookieFileException -Message 'Custom content request failed; credentials and response details withheld.')
+            }
             return $null
         }
 
+        if ($script:CustomCookieFile -and $invokeParams.WebSession) {
+            throw (New-CustomCookieFileException -Message 'Custom content rejected the exported cookies. Sign in and export cookies again; no interactive authentication was attempted.')
+        }
         if (-not $script:MSAContentAuthRequired) {
             Write-Verbose ('Detected authentication requirement for {0}; acquiring reusable MSA session.' -f $requestUri.Host)
         }
@@ -2167,6 +2368,9 @@ function Invoke-WebRequestWithMSAAuthSupport {
         try {
             $ProgressPreference = 'SilentlyContinue'
             $response = Invoke-WebRequest @invokeParams
+            if ($script:CustomCookieFile -and (Test-MSAAuthenticationRequired -Response $response -RequestUri $Uri)) {
+                throw (New-CustomCookieFileException -Message 'Custom content rejected the exported cookies. Sign in and export cookies again.')
+            }
             $responseContentType = $null
             if ($response -and $response.PSObject.Properties.Match('Headers').Count -gt 0 -and $response.Headers) {
                 $responseContentType = [string]$response.Headers['Content-Type']
@@ -2177,6 +2381,10 @@ function Invoke-WebRequestWithMSAAuthSupport {
             return $response
         }
         catch {
+            if ($script:CustomCookieFile) {
+                if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Data['CookieFileFailure']) { throw }
+                throw (New-CustomCookieFileException -Message 'Custom content request failed with exported cookies; credentials and response details withheld.')
+            }
             $script:MSAAuthWebSession = $null
             Write-Warning ('Authenticated request failed for {0}: {1}' -f $Uri, $_.Exception.Message)
             return $null
@@ -4160,6 +4368,48 @@ function Get-CustomEventCacheKey {
     finally { $hash.Dispose() }
 }
 
+function Initialize-CustomCookieRequestContext {
+    param(
+        [parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession,
+        [parameter(Mandatory = $true)][uri]$CatalogUri,
+        [string]$SessionId,
+        [uri]$Proxy
+    )
+
+    if ($WebSession.EventPortalUri -and (Update-CustomPortalRequestContext -WebSession $WebSession -CatalogUri $CatalogUri -SessionId $SessionId -Proxy $Proxy)) { return }
+    $origin = $CatalogUri.GetLeftPart([System.UriPartial]::Authority)
+    $parameters = @{ Uri = $origin + '/'; WebSession = $WebSession; MaximumRedirection = 5; TimeoutSec = 30; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
+    if ($Proxy) { $parameters.Proxy = $Proxy }
+    try { $page = Invoke-WebRequest @parameters }
+    catch {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        throw (New-CustomCookieFileException -Message 'Unable to inspect the Custom portal with exported cookies; credentials and response details withheld.')
+    }
+    if (Test-MSAAuthenticationRequired -Response $page -RequestUri $parameters.Uri) {
+        throw (New-CustomCookieFileException -Message 'The Custom portal rejected the exported cookies. Sign in and export cookies again.')
+    }
+    $candidates = [System.Collections.Generic.List[uri]]::new()
+    $pageUri = [uri]($origin + '/')
+    if ($page.BaseResponse.RequestMessage.RequestUri) { $pageUri = $page.BaseResponse.RequestMessage.RequestUri }
+    if ($pageUri.GetLeftPart([System.UriPartial]::Authority) -eq $origin) {
+        if ([string]$page.Content -match '\spc-id=["'']') { $candidates.Add($pageUri) }
+        foreach ($link in @($page.Links)) {
+            $candidate = $null
+            if ([uri]::TryCreate($pageUri, [string]$link.href, [ref]$candidate) -and (Test-IsCustomCatalogUri -Uri $candidate) -and
+                $candidate.GetLeftPart([System.UriPartial]::Authority) -eq $origin -and $candidate.AbsolutePath -match '/sessions/?$' -and
+                $candidate.AbsolutePath -notmatch '^/api/') { $candidates.Add($candidate) }
+        }
+    }
+    if ($CatalogUri.AbsolutePath -match '^/api/schedule-builder/sessions(?:/search)?/?$') {
+        $candidates.Add([uri]($origin + '/sessions'))
+    }
+    foreach ($candidate in @($candidates | Select-Object -Unique | Select-Object -First 10)) {
+        Set-ObjectPropertyValue -Object $WebSession -Name 'EventPortalUri' -Value $candidate.AbsoluteUri
+        if (Update-CustomPortalRequestContext -WebSession $WebSession -CatalogUri $CatalogUri -SessionId $SessionId -Proxy $Proxy) { return }
+    }
+    throw (New-CustomCookieFileException -Message 'Exported cookies did not supply the required Custom portal page context. No browser discovery or interactive authentication was attempted.')
+}
+
 function Initialize-CustomRequestContext {
     param(
         [parameter(Mandatory = $true)][hashtable]$Context,
@@ -4168,6 +4418,9 @@ function Initialize-CustomRequestContext {
     )
 
     if ($Context.Uri -and $Context.Referer) { return }
+    if ((-not $WebSession.EventRequestUri -or -not $WebSession.EventPortalUri) -and $script:CustomCookieFile) {
+        Initialize-CustomCookieRequestContext -WebSession $WebSession -CatalogUri $Context.CatalogUri -Proxy $Proxy
+    }
     if (-not $WebSession.EventRequestUri -or -not $WebSession.EventPortalUri) { throw 'Custom catalog context requires browser discovery.' }
     $requestUri = [uri]$WebSession.EventRequestUri
     if (-not (Test-CustomCatalogEndpoint -Uri $requestUri -CatalogUri $Context.CatalogUri)) { throw 'Custom request context has an unexpected endpoint.' }
@@ -4190,7 +4443,11 @@ function Update-CustomPortalRequestContext {
     $parameters = @{ Uri = $portalUri.AbsoluteUri; WebSession = $WebSession; MaximumRedirection = 0; TimeoutSec = 30; UseBasicParsing = $true; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
     if ($Proxy) { $parameters.Proxy = $Proxy }
     try { $html = [string](Invoke-WebRequest @parameters).Content }
-    catch { Write-Verbose 'Unable to refresh event page context from the sessions page.'; return $false }
+    catch {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        Write-Verbose 'Unable to refresh event page context from the sessions page.'
+        return $false
+    }
     $tag = [regex]::Match($html, '<[\w-]+\b[^>]*\spc-id=["''][^>]*>').Value
     if (-not $tag) { return $false }
     Add-Type -AssemblyName System.Web
@@ -4257,7 +4514,7 @@ function Get-CustomCatalogFailureSummary {
             }
             break
         }
-        if ($inner -is [System.Net.Http.HttpRequestException]) {
+        if ($inner.GetType().FullName -ceq 'System.Net.Http.HttpRequestException') {
             $cause = 'HTTP connection failure'
             if ($inner.PSObject.Properties.Match('HttpRequestError').Count -gt 0) {
                 switch ([string]$inner.HttpRequestError) {
@@ -4321,6 +4578,7 @@ function Invoke-CustomCatalogPage {
     }
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+        if ($_.Exception.Data['CookieFileFailure']) { throw }
         $status = $null
         if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
         if ($Context.AllowSearchFallback -and $Context.Method -eq 'Post' -and
@@ -4557,7 +4815,8 @@ function Resolve-CustomPresentationUrl {
     if ($script:MSAAuthOrigin -ne $origin) { $script:MSAAuthWebSession = $null; $script:MSABearerToken = $null }
     $script:MSAAuthOrigin = $origin
     $webSession = $script:MSAAuthWebSession
-    if (-not $webSession) { $webSession = Get-CachedMSAWebSession -CachePath (Join-Path $PSScriptRoot 'MSAAuth.cache') -CookieUri ([uri]($origin + '/')) }
+    if ($script:CustomCookieFile) { $webSession = Get-CustomCookieWebSession -TargetUri $Uri }
+    elseif (-not $webSession) { $webSession = Get-CachedMSAWebSession -CachePath (Join-Path $PSScriptRoot 'MSAAuth.cache') -CookieUri ([uri]($origin + '/')) }
     if (-not $webSession) { $webSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession }
     try {
         $url = Invoke-CustomAssetDownloadRequest -Uri $Uri -WebSession $webSession -Proxy $Proxy
@@ -4612,7 +4871,10 @@ function Add-SessionPresentationDownloadJobs {
             $headers = $null
             $parameters = @{ Uri = $downloadUrl; Method = 'Head'; MaximumRedirection = 0; TimeoutSec = 30; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
             if ($Proxy) { $parameters.Proxy = $Proxy }
-            if ($downloadUri.GetLeftPart([System.UriPartial]::Authority) -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -and
+            if ($script:CustomCookieFile) {
+                $parameters.WebSession = Get-CustomCookieWebSession -TargetUri $downloadUri
+            }
+            elseif ($downloadUri.GetLeftPart([System.UriPartial]::Authority) -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -and
                 $script:MSAAuthOrigin -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -and $script:MSAAuthWebSession) {
                 $parameters.WebSession = $script:MSAAuthWebSession
                 $headers = Get-MSAAuthApiHeaders
@@ -4621,6 +4883,9 @@ function Add-SessionPresentationDownloadJobs {
                 $parameters.Headers = $headers
             }
             $response = Invoke-WebRequest @parameters
+            if ($script:CustomCookieFile -and (Test-MSAAuthenticationRequired -Response $response -RequestUri $downloadUrl)) {
+                throw (New-CustomCookieFileException -Message 'Presentation download rejected the exported cookies. Sign in and export cookies again.')
+            }
             $contentType = ([string]($response.Headers['Content-Type'] | Select-Object -First 1) -split ';')[0].Trim()
             if ($contentType -eq 'application/pdf') { $extension = '.pdf' }
             elseif ($contentType -eq 'application/vnd.openxmlformats-officedocument.presentationml.presentation') { $extension = '.pptx' }
@@ -4636,6 +4901,9 @@ function Add-SessionPresentationDownloadJobs {
         }
         catch {
             if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Message -match '(?i)cancelled') { throw }
+            if ($script:CustomCookieFile -and ($_.Exception.Data['CookieFileFailure'] -or (Test-MSAAuthenticationRequired -Exception $_.Exception))) {
+                throw (New-CustomCookieFileException -Message 'Presentation authentication failed with exported cookies; credentials and response details withheld.')
+            }
             $result.Missing++
             Write-Warning ('Unable to download presentation {0} for session {1}; credentials and response details withheld.' -f ($index + 1), $Session.sessionCode)
         }
@@ -4723,7 +4991,10 @@ function Update-CustomSessionDetails {
     $sessionId = [guid]::Empty
     if (-not [guid]::TryParse([string]$Session.id, [ref]$sessionId)) { return }
     $detailUri = [uri]::new($CatalogUri, ('/api/event/details/{0}' -f $sessionId))
-    $cachedSession = if ($script:MSAAuthOrigin -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -and $script:MSAAuthWebSession) {
+    $cachedSession = if ($script:CustomCookieFile) {
+        Get-CustomCookieWebSession -TargetUri $detailUri
+    }
+    elseif ($script:MSAAuthOrigin -eq $CatalogUri.GetLeftPart([System.UriPartial]::Authority) -and $script:MSAAuthWebSession) {
         $script:MSAAuthWebSession
     }
     else {
@@ -4757,8 +5028,13 @@ function Update-CustomSessionDetails {
         }
         catch {
             if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
-            if (-not $webSession.EventPortalUri -and $state.PortalUri) { Set-ObjectPropertyValue -Object $webSession -Name 'EventPortalUri' -Value $state.PortalUri }
-            if (-not (Update-CustomPortalRequestContext -WebSession $webSession -CatalogUri $CatalogUri -SessionId ([string]$sessionId) -Proxy $Proxy)) { throw }
+            if ($script:CustomCookieFile) {
+                Initialize-CustomCookieRequestContext -WebSession $webSession -CatalogUri $CatalogUri -SessionId ([string]$sessionId) -Proxy $Proxy
+            }
+            else {
+                if (-not $webSession.EventPortalUri -and $state.PortalUri) { Set-ObjectPropertyValue -Object $webSession -Name 'EventPortalUri' -Value $state.PortalUri }
+                if (-not (Update-CustomPortalRequestContext -WebSession $webSession -CatalogUri $CatalogUri -SessionId ([string]$sessionId) -Proxy $Proxy)) { throw }
+            }
             $state.Uri = [uri]$webSession.EventDetailRequests[[string]$sessionId]
             $state.RequestUri = $webSession.EventRequestUri
             $state.Details = Invoke-CustomSessionDetailRequest -Uri $state.Uri -WebSession $webSession -Proxy $Proxy
@@ -4798,6 +5074,7 @@ function Update-CustomSessionDetails {
     }
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Message -match '(?i)cancelled') { throw }
+        if ($script:CustomCookieFile) { throw }
         Write-Warning ('Unable to resolve media for Custom session {0}: {1}' -f $Session.sessionCode, $_.Exception.Message)
     }
 }
@@ -4827,7 +5104,8 @@ function Get-CustomEventCatalog {
             throw ('Unable to inspect the Custom catalog; no authentication was attempted because the request failed without a recoverable HTTP response. {0} Request credentials and response details are withheld.' -f $summary)
         }
         $catalogContext.AuthenticationRequired = [bool]$_.Exception.Data['AuthenticationRequired']
-        Write-Verbose ('Anonymous catalog GET failed (HTTP {0}); trying cached POST context.' -f $statusCode)
+        if ($script:CustomCookieFile) { Write-Verbose ('Anonymous catalog GET failed (HTTP {0}); trying anonymous POST before exported cookies.' -f $statusCode) }
+        else { Write-Verbose ('Anonymous catalog GET failed (HTTP {0}); trying cached POST context.' -f $statusCode) }
     }
     if (-not $publicResponse) {
         $catalogContext.Method = 'Post'
@@ -4840,7 +5118,7 @@ function Get-CustomEventCatalog {
             $script:MSABearerToken = $null
         }
         $script:MSAAuthOrigin = $origin
-        $cachedSession = Get-CachedMSAWebSession -CachePath (Join-Path $PSScriptRoot 'MSAAuth.cache') -CookieUri ([uri]($origin + '/'))
+        $cachedSession = if ($script:CustomCookieFile) { $null } else { Get-CachedMSAWebSession -CachePath (Join-Path $PSScriptRoot 'MSAAuth.cache') -CookieUri ([uri]($origin + '/')) }
         if ($cachedSession) {
             $session = $cachedSession
             $catalogContext.AuthenticationRequired = $true
@@ -4851,6 +5129,7 @@ function Get-CustomEventCatalog {
             }
             Write-Verbose 'Trying Custom catalog POST with cached Microsoft authentication.'
         }
+        elseif ($script:CustomCookieFile) { Write-Verbose 'Trying anonymous POST before exported-cookie authentication.' }
         else { Write-Verbose 'No matching authentication cache; trying anonymous POST before browser sign-in.' }
         try {
             try {
@@ -4872,15 +5151,32 @@ function Get-CustomEventCatalog {
             if (-not $_.Exception.Data['AuthenticationRequired'] -and (-not $statusCode -or $statusCode -ge 500)) { throw }
             $needsAuthFlow = $true
             $catalogContext.AuthenticationRequired = $catalogContext.AuthenticationRequired -or [bool]$_.Exception.Data['AuthenticationRequired']
+            $discoveredUri = $null
+            if ($script:CustomCookieFile -and [uri]::TryCreate([string]$catalogContext.Uri, [System.UriKind]::Absolute, [ref]$discoveredUri) -and
+                (Test-CustomCatalogEndpoint -Uri $discoveredUri -CatalogUri $catalogUri)) {
+                $catalogContext.DiscoveredRequestUri = $discoveredUri.AbsoluteUri
+            }
             $catalogContext.Uri = $null
             $catalogContext.Referer = $null
-            Write-Verbose 'Cached or anonymous POST failed; using the shared provider-aware authentication flow.'
+            if ($script:CustomCookieFile) { Write-Verbose 'Anonymous POST failed; using exported cookies without interactive authentication.' }
+            else { Write-Verbose 'Cached or anonymous POST failed; using the shared provider-aware authentication flow.' }
         }
     }
     $authParameters = @{ Proxy = $Proxy; ValidateCachedSession = $true; PersistCache = $true }
     $authParameters.SessionValidator = {
         param($webSession)
-        $catalogContext.FirstPage = Invoke-CustomCatalogPage -Context $catalogContext -WebSession $webSession -Proxy $Proxy
+        if ($script:CustomCookieFile -and $catalogContext.DiscoveredRequestUri -and -not $webSession.EventRequestUri) {
+            Set-ObjectPropertyValue -Object $webSession -Name 'EventRequestUri' -Value $catalogContext.DiscoveredRequestUri
+        }
+        try { $catalogContext.FirstPage = Invoke-CustomCatalogPage -Context $catalogContext -WebSession $webSession -Proxy $Proxy }
+        catch {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
+            if (-not $script:CustomCookieFile -or $_.Exception.Data['FailureKind'] -in @('Transport', 'Response')) { throw }
+            Initialize-CustomCookieRequestContext -WebSession $webSession -CatalogUri $catalogUri -Proxy $Proxy
+            $catalogContext.Uri = $webSession.EventRequestUri
+            $catalogContext.Referer = $webSession.EventPortalUri
+            $catalogContext.FirstPage = Invoke-CustomCatalogPage -Context $catalogContext -WebSession $webSession -Proxy $Proxy
+        }
         if ($catalogContext.Referer) { Set-ObjectPropertyValue -Object $webSession -Name 'EventPortalUri' -Value $catalogContext.Referer }
         Set-ObjectPropertyValue -Object $webSession -Name 'EventRequestUri' -Value $catalogContext.Uri
         return $true
@@ -4948,12 +5244,25 @@ function Get-CustomEventCatalog {
                 if ($_.Exception.Data['AuthenticationRequired'] -or ($catalogContext.Method -eq 'Post' -and $_.Exception.Data['StatusCode'] -eq 400)) {
                     if (-not $authRefreshed) {
                         $authRefreshed = $true
+                        if ($script:CustomCookieFile) {
+                            $session = Get-CustomCookieWebSession -TargetUri $catalogUri
+                            if ($catalogContext.Method -eq 'Post') {
+                                Initialize-CustomCookieRequestContext -WebSession $session -CatalogUri $catalogUri -Proxy $Proxy
+                                $catalogContext.Uri = $session.EventRequestUri
+                                $catalogContext.Referer = $session.EventPortalUri
+                            }
+                            $catalogContext.FirstPage = $null
+                            continue
+                        }
                         $catalogContext.Uri = $null
                         $catalogContext.FirstPage = $null
                         $script:MSAAuthInteractiveAttemptedByHost.Remove($catalogUri.Host.ToLowerInvariant())
                         $session = Get-MSAAuthenticatedWebSession -TargetUri $catalogUri @authParameters -ForceInteractive
                         if (-not $session) { throw 'Custom authentication refresh failed.' }
                         continue
+                    }
+                    if ($script:CustomCookieFile) {
+                        throw (New-CustomCookieFileException -Message 'Custom catalog pagination rejected the exported cookies or page context. No interactive authentication was attempted.')
                     }
                     throw
                 }
@@ -5127,11 +5436,18 @@ function Resolve-CustomSignedOnDemandUrl {
         $sessionPage = Invoke-WebRequest -Uri $sessionPageUri.AbsoluteUri -Method Get -WebSession $webSession -Proxy $Proxy -DisableKeepAlive -ErrorAction Stop -Verbose:$false
     }
     catch {
+        if ($script:CustomCookieFile) {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Data['CookieFileFailure']) { throw }
+            throw (New-CustomCookieFileException -Message 'Unable to resolve the signed media URL with exported cookies; credentials and response details withheld.')
+        }
         Write-Warning ('Unable to retrieve session page for {0}: {1}' -f $sessionCode, $_.Exception.Message)
         return $OnDemandUrl
     }
 
     if (Test-MSAAuthenticationRequired -Response $sessionPage) {
+        if ($script:CustomCookieFile) {
+            throw (New-CustomCookieFileException -Message 'The session page rejected the exported cookies. Sign in and export cookies again.')
+        }
         Write-Verbose ('Session page for {0} returned a sign-in response; forcing interactive authentication and retrying.' -f $sessionCode)
         $script:MSAAuthWebSession = $null
 
@@ -5394,7 +5710,7 @@ function Get-OnDemandKmsBearerToken {
     Write-Debug ('Attempting KMS token retrieval for video {0} (origin={1})' -f $videoId, $origin)
 
     try {
-        $mediusSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        $mediusSession = if ($script:CustomCookieFile) { Get-CustomCookieWebSession -TargetUri ([uri]$OnDemandUrl) } else { New-Object Microsoft.PowerShell.Commands.WebRequestSession }
         $embedRequestParams = @{
             Uri         = $OnDemandUrl
             Method      = 'Get'
@@ -5403,7 +5719,10 @@ function Get-OnDemandKmsBearerToken {
             Verbose     = $false
         }
         if ($Proxy) { $embedRequestParams.Proxy = $Proxy }
-        Invoke-WebRequest @embedRequestParams | Out-Null
+        $embedResponse = Invoke-WebRequest @embedRequestParams
+        if ($script:CustomCookieFile -and (Test-MSAAuthenticationRequired -Response $embedResponse -RequestUri $OnDemandUrl)) {
+            throw (New-CustomCookieFileException -Message 'The video page rejected the exported cookies. Sign in and export cookies again.')
+        }
 
         $kmsRequestParams = @{
             Uri         = $kmsUrl
@@ -5420,8 +5739,15 @@ function Get-OnDemandKmsBearerToken {
             Write-Debug 'KMS token retrieval succeeded'
             return [string]$kmsResponse.KMSToken
         }
+        if ($script:CustomCookieFile) {
+            throw (New-CustomCookieFileException -Message 'The video service did not return a media token with exported cookies; credentials and response details withheld.')
+        }
     }
     catch {
+        if ($script:CustomCookieFile) {
+            if ($_.Exception -is [System.Management.Automation.PipelineStoppedException] -or $_.Exception.Data['CookieFileFailure']) { throw }
+            throw (New-CustomCookieFileException -Message 'Unable to retrieve a media token with exported cookies; credentials and response details withheld.')
+        }
         Write-Warning ('Unable to retrieve KMS token: {0}' -f $_.Exception.Message)
     }
 
@@ -5806,6 +6132,9 @@ function Get-BackgroundDownloadJobs {
             $Temp += $job
         }
         else {
+            if ($job.cookieTempFile -and (Test-Path -LiteralPath $job.cookieTempFile)) {
+                Remove-Item -LiteralPath $job.cookieTempFile -Force -ErrorAction Stop
+            }
             # Job finished, process result
             switch ( $job.Type) {
                 1 {
@@ -5814,10 +6143,12 @@ function Get-BackgroundDownloadJobs {
                 }
                 2 {
                     $isJobSuccess = Test-Path -LiteralPath $job.file
+                    if ($job.cookieTempFile) { $isJobSuccess = $isJobSuccess -and $job.job.ExitCode -eq 0 }
                     Write-Progress -Id $job.job.Id -Activity ('Video {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                 }
                 3 {
                     $isJobSuccess = Test-Path -LiteralPath $job.file
+                    if ($script:CustomCookieFile) { $isJobSuccess = $isJobSuccess -and $job.job.State -eq 'Completed' }
                     Write-Progress -Id ($job.job.Id + 2000) -Activity ('Captions {0} {1}' -f $Job.scheduleCode, $Job.title) -Completed
                 }
                 default {
@@ -5893,6 +6224,9 @@ function Get-BackgroundDownloadJobs {
                 }
             }
             else {
+                if ($script:CustomCookieFile) {
+                    Write-Warning ('Cookie-backed download failed for session {0}. Check cookie expiry and media access; credentials and response details withheld.' -f $job.scheduleCode)
+                }
                 switch ( $job.Type) {
                     1 {
                         if (-not $isPlaceholder) { $DeckInfo[$InfoPlaceholder]++ }
@@ -5901,7 +6235,7 @@ function Get-BackgroundDownloadJobs {
                         $job.job | Stop-Job -PassThru | Remove-Job -Force | Out-Null
                     }
                     2 {
-                        $LastLine = (Get-Content -LiteralPath $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1
+                        $LastLine = if ($job.cookieTempFile) { 'Cookie-backed downloader details withheld.' } else { (Get-Content -LiteralPath $job.stdErrTempFile -ErrorAction SilentlyContinue) | Select-Object -Last 1 }
                         Write-Host ('Problem downloading or missing video of {0} {1}: {2}' -f $job.scheduleCode, $job.title, $LastLine) -ForegroundColor Red
                         Remove-Item -LiteralPath $job.stdOutTempFile, $job.stdErrTempFile -Force -ErrorAction Ignore
                     }
@@ -5989,6 +6323,12 @@ function Stop-BackgroundDownloadJobs {
             }
             2 {
                 Stop-ProcessTree -ProcessId ([int]$BGJob.job.id)
+                if ($BGJob.cookieTempFile) {
+                    if (-not $BGJob.job.HasExited) {
+                        throw (New-CustomCookieFileException -Message 'The video downloader did not stop. Its temporary cookie file is retained until the process can be stopped safely.')
+                    }
+                    if (Test-Path -LiteralPath $BGJob.cookieTempFile) { Remove-Item -LiteralPath $BGJob.cookieTempFile -Force -ErrorAction Stop }
+                }
                 Remove-Item -LiteralPath $BGJob.stdOutTempFile, $BGJob.stdErrTempFile -Force -ErrorAction Ignore
             }
             3 {
@@ -6010,6 +6350,13 @@ function Get-MSADownloadAuthHeaders {
     )
 
     $headers = @{}
+
+    if ($script:CustomCookieFile) {
+        $session = Get-CustomCookieWebSession -TargetUri ([uri]$Url)
+        $cookieHeader = $session.Cookies.GetCookieHeader([uri]$Url)
+        if ($cookieHeader) { return @{ Cookie = $cookieHeader } }
+        return $null
+    }
 
     # If we don't have auth credentials yet, acquire them now (may prompt interactively).
     if (-not $script:MSAContentAuthRequired -or
@@ -6084,10 +6431,14 @@ function Add-BackgroundDownloadJob {
             $JobsRunning = Get-BackgroundDownloadJobs
         }
     }
+    $cookieTempFile = $null
     switch ( $Type) {
         1 {
             # Slidedeck
-            if ($Headers) {
+            if ($script:CustomCookieFile) {
+                $job = Start-CustomCookieDownloadJob -Url $DownloadUrl -File $FilePath -Proxy $Proxy
+            }
+            elseif ($Headers) {
                 $job = Start-Job -ScriptBlock {
                     param($url, $file, $headers, $proxy)
                     $ProgressPreference = 'SilentlyContinue'
@@ -6129,14 +6480,29 @@ function Add-BackgroundDownloadJob {
                 NoNewWindow            = $true
                 #WindowStyle= [System.Diagnostics.ProcessWindowStyle]::Normal
             }
-            $job = Start-Process @ProcessParam
+            if ($script:CustomCookieFile) {
+                $session = Get-CustomCookieWebSession -TargetUri ([uri]$EventAPIUrl)
+                $cookieTempFile = New-CustomYtDlpCookieFile -WebSession $session
+                $ProcessParam.ArgumentList = @($ArgumentList) + ('--cookies {0}' -f (ConvertTo-ArgumentString -Value $cookieTempFile))
+            }
+            try {
+                $job = if ($cookieTempFile) { Start-Process @ProcessParam -ErrorAction Stop } else { Start-Process @ProcessParam }
+            }
+            catch {
+                if ($cookieTempFile) {
+                    Remove-Item -LiteralPath $cookieTempFile -Force -ErrorAction Stop
+                    throw (New-CustomCookieFileException -Message 'Unable to start the video downloader; credentials and process arguments withheld.')
+                }
+                throw
+            }
         }
         3 {
             # Caption
             $totalBytes = $null
             try {
                 $headParams = @{ Uri = $DownloadUrl; Method = 'Head'; ErrorAction = 'Stop'; Verbose = $false }
-                if ($Headers) { $headParams.Headers = $Headers }
+                if ($script:CustomCookieFile) { $headParams.WebSession = Get-CustomCookieWebSession -TargetUri ([uri]$DownloadUrl) }
+                elseif ($Headers) { $headParams.Headers = $Headers }
                 if ($Proxy) { $headParams.Proxy = $Proxy }
                 $savedPP = $ProgressPreference ; $ProgressPreference = 'SilentlyContinue'
                 try { $headResponse = Invoke-WebRequest @headParams } finally { $ProgressPreference = $savedPP }
@@ -6145,7 +6511,10 @@ function Add-BackgroundDownloadJob {
                 }
             }
             catch { }
-            if ($Headers) {
+            if ($script:CustomCookieFile) {
+                $job = Start-CustomCookieDownloadJob -Url $DownloadUrl -File $FilePath -Proxy $Proxy
+            }
+            elseif ($Headers) {
                 $job = Start-Job -ScriptBlock {
                     param($url, $file, $headers, $proxy)
                     $ProgressPreference = 'SilentlyContinue'
@@ -6185,6 +6554,7 @@ function Add-BackgroundDownloadJob {
         stdOutTempFile = $stdOutTempFile
         stdErrTempFile = $stdErrTempFile
         totalBytes     = $totalBytes
+        cookieTempFile = $cookieTempFile
     }
 
     $script:BackgroundDownloadJobs += $object
@@ -6195,8 +6565,17 @@ function Add-BackgroundDownloadJob {
 # MAIN
 ##########
 
+if ($Event -eq 'Custom' -and $CookiesFile) {
+    $script:CustomCookieFile = (Resolve-Path -LiteralPath $CookiesFile -ErrorAction Stop).ProviderPath
+    if ($CookiesFromBrowser) {
+        Write-Warning 'CookiesFile takes precedence for Custom events; CookiesFromBrowser is ignored.'
+        $CookiesFromBrowser = $null
+    }
+}
+
+try {
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.52')
+Write-Host( 'Get-EventSession v4.53')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)
@@ -6330,6 +6709,10 @@ switch ( $Event) {
         Write-Host ('Unknown event: {0}' -f $Event) -ForegroundColor Red
         exit -1
     }
+}
+
+if ($script:CustomCookieFile -and -not (Test-IsCustomCatalogUri -Uri ([uri]$EventAPIUrl))) {
+    throw 'Custom event catalogs require an absolute HTTPS URL without embedded credentials.'
 }
 
 if (-not ($InfoOnly)) {
@@ -7163,6 +7546,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                         $DirectLink = @( 'video/mp4', 'video/MP2T') -contains $Response.Headers.'Content-Type'
                     }
                     catch {
+                        if ($script:CustomCookieFile -and $_.Exception.Data['CookieFileFailure']) { throw }
                         $DirectLink = $False
                     }
 
@@ -7323,7 +7707,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                                 if ( $Format) { $Arg += ('--format {0}' -f $Format) } else { $Arg += ('--format "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"') }
                                 if ( $Subs) { $Arg += ('--sub-lang {0}' -f ($Subs -join ',')), ('--write-sub'), ('--write-auto-sub'), ('--convert-subs srt') }
 
-                                if ( $CookiesFile) { $Arg += ('--cookies {0}' -f $CookiesFile) }
+                                if ( $CookiesFile -and -not $script:CustomCookieFile) { $Arg += ('--cookies {0}' -f $CookiesFile) }
                                 if ( $CookiesFromBrowser) { $Arg += ('--cookies-from-browser {0}' -f $CookiesFromBrowser) }
                             }
                             else {
@@ -7349,7 +7733,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                         $targetIsMicrosoftUrl = (Test-IsProtectedContentUrl -Url $Endpoint) -or (Test-IsProtectedContentUrl -Url $downloadLink)
                         $ytDlpCookieFile = $null
 
-                        if ($requiresMicrosoftCookieAuth -and $targetIsMicrosoftUrl -and -not $CookiesFromBrowser) {
+                        if ($requiresMicrosoftCookieAuth -and $targetIsMicrosoftUrl -and -not $CookiesFromBrowser -and -not $script:CustomCookieFile) {
                             $ytDlpCookieFile = Resolve-YtDlpCookieFile -PreferredCookieFile $CookiesFile
                             if ($ytDlpCookieFile) {
                                 Write-Verbose ('Using Netscape cookie file for authenticated Microsoft download: {0}' -f $ytDlpCookieFile)
@@ -7423,6 +7807,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                                     }
                                 }
                                 catch {
+                                    if ($script:CustomCookieFile -and $_.Exception.Data['CookieFileFailure']) { throw }
                                     #Problem retrieving file, look for alternative options
                                 }
                             }
@@ -7459,6 +7844,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                                     $OnDemandPage = $DownloadedPage.Content
                                 }
                                 catch {
+                                    if ($script:CustomCookieFile -and $_.Exception.Data['CookieFileFailure']) { throw }
                                     $DownloadedPage = $null
                                     $onDemandPage = $null
                                 }
@@ -7554,6 +7940,7 @@ foreach ($SessionToGet in $SessionsToGet) {
                         }
                     }
                     catch {
+                        if ($script:CustomCookieFile -and $_.Exception.Data['CookieFileFailure']) { throw }
                         $ValidUrl = $false
                     }
 
@@ -7649,3 +8036,7 @@ Write-Host ('Selected {0} sessions out of a total of {1}' -f $ProcessedSessions,
 Write-Host ('Downloaded {0} slide decks and {1} videos.' -f $DeckInfo[ $InfoDownload], $VideoInfo[ $InfoDownload])
 Write-Host ('Not (yet) available: {0} slide decks and {1} videos' -f $DeckInfo[ $InfoPlaceholder], $VideoInfo[ $InfoPlaceholder])
 Write-Host ('Skipped {0} slide decks and {1} videos as they were already downloaded.' -f $DeckInfo[ $InfoExist], $VideoInfo[ $InfoExist])
+}
+finally {
+    if ($script:CustomCookieFile -and $script:BackgroundDownloadJobs.Count -gt 0) { Stop-BackgroundDownloadJobs }
+}

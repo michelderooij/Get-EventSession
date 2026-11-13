@@ -2,13 +2,12 @@
 
 ## Getting Started
 
-Script to assist in downloading Microsoft Ignite, Inspire, Build, MEC or Custom event contents, or return
-session information for easier digesting.
+Download videos and presentations from Microsoft Ignite, Inspire, Build, MEC, or Custom events.
+You can also retrieve session information without downloading content.
 
-Video downloads leverage yt-dlp, which the script will download automatically when not present.
-ffmpeg is also required to merge separate video and audio streams; the script will download it automatically as well.
+The script automatically downloads yt-dlp and ffmpeg when needed for video downloads.
 
-To prevent retrieving session information for every run, the script caches session information locally.
+Session information is saved locally to speed up later runs. Use `-Refresh` to retrieve the latest session list.
 
 ### Prerequisites
 
@@ -18,140 +17,157 @@ To prevent retrieving session information for every run, the script caches sessi
 
 ### Usage
 
-Download all available contents of Build 2026 sessions containing the word 'AI' in the title to D:\Build:
-```
+Download available videos and presentations for Build 2026 sessions with 'AI' in the title:
+```powershell
 .\Get-EventSession.ps1 -Event Build2026 -DownloadFolder D:\Build -Keyword 'AI'
 ```
 
 Download only 200- and 300-level Python sessions from Build 2026:
-```
+```powershell
 .\Get-EventSession.ps1 -Event Build2026 -DownloadFolder D:\Build -ProgrammingLanguage Python -SessionLevel 200,300
 ```
 
-Get archived Ignite 2024 sessions from the Ignite archive portal and show their info:
-```
+Show session information for Ignite 2024:
+```powershell
 .\Get-EventSession.ps1 -Event Ignite2024 -InfoOnly
 ```
 
-Get information of all sessions, and output only location and time information for sessions (co-)presented by Tony Redmond:
-```
-.\Get-EventSession.ps1 -InfoOnly | Where {$_.Speakers -contains 'Tony Redmond'} | Select Title, location, startDateTime
+Show the title, location, and start time of Ignite sessions presented by Tony Redmond:
+```powershell
+.\Get-EventSession.ps1 -Event Ignite -InfoOnly | Where-Object {$_.SpeakerNames -contains 'Tony Redmond'} | Select-Object Title, location, startDateTime
 ```
 
-Download all available contents of sessions BRK3248 and BRK3186 to D:\Ignite:
-```
-.\Get-EventSession.ps1 -DownloadFolder D:\Ignite -ScheduleCode BRK3248,BRK3186
+Download available content for two Ignite sessions:
+```powershell
+.\Get-EventSession.ps1 -Event Ignite -DownloadFolder D:\Ignite -ScheduleCode BRK3248,BRK3186
 ```
 
 ## FAQ
 
 ### Microsoft authentication for protected content
 
-Custom event URLs are not restricted to a particular hostname. When no valid catalog cache is available, the
-script inspects the catalog anonymously first. Public catalogs are retrieved without signing in. Authentication
-responses trigger the existing shared Microsoft authentication support. OAuth redirects and challenges identify
-personal (MSA) or work/school (Microsoft 365) authorities where possible; ambiguous portals retain their own
-browser account selection. Cookie names alone cannot reliably identify the account type.
+Public session information usually needs no sign-in. For protected content, sign in with a personal
+Microsoft account or a work/school account that has access to the event.
+For Custom events, you can either follow the script's sign-in prompts or use cookies exported from your browser.
 
-For Custom events, specify the base URL with `-EventUrl` and use `-Event Custom`:
+#### Signing in when prompted
 
-```powershell
-.\Get-EventSession.ps1 -Event Custom -EventUrl https://example.com/sessions/search -DownloadFolder D:\Event
-```
-
-GET catalogs with `items` and paged catalogs with `sessions` are supported. Retrieval first tries anonymous GET.
-If that fails, it tries POST using matching-origin credentials from `MSAAuth.cache`. Without a matching cache,
-POST is tried anonymously before sign-in. If these requests fail with a recoverable HTTP response, the existing
-provider-aware authentication flow is used. No catalog-method parameter is needed. For the supported
-`/api/schedule-builder/sessions` API path, a recoverable POST failure also tries `/sessions/search` once,
-preserving query parameters and the same HTTPS origin. Valid endpoints are not changed; arbitrary URLs do
-not receive a `/search` suffix. Captured and cached requests can use either supported endpoint variant.
-Transport failures and server errors do not trigger sign-in. Unexpected catalog schemas and invalid pagination
-are reported separately from connection failures, with credentials and response details withheld.
-Request failure diagnostics include a safe cause category, underlying exception type and HRESULT, plus
-checks for timeout, certificate/TLS, DNS/socket, proxy or parameter-binding failures where identifiable.
-Raw exception messages, signed URLs and authentication data remain withheld; these pointers do not
-automatically establish the root cause or trigger sign-in for a connection/server failure.
-Portals needing browser-generated request context
-can open a dedicated Edge window; sign in only if the portal requires it, open the event sessions page, and
-click Continue. Keep Edge open until capture completes. Edge is required for browser request discovery;
-yt-dlp is not required in InfoOnly mode.
+For Custom events, use `-Event Custom` and provide the event's session catalog URL with `-EventUrl`:
 
 ```powershell
-.\Get-EventSession.ps1 -Event Custom -EventUrl https://event.contoso.com/api/schedule-builder/sessions -Verbose -InfoOnly -Refresh
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://event.contoso.com/api/schedule-builder/sessions/search -DownloadFolder D:\Event
 ```
 
-Relevant authentication cookies are stored in `MSAAuth.cache`, with an origin marker to prevent reuse for a
-different host or port. The file holds the current portal's authentication; switching portals replaces that
-entry after successful validation. Custom catalog caches remain endpoint-specific. `-Refresh` refreshes the
-catalog, not necessarily your sign-in. Captured request context is encrypted for the current Windows user and
-validated on reuse; rejected or expired context can require browser sign-in again. Cookies remain in Netscape
-format. Treat authentication caches and their backups as credentials; do not share or commit them.
+- Follow any Microsoft sign-in prompt. If an Edge window opens, sign in if required, open the event's
+  sessions page, and click **Continue**. Leave Edge open until the script finishes collecting the information.
+- Saved sign-in details may be reused on later runs. You may need to sign in again when they expire or
+  when switching events.
+- `-Refresh` retrieves a fresh session list; it does not force a new sign-in.
 
-Session-search catalogs can contain summaries without media links. For compatible schedule-builder portals,
-download mode fetches the selected session's `eventInfo` details and uses its published video and slide links.
-It also fetches the selected `/session-details/{id}` page, reads the page component's own request context,
-and checks its published presentation links before extracting decks. This inspection is performed even
-when a cached-context API request succeeds; a successful summary or initial detail response is not treated
-as proof that the page has no additional decks. Verbose output identifies the inspected session page and
-the number of asset records available for extraction, without exposing context values.
-If fresh detail context is needed, the existing Edge flow follows the selected session's published detail link
-from the sessions page. Detail request context is encrypted in the auth cache for reuse. InfoOnly does not
-perform these additional media lookups. Only published slide decks are downloaded. Presentation assets with
-an ID and a `.pptx` or `.pdf` name can use the portal's authenticated `/api/asset/download-url` resolver.
-Resolved external file URLs are fetched without forwarding portal cookies or bearer tokens.
-All distinct published presentations are exposed in `slideDecks`; the legacy `slideDeck` property retains
-the first link. Selected compatible sessions are checked for all published decks even if the summary already
-contains one slide link. The first deck uses `SessionCode-Title.pptx` (or its actual file extension), even
-when multiple decks are published. Subsequent decks use `SessionCode-Title-1.pptx`, `SessionCode-Title-2.pptx`,
-etc., each with its actual file extension, ordered by stable source identity, not resolution success.
-Each deck has independent existing-file checks, overwrite handling and timestamps. Files using the previous
-`-01`, `-02` naming scheme are not renamed automatically. Numbering is repeatable for an
-unchanged asset set; publishing or removing decks can change the sequence.
-Compatible same-origin detail-page context is reused for other selected session IDs, avoiding a sign-in
-prompt per session. Successful cached and in-memory authentication validation persists updated cookies and context.
-An explicit false on-demand availability flag, including `virtual.videoEnabled = false` in details, skips
-video processing but does not block published presentations. `-NoVideos` still downloads available decks;
-`-NoSlidedecks` disables deck downloads. True or missing availability flags retain normal video processing.
+If retrieval fails, check the event URL, your access to the portal, and your network or proxy connection.
+Add `-Verbose` for more information.
+
+#### Using exported cookies
+
+Use `-CookiesFile` to access protected Custom sessions and their videos, presentations, and captions
+with cookies exported from your browser. When authentication is needed, the script uses this file
+instead of prompting you to sign in.
+
+1. Install **Get cookies.txt LOCALLY** in the browser you use to access the portal:
+   - **Edge or Chrome:** install from the
+     [Chrome Web Store](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc).
+     In Edge, allow extensions from other stores if prompted, then confirm installation.
+   - **Firefox:** install from
+     [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/get-cookies-txt-locally/).
+2. Open the event's session portal, sign in, and confirm that you can view its sessions and available media.
+3. While on the signed-in portal, open the extension and export the site's cookies in **Netscape
+   cookies.txt format**. Save the export outside this repository, for example
+   `D:\Private Cookies\customevent.microsoft.com_cookies.txt`. Export only the sites needed for the event.
+4. Pass the saved file to the script along with `-Event Custom` and the catalog's `-EventUrl`.
+
+Fetch fresh session information:
 
 ```powershell
-.\Get-EventSession.ps1 -Event Custom -EventUrl https://myevent.contoso.com/api/schedule-builder/sessions/search -DownloadFolder D:\MyEvent -ScheduleCode KEY01
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://customevent.microsoft.com/api/schedule-builder/sessions/search -CookiesFile 'D:\Private Cookies\customevent.microsoft.com_cookies.txt' -InfoOnly -Refresh
 ```
 
-### Archive-backed event metadata
-Archive-backed events such as Ignite2024 are derived from HTML session cards instead of a structured catalog API.
-For those events, the script stamps properties when the card exposes enough information.
-Some metadata remains source-dependent, so property availability can vary between event types.
+Download published videos and decks:
+
+```powershell
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://customevent.microsoft.com/api/schedule-builder/sessions/search -CookiesFile 'D:\Private Cookies\customevent.microsoft.com_cookies.txt' -DownloadFolder D:\Airlift
+```
+
+`-CookiesFile` also works with `-PreferDirect`. For Custom events it takes precedence over
+`-CookiesFromBrowser`; if both are supplied, the browser option is ignored with a warning.
+For other events, `-CookiesFile` is used for video downloads, not for signing in to the session portal.
+
+If the file is invalid, expired, or rejected, the script reports an error without opening a sign-in window.
+Sign in again in your browser and export fresh cookies. `-Refresh` updates the session list, not the cookies.
+Some portals cannot be accessed with exported cookies alone; in that case, omit `-CookiesFile` to use
+the normal sign-in flow. Media hosted on a separate protected site may need cookies from that site too.
+
+Your export is not modified or saved into the script's authentication cache.
+**Treat cookie exports, saved authentication files, and their backups as credentials:** keep them private,
+restrict file access, and never share or commit them.
+Review the browser extension's permissions before installing it.
+
+### What content is available for Custom events?
+
+Only content published by the event and accessible to your account can be downloaded. Some sessions
+have presentations but no video. The script checks selected sessions for available videos and decks
+when downloading; `-InfoOnly` returns session information without these additional checks.
+
+- Use `-NoVideos` to download presentations without videos.
+- Use `-NoSlidedecks` to skip presentations.
+- Presentations can be PowerPoint or PDF files. If a session has multiple decks, the first is named
+  `SessionCode-Title.pptx`, followed by `SessionCode-Title-1.pptx`, `SessionCode-Title-2.pptx`, and so on,
+  using each file's actual extension.
+- Existing files are skipped unless you specify `-Overwrite`. Older filenames are not renamed automatically.
+
+### Why is some session information missing?
+
+The information available varies by event. Older events, such as Ignite2024, may not include every
+speaker, location, or timing detail.
 
 ### YouTube authentication
-YouTube requires authentication to prevent automated downloads. You will see yt-dlp errors like
+YouTube may require you to sign in before downloading. You may see an error such as
 "Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication".
 To work around this, you can either:
-* Use direct downloads when available with `-PreferDirect`. You may end up with larger files, but you can
-  compress and downscale them afterwards using the `Compress-MP4.ps1` script in this repository.
+* Use direct downloads when available with `-PreferDirect`. Files may be larger; use
+  [Compress-MP4.ps1](./Compress-MP4.ps1) to compress or downscale them afterwards.
 * Pass cookies to yt-dlp from a cookies file (Netscape format) or directly from a browser. See
   [yt-dlp cookie export docs](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies) for details.
   Using a separate account is recommended when downloading large numbers of videos.
 
-Syntax:
-```
+Options:
+```powershell
 .\Get-EventSession.ps1 .. -CookiesFile <File>
 .\Get-EventSession.ps1 .. -CookiesFromBrowser <brave|chrome|chromium|edge|firefox|opera|safari|vivaldi|whale>
 ```
 
 ### Why do downloads happen twice?
-Depending on the source, the video and audio streams are seperate. First the video stream is fetched, then the audio stream.
-After fetching, the two are merged.
+Some sources provide video and audio separately. The script downloads both, then merges them into one file.
 
-### How to specify format?
-Depending on availability and source, the default format is worstvideo+bestaudio/best. This means the worst quality video and best audio
-stream are fetched and merged. 'Best' is attempted if no selection could be made. You can also specify bestvideo+bestaudio to get the best
-quality video, but these files can be substantially larger. You can also perform more complex filter, e.g.
-bestvideo[height=540][filesize<384MB]+bestaudio,bestvideo[height=720][filesize<512MB]+bestaudio,bestvideo[height=360]+bestaudio,bestvideo+bestaudio
-1) This would first attempt to download the video of 540p if it is less than 384MB, and best audio.
-2) When not present, then attempt to downlod video of 720p less than 512MB.
-3) Thirdly, attempt to download video of 360p with best audio.
-4) If none of the previous filters found matches, just pick the best video and best audio streams
+### How do I choose video quality?
+
+Use `-Format` to choose video quality. The default, `worstvideo+bestaudio/best`, selects the lowest-quality
+video and best audio available, with a combined format as a fallback.
+
+For higher quality, use `-Format 'bestvideo+bestaudio/best'`. Downloads may be substantially larger.
+`-PreferDirect` ignores `-Format`.
+
+For more control, provide a list of preferred formats:
+
+```powershell
+.\Get-EventSession.ps1 -Event Build2026 -DownloadFolder D:\Build -Format 'bestvideo[height=540][filesize<384MB]+bestaudio,bestvideo[height=720][filesize<512MB]+bestaudio,bestvideo[height=360]+bestaudio,bestvideo+bestaudio'
+```
+
+This tries, in order:
+
+1. A 540p video under 384 MB, with the best audio.
+2. A 720p video under 512 MB, with the best audio.
+3. A 360p video, with the best audio.
+4. The best available video and audio if none of those options is available.
 
 ## Credits
 
@@ -159,6 +175,6 @@ Special thanks to [Mattias Fors](http://deploywindows.info), [Scott Ladewig](htt
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE.md for details.
+This project is licensed under the MIT License - see [LICENSE.md](./LICENSE.md) for details.
 
 
