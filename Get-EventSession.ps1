@@ -19,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.53, November 14, 2026
+    Version 4.54, November 16, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -6343,7 +6343,8 @@ function Stop-BackgroundDownloadJobs {
 function Get-MSADownloadAuthHeaders {
     # Returns a headers hashtable (Authorization and/or Cookie) suitable for passing to
     # Add-BackgroundDownloadJob for authenticated downloads from Microsoft content URLs.
-    # Acquires an MSA session interactively if one is not already cached.
+    # Only acquires an MSA session (interactively when needed) after content requests have
+    # encountered an authentication challenge; anonymously accessible events stay anonymous.
     param(
         [parameter(Mandatory = $true)][string]$Url,
         [uri]$Proxy
@@ -6358,15 +6359,18 @@ function Get-MSADownloadAuthHeaders {
         return $null
     }
 
-    # If we don't have auth credentials yet, acquire them now (may prompt interactively).
-    if (-not $script:MSAContentAuthRequired -or
-        (-not $script:MSAAuthWebSession -and [string]::IsNullOrWhiteSpace($script:MSABearerToken))) {
+    # No authentication challenge encountered so far; content is anonymously accessible.
+    if (-not $script:MSAContentAuthRequired) {
+        return $null
+    }
+
+    # Authentication is required but we have no credentials yet; acquire them now (may prompt interactively).
+    if (-not $script:MSAAuthWebSession -and [string]::IsNullOrWhiteSpace($script:MSABearerToken)) {
         try {
             [uri]$contentUri = $Url
             $acquiredSession = Get-MSAAuthenticatedWebSession -TargetUri $contentUri -Proxy $Proxy -ValidateCachedSession
             if ($acquiredSession) {
                 $script:MSAAuthWebSession = $acquiredSession
-                $script:MSAContentAuthRequired = $true
             }
         }
         catch {
@@ -6575,7 +6579,7 @@ if ($Event -eq 'Custom' -and $CookiesFile) {
 
 try {
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.53')
+Write-Host( 'Get-EventSession v4.54')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)
@@ -7889,11 +7893,12 @@ foreach ($SessionToGet in $SessionsToGet) {
                             }
                             else {
                                 Write-Verbose ('Attempting download {0} to {1}' -f $captionFileLink, $captionFullFile)
-                                $captionNeedsAuthDownload = (Test-IsProtectedContentUrl -Url $captionFileLink)
                                 $captionAuthHeaders = $null
-                                if ($captionNeedsAuthDownload) {
-                                    Write-Verbose ('Caption file requires authenticated download for session {0}' -f $SessionToGet.sessioncode)
+                                if (Test-IsProtectedContentUrl -Url $captionFileLink) {
                                     $captionAuthHeaders = Get-MSADownloadAuthHeaders -Url $captionFileLink -Proxy $ProxyURL
+                                    if ($captionAuthHeaders) {
+                                        Write-Verbose ('Using authenticated download for caption file of session {0}' -f $SessionToGet.sessioncode)
+                                    }
                                 }
                                 Add-BackgroundDownloadJob -Type 3 -FilePath $captionFullFile -DownloadUrl $captionFileLink -File $captionFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Headers $captionAuthHeaders -Proxy $ProxyURL
                             }
@@ -7969,8 +7974,10 @@ foreach ($SessionToGet in $SessionsToGet) {
                             Write-Verbose ('Downloading {0} to {1}' -f $DownloadURL, $slidedeckFullFile)
                             $slidedeckAuthHeaders = $null
                             if (Test-IsProtectedContentUrl -Url $DownloadURL) {
-                                Write-Verbose ('Slidedeck requires authenticated download for session {0}' -f $SessionToGet.sessioncode)
                                 $slidedeckAuthHeaders = Get-MSADownloadAuthHeaders -Url $DownloadURL -Proxy $ProxyURL
+                                if ($slidedeckAuthHeaders) {
+                                    Write-Verbose ('Using authenticated download for slidedeck of session {0}' -f $SessionToGet.sessioncode)
+                                }
                             }
                             Add-BackgroundDownloadJob -Type 1 -FilePath $slidedeckFullFile -DownloadUrl $DownloadURL -File $slidedeckFullFile -Timestamp $SessionTime -scheduleCode ($SessionToGet.sessioncode) -Title ($SessionToGet.Title) -Headers $slidedeckAuthHeaders -Proxy $ProxyURL
                         }

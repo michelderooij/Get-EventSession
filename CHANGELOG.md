@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.54
+
+- Fixed unnecessary sign-in prompts for anonymously accessible events
+- Clarified verbose download messages to only report authenticated downloads when authentication is actually used
+
 ## 4.53
 
 - Added Custom event authentication using Netscape-format cookie exports with `-CookiesFile`, covering session information, videos, presentations, and captions without sign-in prompts
