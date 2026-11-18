@@ -34,7 +34,7 @@ Show session information for Ignite 2024:
 
 Show the title, location, and start time of Ignite sessions presented by Tony Redmond:
 ```powershell
-.\Get-EventSession.ps1 -Event Ignite -InfoOnly | Where-Object {$_.SpeakerNames -contains 'Tony Redmond'} | Select-Object Title, location, startDateTime
+.\Get-EventSession.ps1 -Event Ignite -InfoOnly | Where-Object {$_.SpeakerNames -contains 'Satya Nadella'} | Select-Object Title, location, startDateTime
 ```
 
 Download available content for two Ignite sessions:
@@ -55,7 +55,7 @@ For Custom events, you can either follow the script's sign-in prompts or use coo
 For Custom events, use `-Event Custom` and provide the event's session catalog URL with `-EventUrl`:
 
 ```powershell
-.\Get-EventSession.ps1 -Event Custom -EventUrl https://event.contoso.com/api/schedule-builder/sessions/search -DownloadFolder D:\Event
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://customevent.microsoft.com/api/schedule-builder/sessions -DownloadFolder D:\Event
 ```
 
 - Follow any Microsoft sign-in prompt. If an Edge window opens, sign in if required, open the event's
@@ -82,19 +82,19 @@ instead of prompting you to sign in.
 2. Open the event's session portal, sign in, and confirm that you can view its sessions and available media.
 3. While on the signed-in portal, open the extension and export the site's cookies in **Netscape
    cookies.txt format**. Save the export outside this repository, for example
-   `D:\Private Cookies\customevent.microsoft.com_cookies.txt`. Export only the sites needed for the event.
+   `.\event_cookies.txt`. Export only the sites needed for the event.
 4. Pass the saved file to the script along with `-Event Custom` and the catalog's `-EventUrl`.
 
 Fetch fresh session information:
 
 ```powershell
-.\Get-EventSession.ps1 -Event Custom -EventUrl https://customevent.microsoft.com/api/schedule-builder/sessions/search -CookiesFile 'D:\Private Cookies\customevent.microsoft.com_cookies.txt' -InfoOnly -Refresh
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://customevent.microsoft.com/api/schedule-builder/sessions -CookiesFile '.\custom_cookies.txt' -InfoOnly -Refresh
 ```
 
 Download published videos and decks:
 
 ```powershell
-.\Get-EventSession.ps1 -Event Custom -EventUrl https://customevent.microsoft.com/api/schedule-builder/sessions/search -CookiesFile 'D:\Private Cookies\customevent.microsoft.com_cookies.txt' -DownloadFolder D:\Airlift
+.\Get-EventSession.ps1 -Event Custom -EventUrl https://customevent.microsoft.com/api/schedule-builder/sessions -CookiesFile '.\custom_cookies.txt' -DownloadFolder D:\Custom
 ```
 
 `-CookiesFile` also works with `-PreferDirect`. For Custom events it takes precedence over
