@@ -244,6 +244,12 @@
     matching the name used for the video file, and receives all artifacts of that session such
     as the video, slidedeck and caption files. Session folders that end up empty are removed.
 
+    .PARAMETER NormalizeFileNames
+    Makes generated file and folder names safe for OneDrive/SharePoint sync. Applies Unicode
+    compatibility normalization (NFKC), converts special spaces to regular spaces, removes control
+    and invisible characters, replaces characters OneDrive rejects (<>:"/\|?*) with an underscore,
+    trims leading/trailing spaces and periods, and avoids reserved Windows device names.
+
     .PARAMETER Locale
     When supported by the event, filters sessions on localization.
     Currently supported: de-DE, zh-CN, en-US, ja-JP, es-CO, fr-FR.
@@ -456,6 +462,11 @@ param(
     [parameter( Mandatory = $false, ParameterSetName = 'Download')]
     [parameter( Mandatory = $false, ParameterSetName = 'Default')]
     [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
+    [switch]$NormalizeFileNames,
+
+    [parameter( Mandatory = $false, ParameterSetName = 'Download')]
+    [parameter( Mandatory = $false, ParameterSetName = 'Default')]
+    [parameter( Mandatory = $false, ParameterSetName = 'DownloadDirect')]
     [switch]$Captions,
 
     [parameter( Mandatory = $true, ParameterSetName = 'DownloadDirect')]
@@ -532,7 +543,36 @@ function Iif($Cond, $IfTrue, $IfFalse) {
 function Fix-FileName ($title) {
     $cleaned = (((((((($title -replace '\]', ')') -replace '\[', '(') -replace [char]0x202f, ' ') -replace '["\\/\?\*]', ' ') -replace ':', '-') -replace '  ', ' ') -replace '\?\?\?', '') -replace '\<|\>|:|"|/|\\|\||\?|\*', '').Trim()
     $invalidChars = [System.IO.Path]::GetInvalidFileNameChars() | ForEach-Object { [Regex]::Escape($_) }
-    return ($cleaned -replace ($invalidChars -join '|'), '')
+    $cleaned = $cleaned -replace ($invalidChars -join '|'), ''
+    if ($NormalizeFileNames) {
+        $cleaned = ConvertTo-SyncSafeFileName -Name $cleaned
+    }
+    return $cleaned
+}
+
+function ConvertTo-SyncSafeFileName {
+    # Makes a file name safe for OneDrive/SharePoint sync (and Windows in general)
+    param([string]$Name)
+
+    # Trademark/copyright signs would otherwise be expanded by NFKC (e.g. ™ -> TM)
+    $Name = $Name -replace '[\u2122\u00AE\u00A9]', ''
+    # Compatibility normalization folds ligatures, full-width forms and typographic variants
+    $Name = $Name.Normalize([Text.NormalizationForm]::FormKC)
+    # En/em dashes are common in titles; use a plain hyphen
+    $Name = $Name -replace '[\u2013\u2014]', '-'
+    # Unicode space separators (NBSP, thin space, ...) become a regular space
+    $Name = $Name -replace '\p{Zs}', ' '
+    # Drop control and invisible format characters (zero-width space, BOM, soft hyphen, ...)
+    $Name = $Name -replace '[\p{Cc}\p{Cf}]', ''
+    # Characters rejected by OneDrive/Windows
+    $Name = $Name -replace '[<>:"/\\|?*]', '_'
+    $Name = $Name -replace '\s{2,}', ' '
+    # No leading/trailing spaces or periods, no leading double periods
+    $Name = $Name.Trim().Trim('.').Trim()
+    if ([string]::IsNullOrWhiteSpace($Name)) { $Name = '_' }
+    # Windows reserved device names
+    if ($Name -match '^(?i:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])$') { $Name = '_{0}' -f $Name }
+    return $Name
 }
 
 function ConvertTo-ArgumentString {
@@ -957,6 +997,36 @@ function Invoke-WebWithRetry {
             $delay *= 2
         }
     } while ($attempt -lt $MaxAttempts)
+}
+
+function Invoke-JsonRestMethod {
+    # Windows PowerShell 5.1 decodes JSON responses without a charset as ISO-8859-1, which corrupts
+    # non-ASCII titles (e.g. ’ becomes â + control characters). Decode explicitly as UTF-8 there.
+    param(
+        [parameter(Mandatory = $true)][uri]$Uri,
+        [string]$Method = 'Get',
+        [hashtable]$Headers,
+        [string]$UserAgent,
+        $WebSession,
+        [string]$Proxy,
+        $Body,
+        [int]$TimeoutSec
+    )
+
+    $parameters = @{ Uri = $Uri; Method = $Method }
+    if ($Headers) { $parameters.Headers = $Headers }
+    if ($UserAgent) { $parameters.UserAgent = $UserAgent }
+    if ($WebSession) { $parameters.WebSession = $WebSession }
+    if ($Proxy) { $parameters.Proxy = $Proxy }
+    if ($null -ne $Body) { $parameters.Body = $Body }
+    if ($TimeoutSec) { $parameters.TimeoutSec = $TimeoutSec }
+
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        return (Invoke-RestMethod @parameters)
+    }
+    $response = Invoke-WebRequest @parameters -UseBasicParsing
+    $text = [System.Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
+    return ($text | ConvertFrom-Json)
 }
 
 function Set-ObjectPropertyValue {
@@ -7111,7 +7181,7 @@ if ( -not( $SessionCacheValid)) {
             }
             try {
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
-                $ResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $web.requestUri -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL -Timeout $web.Timeout } -Variables @{ web = $web; Method = $Method; session = $session; ProxyURL = $ProxyURL }
+                $ResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-JsonRestMethod -Uri $web.requestUri -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL -TimeoutSec $web.Timeout } -Variables @{ web = $web; Method = $Method; session = $session; ProxyURL = $ProxyURL }
             }
             catch {
                 if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
@@ -7151,7 +7221,7 @@ if ( -not( $SessionCacheValid)) {
             try {
                 $SearchBody = $EventSearchBody -f '1', '1'
                 Write-Verbose ('Using URI {0}' -f $web.requestUri)
-                $searchResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL } -Variables @{ web = $web; searchbody = $searchbody; Method = $Method; session = $session; ProxyURL = $ProxyURL }
+                $searchResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-JsonRestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL } -Variables @{ web = $web; searchbody = $searchbody; Method = $Method; session = $session; ProxyURL = $ProxyURL }
             }
             catch {
                 if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
@@ -7170,7 +7240,7 @@ if ( -not( $SessionCacheValid)) {
             for ($page = 1; $page -le $PageCount; $page++) {
                 Write-Progress -Id 1 -Activity "Retrieving Session Catalog" -Status "Processing page $page of $PageCount" -PercentComplete ($page / $PageCount * 100)
                 $SearchBody = $EventSearchBody -f $web.itemsPerPage, $page
-                $searchResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL } -Variables @{ web = $web; searchbody = $searchbody; Method = $Method; session = $session; ProxyURL = $ProxyURL }
+                $searchResultsResponse = Invoke-WebWithRetry -ScriptBlock { Invoke-JsonRestMethod -Uri $web.requestUri -Body $searchbody -Method $Method -Headers $web.headers -UserAgent $web.userAgent -WebSession $session -Proxy $ProxyURL } -Variables @{ web = $web; searchbody = $searchbody; Method = $Method; session = $session; ProxyURL = $ProxyURL }
                 foreach ( $Item in $searchResultsResponse.data) {
                     $Item.PSObject.Properties | ForEach-Object {
                         if ($_.Name -eq 'speakerNames') { $Item.($_.Name) = @($_.Value) }
