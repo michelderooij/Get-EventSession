@@ -19,7 +19,7 @@
 
     Michel de Rooij
     http://eightwone.com
-    Version 4.54, November 16, 2026
+    Version 4.55, November 24, 2026
 
     Special thanks to: Mattias Fors, Scott Ladewig, Tim Pringle, Andy Race, Richard van Nieuwenhuizen
 
@@ -926,6 +926,114 @@ function Get-IEProxy {
     }
 }
 
+function ConvertFrom-EventJson {
+    param(
+        [parameter(Mandatory = $true, ValueFromPipeline = $true)][string]$InputObject,
+        [int]$Depth = 1024
+    )
+    process {
+        $parameters = @{ InputObject = $InputObject; ErrorAction = 'Stop' }
+        if ($PSVersionTable.PSVersion.Major -ge 6) { $parameters.Depth = $Depth }
+        ConvertFrom-Json @parameters
+    }
+}
+
+function Invoke-WebRequestNoRedirect {
+    param(
+        [parameter(Mandatory = $true)][hashtable]$Parameters,
+        [switch]$Rest
+    )
+
+    if ($Parameters.MaximumRedirection -ne 0) { throw 'This request helper requires redirects to be disabled.' }
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        if ($Rest) { return Invoke-RestMethod @Parameters }
+        return Invoke-WebRequest @Parameters
+    }
+
+    # Windows PowerShell can lose the response to a redirect with MaximumRedirection = 0.
+    $request = [System.Net.HttpWebRequest]::Create([uri]$Parameters.Uri)
+    $request.AllowAutoRedirect = $false
+    $request.Method = if ($Parameters.Method) { [string]$Parameters.Method } else { 'GET' }
+    $timeout = if ($Parameters.TimeoutSec) { [int]$Parameters.TimeoutSec * 1000 } else { 30000 }
+    $request.Timeout = $timeout
+    $request.ReadWriteTimeout = $timeout
+    $request.AutomaticDecompression = [System.Net.DecompressionMethods]'GZip, Deflate'
+    if ($Parameters.Proxy) { $request.Proxy = [System.Net.WebProxy]::new([uri]$Parameters.Proxy) }
+    if ($Parameters.WebSession) {
+        $request.CookieContainer = $Parameters.WebSession.Cookies
+        $request.UserAgent = $Parameters.WebSession.UserAgent
+        if ($Parameters.WebSession.Credentials) { $request.Credentials = $Parameters.WebSession.Credentials }
+        if ($Parameters.WebSession.UseDefaultCredentials) { $request.UseDefaultCredentials = $true }
+        if ($Parameters.WebSession.Proxy -and -not $Parameters.Proxy) { $request.Proxy = $Parameters.WebSession.Proxy }
+        foreach ($certificate in $Parameters.WebSession.Certificates) { $null = $request.ClientCertificates.Add($certificate) }
+    }
+    $headers = @{}
+    if ($Parameters.WebSession) {
+        foreach ($key in $Parameters.WebSession.Headers.Keys) { $headers[$key] = $Parameters.WebSession.Headers[$key] }
+    }
+    if ($Parameters.Headers) {
+        foreach ($key in $Parameters.Headers.Keys) { $headers[$key] = $Parameters.Headers[$key] }
+    }
+    foreach ($key in $headers.Keys) {
+        switch ($key) {
+            'Accept' { $request.Accept = $headers[$key] }
+            'Content-Type' { $request.ContentType = $headers[$key] }
+            'User-Agent' { $request.UserAgent = $headers[$key] }
+            'Referer' { $request.Referer = $headers[$key] }
+            default { $request.Headers[$key] = $headers[$key] }
+        }
+    }
+    if ($Parameters.UserAgent) { $request.UserAgent = $Parameters.UserAgent }
+    if ($Parameters.ContentType) { $request.ContentType = $Parameters.ContentType }
+    if ($Parameters.ContainsKey('Body')) {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$Parameters.Body)
+        $request.ContentLength = $bytes.Length
+        $stream = $request.GetRequestStream()
+        try { $stream.Write($bytes, 0, $bytes.Length) }
+        finally { $stream.Dispose() }
+    }
+
+    $response = $null
+    try {
+        try { $response = [System.Net.HttpWebResponse]$request.GetResponse() }
+        catch [System.Net.WebException] {
+            $failure = $_.Exception
+            while ($failure.InnerException -and $failure -isnot [System.Net.WebException]) { $failure = $failure.InnerException }
+            if (-not $failure.Response) { throw $failure }
+            $response = $failure.Response
+        }
+        $responseHeaders = @{}
+        foreach ($key in $response.Headers.AllKeys) { $responseHeaders[$key] = $response.Headers[$key] }
+        if ([int]$response.StatusCode -ge 300) {
+            # Snapshot metadata before closing the response; callers inspect it after catching.
+            $exception = [System.Exception]::new(('HTTP request returned status {0}.' -f [int]$response.StatusCode))
+            $exception | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{
+                StatusCode = [int]$response.StatusCode; Headers = $responseHeaders; ResponseUri = $response.ResponseUri
+            })
+            throw $exception
+        }
+        $encoding = if ($response.ContentType -match '(?i);\s*charset=') { [System.Text.Encoding]::GetEncoding($response.CharacterSet) } else { [System.Text.Encoding]::UTF8 }
+        $reader = [System.IO.StreamReader]::new($response.GetResponseStream(), $encoding, $true)
+        try { $content = $reader.ReadToEnd() }
+        finally { $reader.Dispose() }
+        if ($Rest) {
+            if ($response.ContentType -match '(?i)(?:application|text)/(?:[\w.+-]+\+)?json\b') {
+                return ConvertFrom-Json -InputObject $content -ErrorAction Stop
+            }
+            return $content
+        }
+        return [pscustomobject]@{
+            StatusCode = [int]$response.StatusCode
+            Headers = $responseHeaders
+            Content = $content
+            BaseResponse = $response
+        }
+    }
+    finally {
+        if ($response) { $response.Close() }
+    }
+}
+
 function Invoke-WebWithRetry {
     param(
         [scriptblock]$ScriptBlock,
@@ -1154,6 +1262,22 @@ function ConvertFrom-NetscapeCookieContent {
     return $session
 }
 
+function Get-WebSessionCookies {
+    param([parameter(Mandatory = $true)][Microsoft.PowerShell.Commands.WebRequestSession]$WebSession)
+
+    $container = $WebSession.Cookies
+    if ($container.PSObject.Methods['GetAllCookies']) { return $container.GetAllCookies() }
+    # .NET Framework has no public all-domain enumerator. Keep the original Cookie objects.
+    $flags = [System.Reflection.BindingFlags]'NonPublic,Instance,GetField'
+    $domains = $container.GetType().InvokeMember('m_domainTable', $flags, $null, $container, @())
+    foreach ($domain in $domains.Values) {
+        $paths = $domain.GetType().InvokeMember('m_list', $flags, $null, $domain, @())
+        foreach ($collection in $paths.Values) {
+            foreach ($cookie in $collection) { $cookie }
+        }
+    }
+}
+
 function Get-CustomCookieWebSession {
     param([parameter(Mandatory = $true)][uri]$TargetUri)
 
@@ -1168,7 +1292,7 @@ function Get-CustomCookieWebSession {
             throw (New-CustomCookieFileException -Message $reason)
         }
         $portalUri = [uri]$EventAPIUrl
-        $hasPortalCookie = @($script:CustomCookieWebSession.Cookies.GetAllCookies() | Where-Object {
+        $hasPortalCookie = @(Get-WebSessionCookies -WebSession $script:CustomCookieWebSession | Where-Object {
             $probeUri = [uri]::new($portalUri, $_.Path)
             $script:CustomCookieWebSession.Cookies.GetCookies($probeUri).Count -gt 0
         }).Count -gt 0
@@ -1190,7 +1314,7 @@ function ConvertTo-NetscapeCookieContent {
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('# Netscape HTTP Cookie File')
     $domainImplicit = [System.Net.Cookie].GetProperty('DomainImplicit', [System.Reflection.BindingFlags]'Instance,NonPublic')
-    foreach ($cookie in $WebSession.Cookies.GetAllCookies()) {
+    foreach ($cookie in (Get-WebSessionCookies -WebSession $WebSession)) {
         if ($cookie.Expired) { continue }
         $includeSubdomains = -not $domainImplicit.GetValue($cookie)
         $domain = if ($includeSubdomains) { '.' + $cookie.Domain.TrimStart('.') } else { $cookie.Domain.TrimStart('.') }
@@ -1208,7 +1332,7 @@ function New-CustomYtDlpCookieFile {
     $path = $null
     try {
         $path = [System.IO.Path]::GetTempFileName()
-        Set-Content -LiteralPath $path -Value (ConvertTo-NetscapeCookieContent -WebSession $WebSession) -Encoding utf8NoBOM -ErrorAction Stop
+        [System.IO.File]::WriteAllText($path, (ConvertTo-NetscapeCookieContent -WebSession $WebSession), [System.Text.UTF8Encoding]::new($false))
     }
     catch {
         if ($path) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
@@ -1453,40 +1577,18 @@ function Get-WebSessionCookieHeader {
     $cookies = [System.Collections.ArrayList]@()
 
     try {
-        $cookieContainer = $WebSession.Cookies
-        $domainTable = $cookieContainer.GetType().InvokeMember('m_domainTable', [System.Reflection.BindingFlags]'NonPublic,Instance,GetField', $null, $cookieContainer, @())
         $targetHost = $CookieUri.Host.TrimStart('.')
-
-        foreach ($domainKey in @($domainTable.Keys)) {
-            $domainName = [string]$domainKey
-            if ([string]::IsNullOrWhiteSpace($domainName)) {
-                continue
-            }
-
-            $normalizedDomain = $domainName.TrimStart('.')
+        foreach ($cookie in (Get-WebSessionCookies -WebSession $WebSession)) {
+            $normalizedDomain = $cookie.Domain.TrimStart('.')
             if (-not $IncludeAllDomains) {
                 if ($normalizedDomain -ine $targetHost -and -not $targetHost.EndsWith(('.{0}' -f $normalizedDomain), [System.StringComparison]::OrdinalIgnoreCase) -and -not $normalizedDomain.EndsWith(('.{0}' -f $targetHost), [System.StringComparison]::OrdinalIgnoreCase)) {
                     continue
                 }
             }
 
-            $domainEntry = $domainTable[$domainKey]
-            if (-not $domainEntry) {
-                continue
-            }
-
-            $pathList = $domainEntry.GetType().InvokeMember('m_list', [System.Reflection.BindingFlags]'NonPublic,Instance,GetField', $null, $domainEntry, @())
-            foreach ($pathKey in @($pathList.Keys)) {
-                foreach ($cookie in @($pathList[$pathKey])) {
-                    if (-not $cookie -or [string]::IsNullOrWhiteSpace([string]$cookie.Name)) {
-                        continue
-                    }
-
-                    $null = $cookies.Add($cookie)
-                    if ($seen.Add([string]$cookie.Name)) {
-                        $entries.Add(('{0}={1}' -f [string]$cookie.Name, [string]$cookie.Value)) | Out-Null
-                    }
-                }
+            $null = $cookies.Add($cookie)
+            if ($seen.Add([string]$cookie.Name)) {
+                $entries.Add(('{0}={1}' -f [string]$cookie.Name, [string]$cookie.Value)) | Out-Null
             }
         }
     }
@@ -2621,7 +2723,15 @@ function Invoke-MSAImplicitFlowSignIn {
     }
     catch {
         # AAD or live.com sometimes returns a non-2xx status on the form_post page itself.
-        try { $html = [string]$_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult() } catch {}
+        try {
+            $errorResponse = $_.Exception.Response
+            if ($errorResponse -is [System.Net.HttpWebResponse]) {
+                $reader = [System.IO.StreamReader]::new($errorResponse.GetResponseStream())
+                try { $html = $reader.ReadToEnd() }
+                finally { $reader.Dispose(); $errorResponse.Close() }
+            }
+            else { $html = [string]$errorResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult() }
+        } catch {}
         if ([string]::IsNullOrWhiteSpace($html)) {
             Write-Verbose ('OAuth implicit flow: redirect chain failed: {0}' -f $_.Exception.Message)
             return $null
@@ -3075,7 +3185,7 @@ function Resolve-OAuthChallenge {
     $wwwAuth = $null
 
     try {
-        $null = Invoke-WebRequest @reqParams
+        $null = Invoke-WebRequestNoRedirect -Parameters $reqParams
     }
     catch {
         if ($_.Exception.Response) {
@@ -3345,6 +3455,7 @@ function Find-MSALAssemblies {
         Where-Object { $_.FullName -notmatch '(?i)\\(runtimes|ref|native|resources)\\' } |
         ForEach-Object {
             try {
+                if ($PSVersionTable.PSVersion.Major -le 5 -and $_.FullName -match '(?i)\\net(?:[5-9]|[1-9][0-9]+)\.[0-9]+[^\\]*\\') { return }
                 $ver = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($_.FullName).FileVersion -as [version]
                 if (-not $ver) { return }
                 $brokerPath = Join-Path $_.DirectoryName 'Microsoft.Identity.Client.Broker.dll'
@@ -3354,6 +3465,7 @@ function Find-MSALAssemblies {
                         BrokerPath    = if ($hasBroker) { $brokerPath } else { $null }
                         HasBroker     = $hasBroker
                         IsNetStandard = $_.FullName -match '(?i)\\netstandard2\.0\\'
+                        IsFramework   = $_.FullName -match '(?i)\\net4[^\\]*\\'
                         Version       = $ver
                     })
             }
@@ -3363,7 +3475,7 @@ function Find-MSALAssemblies {
 
     if ($candidates.Count -eq 0) { return $null }
     return $candidates |
-    Sort-Object @{ e = 'HasBroker'; Descending = $true }, @{ e = 'IsNetStandard'; Descending = $true }, @{ e = 'Version'; Descending = $true } |
+    Sort-Object @{ e = 'HasBroker'; Descending = $true }, @{ e = { $PSVersionTable.PSVersion.Major -le 5 -and $_.IsFramework }; Descending = $true }, @{ e = 'IsNetStandard'; Descending = $true }, @{ e = 'Version'; Descending = $true } |
     Select-Object -First 1
 }
 
@@ -3441,7 +3553,7 @@ namespace GetEventSession.Internal {
             var ir = app.AcquireTokenInteractive(scopes)
                 .WithParentActivityOrWindow(hwnd)
                 .ExecuteAsync().GetAwaiter().GetResult();
-            return ir?.AccessToken;
+            return ir == null ? null : ir.AccessToken;
         }
     }
 }
@@ -3452,6 +3564,7 @@ namespace GetEventSession.Internal {
         $msalRefs.Add($assemblies.BrokerPath)
         foreach ($stdDll in @('netstandard.dll')) {
             $p = Join-Path $runtimeDir $stdDll
+            if (-not (Test-Path -LiteralPath $p)) { $p = Join-Path (Join-Path $runtimeDir 'Facades') $stdDll }
             if (Test-Path -LiteralPath $p) { $msalRefs.Add($p) }
         }
 
@@ -4390,7 +4503,8 @@ function Initialize-CustomCookieRequestContext {
     }
     $candidates = [System.Collections.Generic.List[uri]]::new()
     $pageUri = [uri]($origin + '/')
-    if ($page.BaseResponse.RequestMessage.RequestUri) { $pageUri = $page.BaseResponse.RequestMessage.RequestUri }
+    if ($page.BaseResponse.ResponseUri) { $pageUri = $page.BaseResponse.ResponseUri }
+    elseif ($page.BaseResponse.RequestMessage.RequestUri) { $pageUri = $page.BaseResponse.RequestMessage.RequestUri }
     if ($pageUri.GetLeftPart([System.UriPartial]::Authority) -eq $origin) {
         if ([string]$page.Content -match '\spc-id=["'']') { $candidates.Add($pageUri) }
         foreach ($link in @($page.Links)) {
@@ -4442,7 +4556,7 @@ function Update-CustomPortalRequestContext {
         $portalUri.GetLeftPart([System.UriPartial]::Authority) -ne $CatalogUri.GetLeftPart([System.UriPartial]::Authority)) { return $false }
     $parameters = @{ Uri = $portalUri.AbsoluteUri; WebSession = $WebSession; MaximumRedirection = 0; TimeoutSec = 30; UseBasicParsing = $true; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
     if ($Proxy) { $parameters.Proxy = $Proxy }
-    try { $html = [string](Invoke-WebRequest @parameters).Content }
+    try { $html = [string](Invoke-WebRequestNoRedirect -Parameters $parameters).Content }
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
         Write-Verbose 'Unable to refresh event page context from the sessions page.'
@@ -4574,7 +4688,7 @@ function Invoke-CustomCatalogPage {
         }
         if ($Proxy) { $parameters.Proxy = $Proxy }
         $requestStarted = $true
-        $response = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod @parameters } -Variables @{ parameters = $parameters } -SuppressErrorDetails
+        $response = Invoke-WebWithRetry -ScriptBlock { Invoke-WebRequestNoRedirect -Parameters $parameters -Rest } -Variables @{ parameters = $parameters } -SuppressErrorDetails
     }
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
@@ -4593,18 +4707,18 @@ function Invoke-CustomCatalogPage {
             Write-Verbose 'Trying the supported schedule-builder /sessions/search POST endpoint.'
             return Invoke-CustomCatalogPage -Context $Context -WebSession $WebSession -Page $Page -Proxy $Proxy
         }
-        if ($Context.Method -eq 'Get' -and $Context.AllowMethodSwitch -ne $false -and $status -eq 405 -and [string]$_.Exception.Response.Headers -match '(?i)POST') {
+        if ($Context.Method -eq 'Get' -and $Context.AllowMethodSwitch -ne $false -and $status -eq 405 -and [string]$_.Exception.Response.Headers.Allow -match '(?i)POST') {
             $Context.Method = 'Post'
             $Context.Uri = $Context.CatalogUri.AbsoluteUri
             $Context.Referer = $Context.CatalogUri.GetLeftPart([System.UriPartial]::Authority) + '/'
             return Invoke-CustomCatalogPage -Context $Context -WebSession $WebSession -Page $Page -Proxy $Proxy
         }
-        if ($Context.Method -eq 'Post' -and $Context.AllowMethodSwitch -eq $true -and $status -eq 405 -and [string]$_.Exception.Response.Headers -match '(?i)GET') {
+        if ($Context.Method -eq 'Post' -and $Context.AllowMethodSwitch -eq $true -and $status -eq 405 -and [string]$_.Exception.Response.Headers.Allow -match '(?i)GET') {
             $Context.Method = 'Get'
             $Context.AllowMethodSwitch = $false
             return Invoke-CustomCatalogPage -Context $Context -WebSession $WebSession -Page $Page -Proxy $Proxy
         }
-        $cause = if ($status) { 'HTTP {0}' -f $status } elseif ($requestStarted) { 'connection failure' } else { 'request context unavailable or invalid' }
+        $cause = if ($status) { 'HTTP {0}' -f $status } elseif ($requestStarted) { 'request failure' } else { 'request context unavailable or invalid' }
         $summary = Get-CustomCatalogFailureSummary -Exception $_.Exception -StatusCode ([int]$status)
         $exception = [System.InvalidOperationException]::new(('Custom catalog page {0} failed ({1}). {2} Request credentials and response details are withheld.' -f $Page, $cause, $summary))
         $exception.Data['FailureKind'] = if ($status) { 'Http' } elseif ($requestStarted) { 'Transport' } else { 'Context' }
@@ -4660,7 +4774,7 @@ function Invoke-CustomSessionDetailRequest {
         if ($headers.Authorization) { $parameters.Headers.Authorization = $headers.Authorization }
     }
     try {
-        $details = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod @parameters } -Variables @{ parameters = $parameters } -SuppressErrorDetails
+        $details = Invoke-WebWithRetry -ScriptBlock { Invoke-WebRequestNoRedirect -Parameters $parameters -Rest } -Variables @{ parameters = $parameters } -SuppressErrorDetails
     }
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
@@ -4785,7 +4899,7 @@ function Invoke-CustomAssetDownloadRequest {
     $parameters = @{ Uri = $Uri.AbsoluteUri; Method = 'Get'; WebSession = $WebSession; MaximumRedirection = 0; TimeoutSec = 30; ErrorAction = 'Stop'; Verbose = $false; Debug = $false; Headers = @{ Accept = 'application/json' } }
     if ($Proxy) { $parameters.Proxy = $Proxy }
     if ($script:MSAAuthOrigin -eq $Uri.GetLeftPart([System.UriPartial]::Authority)) { $parameters.Headers = Get-MSAAuthApiHeaders }
-    try { $response = Invoke-WebWithRetry -ScriptBlock { Invoke-RestMethod @parameters } -Variables @{ parameters = $parameters } -SuppressErrorDetails }
+    try { $response = Invoke-WebWithRetry -ScriptBlock { Invoke-WebRequestNoRedirect -Parameters $parameters -Rest } -Variables @{ parameters = $parameters } -SuppressErrorDetails }
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
         $exception = [System.InvalidOperationException]::new('Presentation asset request failed; credentials and response details withheld.')
@@ -4882,7 +4996,7 @@ function Add-SessionPresentationDownloadJobs {
                 if ($cookieHeader) { $headers.Cookie = $cookieHeader }
                 $parameters.Headers = $headers
             }
-            $response = Invoke-WebRequest @parameters
+            $response = Invoke-WebRequestNoRedirect -Parameters $parameters
             if ($script:CustomCookieFile -and (Test-MSAAuthenticationRequired -Response $response -RequestUri $downloadUrl)) {
                 throw (New-CustomCookieFileException -Message 'Presentation download rejected the exported cookies. Sign in and export cookies again.')
             }
@@ -4934,7 +5048,7 @@ function Get-CustomSessionPageMetadata {
     $parameters = @{ Uri = $pageUri.AbsoluteUri; Method = 'Get'; WebSession = $WebSession; MaximumRedirection = 0; TimeoutSec = 30; ErrorAction = 'Stop'; Verbose = $false; Debug = $false }
     if ($Proxy) { $parameters.Proxy = $Proxy }
     Write-Verbose ('Inspecting published session page for assets: {0}' -f $pageUri.GetLeftPart([System.UriPartial]::Path))
-    try { $page = Invoke-WebRequest @parameters }
+    try { $page = Invoke-WebRequestNoRedirect -Parameters $parameters }
     catch {
         if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) { throw }
         $exception = [System.InvalidOperationException]::new('Unable to inspect the selected session page; credentials and response details withheld.')
@@ -5540,7 +5654,7 @@ function Resolve-OnDemandManifestUrlFromCoreConfiguration {
     }
 
     try {
-        $coreConfiguration = ($coreConfigurationMatch.Groups['json'].Value | ConvertFrom-Json -Depth 100)
+        $coreConfiguration = ($coreConfigurationMatch.Groups['json'].Value | ConvertFrom-EventJson -Depth 100)
     }
     catch {
         Write-Warning ('Unable to parse coreConfiguration JSON from embed page: {0}' -f $_.Exception.Message)
@@ -5590,7 +5704,7 @@ function Resolve-OnDemandCaptionsConfiguration {
         }
 
         try {
-            $captionsConfiguration = ($captionsConfigurationMatch.Groups['json'].Value | ConvertFrom-Json -Depth 100)
+            $captionsConfiguration = ($captionsConfigurationMatch.Groups['json'].Value | ConvertFrom-EventJson -Depth 100)
         }
         catch {
             Write-Warning ('Unable to parse captionsConfiguration JSON from embed page: {0}' -f $_.Exception.Message)
@@ -5623,7 +5737,7 @@ function Get-PreferredOnDemandYtDlpFormat {
     $coreConfigurationMatch = [regex]::Match($OnDemandPage, '(?s)let\s+coreConfiguration\s*=\s*(?<json>\{.*?\})\s*;')
     if ($coreConfigurationMatch.Success) {
         try {
-            $coreConfiguration = ($coreConfigurationMatch.Groups['json'].Value | ConvertFrom-Json -Depth 100)
+            $coreConfiguration = ($coreConfigurationMatch.Groups['json'].Value | ConvertFrom-EventJson -Depth 100)
             $mainManifests = @($coreConfiguration.manifests.main) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.manifest) }
             if ($mainManifests.Count -gt 0) {
                 $hasAdaptiveFormats = $true
@@ -5682,7 +5796,7 @@ function Get-OnDemandKmsBearerToken {
     $arrAssetsMatch = [regex]::Match($OnDemandPage, '(?s)const\s+arrAssets\s*=\s*(?<json>\[.*?\]);')
     if ($arrAssetsMatch.Success) {
         try {
-            $assets = $arrAssetsMatch.Groups['json'].Value | ConvertFrom-Json -Depth 50
+            $assets = $arrAssetsMatch.Groups['json'].Value | ConvertFrom-EventJson -Depth 50
             $videoAsset = @($assets | Where-Object { $_.AssetType -eq 'Video' }) | Select-Object -First 1
             if ($videoAsset -and -not [string]::IsNullOrWhiteSpace([string]$videoAsset.AssetId)) {
                 $assetId = [string]$videoAsset.AssetId
@@ -5774,7 +5888,7 @@ function Get-KmsBearerTokenDetails {
 
     if ($KmsBearerTokenRaw.TrimStart().StartsWith('{')) {
         try {
-            $tokenJson = $KmsBearerTokenRaw | ConvertFrom-Json -Depth 20
+            $tokenJson = $KmsBearerTokenRaw | ConvertFrom-EventJson -Depth 20
             $hasParsedJson = $true
 
             if ($tokenJson.PSObject.Properties.Match('token').Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$tokenJson.token)) {
@@ -6225,7 +6339,7 @@ function Get-BackgroundDownloadJobs {
             }
             else {
                 if ($script:CustomCookieFile) {
-                    Write-Warning ('Cookie-backed download failed for session {0}. Check cookie expiry and media access; credentials and response details withheld.' -f $job.scheduleCode)
+                    Write-Warning ('Cookie-backed download failed for session {0}. Check media access or cookie expiry; credentials and response details withheld.' -f $job.scheduleCode)
                 }
                 switch ( $job.Type) {
                     1 {
@@ -6579,7 +6693,7 @@ if ($Event -eq 'Custom' -and $CookiesFile) {
 
 try {
 Write-Host( '*' * 78)
-Write-Host( 'Get-EventSession v4.54')
+Write-Host( 'Get-EventSession v4.55')
 Write-Host( 'Microsoft event video and slidedeck downloading script')
 Write-Host( 'Source: https://github.com/michelderooij/Get-EventSession')
 Write-Host( '*' * 78)

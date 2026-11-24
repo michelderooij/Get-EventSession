@@ -11,7 +11,7 @@ Session information is saved locally to speed up later runs. Use `-Refresh` to r
 
 ### Prerequisites
 
-* PowerShell 7 or later
+* Windows PowerShell 5.1 or PowerShell 7 or later
 * yt-dlp.exe (automatic download from [github.com/yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp/releases/latest))
 * ffmpeg.exe (automatic download from [github.com/BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases))
 
@@ -66,6 +66,11 @@ For Custom events, use `-Event Custom` and provide the event's session catalog U
 
 If retrieval fails, check the event URL, your access to the portal, and your network or proxy connection.
 Add `-Verbose` for more information.
+
+Windows PowerShell 5.1 and PowerShell 7 are supported. Requests that inspect authentication
+redirects do not automatically follow them; on Windows PowerShell 5.1 the script uses a
+compatible request path to preserve the original HTTP status and authentication headers.
+Sign-in options still depend on the portal and compatible identity libraries available on the device.
 
 #### Using exported cookies
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.55
+
+- Fixed PowerShell 5 support for Custom event retrieval when the portal redirects to sign-in, avoiding misleading connection failures and repeated retries
+- Fixed cookie-backed downloads and media information parsing on PowerShell 5
+- Clarified request failure messages so unclassified errors are not reported as confirmed connection problems
+
 ## 4.54
 
 - Fixed unnecessary sign-in prompts for anonymously accessible events

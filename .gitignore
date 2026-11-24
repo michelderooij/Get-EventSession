@@ -5,3 +5,4 @@
 ffmpeg.exe
 pngquant.exe
 yt-dlp.exe
+*Tests.ps1
